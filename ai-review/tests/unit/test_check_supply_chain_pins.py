@@ -79,6 +79,41 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         quoted = f'ARG BASE="python:3.14{DIGEST}"\nFROM $BASE\n'
         self.assertEqual(pins._dockerfile_issues("x", quoted), [])
 
+    def test_arg_words_follow_buildkit(self) -> None:
+        # A quoted value is one word: NOTE's text must not invent a BASE assignment.
+        smuggled = f'ARG BASE=alpine:latest\nARG NOTE="unused BASE=alpine{DIGEST}"\nFROM $BASE\n'
+        self.assertEqual(
+            pins._dockerfile_issues("x", smuggled), ["x: FROM $BASE is not pinned by sha256 digest"]
+        )
+        # A bare redeclaration keeps the earlier default (BuildKit's buildMetaArgs).
+        redeclared = f"ARG BASE=python{DIGEST}\nARG BASE\nFROM $BASE\n"
+        self.assertEqual(pins._dockerfile_issues("x", redeclared), [])
+        reviewer = redeclared.replace("BASE", "AI_REVIEW_BASE_IMAGE")
+        self.assertEqual(pins._base_image_issues(f"FROM python{DIGEST}\n", reviewer), [])
+        unbalanced = f'ARG BASE="python{DIGEST}\nFROM $BASE\n'
+        self.assertIn(
+            f"x: cannot parse 'ARG BASE=\"python{DIGEST}'", pins._dockerfile_issues("x", unbalanced)
+        )
+
+    def test_continuations_follow_buildkit(self) -> None:
+        pinned = f"FROM node:26{DIGEST}\n"
+        # An escaped final backslash ends the RUN, so the next FROM is an instruction.
+        self.assertEqual(
+            pins._dockerfile_issues("x", pinned + "RUN echo \\\\\nFROM alpine:latest\n"),
+            ["x: FROM alpine:latest is not pinned by sha256 digest"],
+        )
+        # A comment line inside a continuation is dropped without ending it.
+        self.assertEqual(
+            pins._dockerfile_issues("x", pinned + "RUN a \\\n  # note\n  b\nFROM alpine:latest\n"),
+            ["x: FROM alpine:latest is not pinned by sha256 digest"],
+        )
+        # A genuine continuation makes the text a RUN argument, which Docker never builds.
+        self.assertEqual(pins._dockerfile_issues("x", pinned + "RUN echo \\\nFROM alpine\n"), [])
+        self.assertEqual(
+            pins._dockerfile_issues("x", "# escape=`\n" + pinned),
+            ["x: cannot parse '# escape=`'"],
+        )
+
     def test_shipped_dockerfiles_pin_every_stage(self) -> None:
         reviewer = _read(pins.REVIEWER_DOCKERFILE)
         # The debian stages were pinned but unchecked before the generic FROM rule.

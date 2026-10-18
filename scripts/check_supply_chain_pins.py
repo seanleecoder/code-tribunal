@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -46,23 +47,53 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _parse_dockerfile(text: str) -> tuple[dict[str, str], list[tuple[str, str]], list[str]]:
-    """Return the global ARG defaults, each FROM's (image, stage), and unparsed FROMs.
+def _instructions(text: str) -> list[str]:
+    """Join Dockerfile lines into instructions the way BuildKit's parser does.
 
-    Instructions are split on any whitespace, as Docker does, after dropping comment
-    lines and joining continuations. A FROM sees only the ARGs declared before the
-    first FROM, so stage-local redeclarations never resolve one.
+    Comment lines are dropped, even inside a continuation, and so are blank lines.
+    A line continues only when its final backslash is not itself escaped, which is
+    BuildKit's `([^\\])\\[ \t]*$|^\\[ \t]*$`; the joined pieces are concatenated
+    without a separator.
     """
-    lines = (line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    instructions: list[str] = []
+    current = ""
+    for line in text.splitlines():
+        if line.lstrip().startswith("#") or not line.strip():
+            continue
+        continued = re.search(r"(?:^|[^\\])\\[ \t]*$", line)
+        current += re.sub(r"\\[ \t]*$", "", line) if continued else line
+        if not continued:
+            instructions.append(current)
+            current = ""
+    return [*instructions, current] if current else instructions
+
+
+def _parse_dockerfile(text: str) -> tuple[dict[str, str], list[tuple[str, str]], list[str]]:
+    """Return the global ARG defaults, each FROM's (image, stage), and unparsed instructions.
+
+    A FROM sees only the ARGs declared before the first FROM, so stage-local
+    redeclarations never resolve one. ARG words are split quote-aware, and a
+    declaration without `=` keeps the earlier default, as BuildKit's buildMetaArgs
+    does. Anything this cannot model is reported rather than guessed.
+    """
     global_args: dict[str, str] = {}
     froms: list[tuple[str, str]] = []
     unparsed: list[str] = []
-    for instruction in re.sub(r"\\[ \t]*\n", " ", "\n".join(lines)).splitlines():
+    escape = re.search(r"(?im)^#\s*escape\s*=\s*(\S*)", text)
+    if escape and escape.group(1) != "\\":
+        unparsed.append(escape.group(0))
+    for instruction in _instructions(text):
         keyword, *words = instruction.split() or [""]
         if keyword.upper() == "ARG" and not froms and not unparsed:
-            for word in words:
-                key, separator, value = word.partition("=")
-                global_args[key] = value.strip("\"'") if separator else ""
+            try:
+                assignments = shlex.split(instruction.split(None, 1)[1])
+            except (IndexError, ValueError):
+                unparsed.append(instruction.strip())
+                continue
+            for assignment in assignments:
+                key, separator, value = assignment.partition("=")
+                if separator:
+                    global_args[key] = value
         elif keyword.upper() == "FROM":
             arguments = [word for word in words if not word.startswith("--")]
             if len(arguments) == 1:
