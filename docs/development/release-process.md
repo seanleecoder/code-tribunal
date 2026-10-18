@@ -192,6 +192,11 @@ expensive rows feel routine. The rule:
 > (`git diff v<previous>..R`) touches any module in its impact set. Otherwise it may
 > ship under an evidence waiver whose registered reason names the unchanged modules
 > and the regression tests that cover the row.
+>
+> A row the table marks waivable may also be waived when its modules changed but
+> the diff stays off the row's code paths. The registered reason then names each
+> changed function or region, says why it is off the row's paths, and names the
+> covering tests. A row marked "no" or "never" always re-runs when touched.
 
 Waivers are explicit, not silent, and need two deliberate changes: the waived
 record carries the marker `Release-evidence-waived: registered`, and
@@ -211,7 +216,7 @@ reason a published notes file is pinned byte-identical to its tag
 release): corrections to a shipped release
 record belong in the next release's notes, never in the shipped one.
 
-| Changed module | Live rows that must re-run | Waivable when untouched (cite these tests) |
+| Changed module | Live rows that must re-run | Waivable (cite these tests) |
 |---|---|---|
 | `anchors.py`, `render.py`, `summary_render.py`, `post.py`, `posting.py`, `state_plan.py`, `notes.py`, `commands.py`, `memory.py`, `mock_reviewer.py` | lifecycle Chain B on **both** platforms — they are independent render surfaces and diverge on added-file diffs | no |
 | `config/review.yaml` model or effort defaults, `adapter_runner.py`, `adapter_process.py`, `adapter_output.py`, `adapter_artifacts.py`, `reviewers.py`, `opencode_client.py`, `adapters/*` | one real Chain A panel (reuse matching Candidate Canary model/effort routes; a separate three-seat smoke establishes the exact default roster or covers mismatched routes); plus the effort-route check if effort profiles changed | no |
