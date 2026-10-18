@@ -5,17 +5,15 @@ REVIEWER ?= claude
 DIFF ?= $(AI_REVIEW_ROOT)/tests/fixtures/diffs/simple.diff
 REPO ?= $(AI_REVIEW_ROOT)/tests/fixtures/repos/simple
 LOCAL_OUT ?= .ai-review-local
-RELEASE_OUT ?= /tmp/code-tribunal-release
 SCOPE ?= base
 RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 .PHONY: quality test packaged-smoke lint typecheck supply-chain workflow-pins \
-	release-inputs docs-check sync-workflows workflow-parity demo-preflight evidence-records \
-	release-repin release-finalize release-manifest release-open-next \
+	docs-check sync-workflows workflow-parity demo-preflight release-check \
 	update-golden review-local consensus-local validate-local
 
-quality: docs-check lint test typecheck supply-chain workflow-pins release-inputs workflow-parity
+quality: docs-check lint test typecheck supply-chain workflow-pins workflow-parity
 
 # The single gate on canonical-template -> installed-copy parity;
 # `make sync-workflows` repairs the drift it reports.
@@ -51,35 +49,16 @@ supply-chain:
 workflow-pins:
 	$(PYTHON) scripts/check_workflow_pins.py
 
-release-inputs:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_release_inputs.py
-
 # Read-only check of both demo consumers before a live campaign. Needs network
 # and authenticated gh and glab, so it is not part of `quality`.
 demo-preflight:
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/demo_preflight.py
 
-# Rewrite the release evidence records from one Candidate Canary run:
-#   make evidence-records RUN=<run id>
-evidence-records:
-	@test -n "$(RUN)" || { echo "usage: make evidence-records RUN=<canary run id>"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/canary_evidence_records.py $(RUN)
-
-release-repin:
-	@test -n "$(RUN)" || { echo "usage: make release-repin RUN=<canary run id>"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py repin --run "$(RUN)"
-
-release-finalize:
-	@test -n "$(RUN)" -a -n "$(EVIDENCE)" || { echo "usage: make release-finalize RUN=<run> EVIDENCE='<record IDs>' [WAIVE='<quoted RECORD=REASON arguments>']"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py finalize --run "$(RUN)" --evidence $(EVIDENCE) $(if $(WAIVE),--waive $(WAIVE),)
-
-release-manifest:
-	@test -n "$(P)" || { echo "usage: make release-manifest P=<release commit>"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py manifest --release-commit "$(P)" --out "$(RELEASE_OUT)"
-
-release-open-next:
-	@test -n "$(V)" || { echo "usage: make release-open-next V=<next version>"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/release_finalize.py open-next --version "$(V)"
+# Check a release commit's pins before signing its tag:
+#   make release-check P=<release commit>
+release-check:
+	@test -n "$(P)" || { echo "usage: make release-check P=<release commit>"; exit 2; }
+	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/check_release.py pins --rev "$(P)"
 
 # Pass CHECK=1 to verify without writing.
 sync-workflows:

@@ -1379,5 +1379,53 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             self.assertEqual(gitlab_client.fetch_version_calls, 2)
 
 
+class PrepareCredentialTests(unittest.TestCase):
+    """Prepare fails closed, before any platform call or bundle write, without a token.
+
+    The live hostile canary cannot show this: its substituted image fails prepare for
+    an unrelated reason. Here the real credential gate in create_runtime_platform runs.
+    """
+
+    def _prepare_without_token(self, prepare, environment: dict[str, str], config) -> str:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        out = Path(tmpdir.name) / "inputs"
+        never = mock.Mock(side_effect=AssertionError("constructed a platform client"))
+        with (
+            mock.patch.dict("os.environ", environment, clear=True),
+            mock.patch("ai_review.input_bundle.load_config", return_value=config),
+            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+            mock.patch("ai_review.platform.runtime.GitLabReviewPlatform", never),
+            mock.patch("ai_review.platform.runtime.GitHubReviewPlatform", never),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            prepare(Path("ai-review/config/review.yaml"), out)
+        never.assert_not_called()
+        self.assertFalse(out.exists())
+        return str(raised.exception)
+
+    def test_gitlab_prepare_without_gitlab_token_fails_closed(self) -> None:
+        message = self._prepare_without_token(
+            prepare_gitlab_bundle,
+            {
+                "CI_API_V4_URL": "https://gitlab.example/api/v4",
+                "CI_PROJECT_ID": "1",
+                "CI_MERGE_REQUEST_IID": "2",
+                # A job token alone grants prepare nothing.
+                "CI_JOB_TOKEN": "job-token",
+            },
+            runtime_config(),
+        )
+        self.assertIn("requires GITLAB_TOKEN", message)
+
+    def test_github_prepare_without_github_token_fails_closed(self) -> None:
+        message = self._prepare_without_token(
+            prepare_github_bundle,
+            {"GITHUB_REPOSITORY": "octo/repo", "GITHUB_ACTIONS": "true"},
+            runtime_config(lambda config: config["posting"].update({"mode": "github_reviews"})),
+        )
+        self.assertIn("requires GITHUB_TOKEN or GH_TOKEN", message)
+
+
 if __name__ == "__main__":
     unittest.main()

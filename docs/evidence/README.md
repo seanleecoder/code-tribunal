@@ -1,5 +1,10 @@
 # Live evidence index and runbook
 
+> **Retired process.** From 2.1.0 a release is a signed tag verified against a cited
+> Candidate Canary run; see the [release process](../development/release-process.md).
+> Release inputs, evidence records, and waivers below describe releases up to 2.0.3.
+> This page is being cut down under ADR-0004 migration step 4.
+
 Live evidence complements executable tests; it does not replace them. Record
 only sanitized identifiers, digests, expected/actual outcomes, and audit results.
 Never store credentials, CLI session material, proprietary source, or sensitive
@@ -18,8 +23,8 @@ release's tag.
   [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
   [1.0.0](../../release/1.0.0.md)
 
-`scripts/check_release_inputs.py` rejects activation when a cited record is not a
-matching scoped pass or is not a registered waiver. Row tiers (release-gating
+Up to 2.0.3, `scripts/check_release_inputs.py` rejected activation when a cited record is not a
+matching scoped pass or was not a registered waiver. Row tiers (release-gating
 versus regression-covered) and the regression tests behind each row are
 classified below.
 

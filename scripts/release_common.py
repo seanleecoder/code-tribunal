@@ -1,8 +1,7 @@
-"""Shared deterministic release-input and manifest helpers."""
+"""Shared release, canary-identity, and workflow-parity helpers."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -10,11 +9,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_INPUTS = ROOT / "release/release-inputs.json"
 REPOSITORY = "seanleecoder/code-tribunal"
 
 class ReleaseValidationError(ValueError):
-    """Raised when release metadata violates its checked contract."""
+    """Raised when a release or its inputs violate a checked contract."""
 
 
 
@@ -45,11 +43,8 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     mirror problem, translating \n to os.linesep. Reading and writing bytes is
     what makes the byte-duplicate contract above literally true.
 
-    This is the only implementation of the comparison. Copies previously lived in
-    check_supply_chain_pins.py, check_release_inputs.py, and test_ci_template.py;
-    none of them could repair the drift they reported, and the one in
-    check_supply_chain_pins.py ran inside the base image, where .github/ does not
-    exist and it therefore always passed. `make workflow-parity` is the single gate.
+    This is the only implementation of the comparison. `make workflow-parity` is
+    the gate on main, and `check_release.py pins` applies it to a release commit.
     """
     changed: list[str] = []
     for canonical_rel, installed_rel in WORKFLOW_PAIRS:
@@ -68,23 +63,10 @@ def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
     return tuple(changed)
 
 
-# The release-input contract this tooling accepts. v2 is v1 without the per-file-set
-# `hashes` member; tagged releases before 2.0.0 keep v1 at their own tag.
-RELEASE_INPUTS_SCHEMA_VERSION = "code_tribunal.release_inputs.v2"
-
-# Image tag series: images are tagged `<series>-<runtime_source>`. It must equal
-# IMAGE_VERSION in .github/workflows/publish-ai-review-images.yml.
-IMAGE_TAG_SERIES = "2.0"
-
-ALLOWED_RELEASE_PATHS = (
-    GITHUB_INSTALLED,
-    GITHUB_TEMPLATE,
-    GITLAB_TEMPLATE,
-    "CHANGELOG.md",
-    "docs/evidence/",
-    "docs/improvement-specs/",
-    "release/",
-)
+# Images are tagged `<series>-<runtime_source>`. The series has one source, the
+# IMAGE_VERSION of the workflow that builds and attests both images.
+IMAGE_WORKFLOW = ".github/workflows/publish-ai-review-images.yml"
+IMAGE_VERSION_RE = re.compile(r'^  IMAGE_VERSION: "([0-9]+\.[0-9]+)"$', re.M)
 
 FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -93,41 +75,27 @@ RELEASE_VERSION_RE = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 )
 IMAGE_NAME_RE = re.compile(r"ghcr\.io/[a-z0-9._/-]+/ai-review-(?:base|reviewer)")
-PLACEHOLDER_RE = re.compile(r"(?:TODO|TBD|REPLACE(?:-ME)?|sha256:replace-me)", re.I)
 
 
-
-
-def release_blob_url(tag: str, relative: str = "") -> str:
-    return f"https://github.com/{REPOSITORY}/blob/{tag}/{relative}"
+def image_tag_series(root: Path = ROOT) -> str:
+    found = IMAGE_VERSION_RE.findall((root / IMAGE_WORKFLOW).read_text(encoding="utf-8"))
+    if len(found) != 1:
+        raise ReleaseValidationError(f"{IMAGE_WORKFLOW} must set IMAGE_VERSION exactly once")
+    return found[0]
 
 
 def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
-def sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+def image_ref(image: dict[str, Any], runtime_source: str, root: Path = ROOT) -> str:
+    return f"{image['name']}:{image_tag_series(root)}-{runtime_source}@{image['digest']}"
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ReleaseValidationError(f"cannot read {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ReleaseValidationError(f"{path} must contain a JSON object")
-    return value
-
-
-def image_ref(image: dict[str, Any], runtime_source: str) -> str:
-    return f"{image['name']}:{IMAGE_TAG_SERIES}-{runtime_source}@{image['digest']}"
-
-
-def diff_paths(root: Path, *revisions: str, cached: bool = False) -> list[str]:
+def diff_paths(root: Path, *revisions: str) -> list[str]:
     completed = subprocess.run(
         ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB",
-         *(["--cached"] if cached else []), *revisions],
+         *revisions],
         cwd=root,
         check=False,
         text=True,
@@ -151,39 +119,6 @@ def git_is_ancestor(runtime_source: str, release_commit: str, root: Path = ROOT)
     if completed.returncode == 1:
         return False
     raise ReleaseValidationError(completed.stderr.strip() or "git merge-base failed")
-
-
-def tag_exists(tag: str, root: Path = ROOT) -> bool:
-    """Whether `tag` resolves in this checkout.
-
-    Deliberately distinct from "can I read a path at that tag". A release note is
-    frozen because its tag exists; a `git show <tag>:<path>` failure could equally
-    mean the tag is missing *or* that the note was never in it, and collapsing the
-    two is what let an untagged note escape both the link check and the byte check.
-    """
-    completed = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}"],
-        check=False,
-        capture_output=True,
-    )
-    return completed.returncode == 0
-
-
-def any_tags_resolvable(root: Path = ROOT) -> bool:
-    """Whether tag lookups mean anything here at all.
-
-    False in a `--no-tags` or shallow clone, and where git is unavailable. Callers
-    use it to tell "this note has no tag" apart from "this checkout knows about no
-    tags", which are opposite situations: the first is a note still being drafted,
-    the second is an environment that cannot answer the question.
-    """
-    completed = subprocess.run(
-        ["git", "-C", str(root), "tag", "--list"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return completed.returncode == 0 and bool(completed.stdout.strip())
 
 
 def validate_release_version(value: object) -> str:
@@ -223,31 +158,3 @@ def compare_release_versions(left: str, right: str) -> int:
         if left_value != right_value:
             return (left_value > right_value) - (left_value < right_value)
     return (len(left_parts) > len(right_parts)) - (len(left_parts) < len(right_parts))
-
-
-def validate_release_coordinates(
-    tag: object,
-    runtime_source: object,
-    release_commit: object,
-    release_version: object,
-) -> None:
-    version = validate_release_version(release_version)
-    expected_tag = f"v{version}"
-    if tag != expected_tag:
-        raise ReleaseValidationError(f"release tag must be {expected_tag}")
-    if not isinstance(runtime_source, str) or not FULL_SHA_RE.fullmatch(runtime_source):
-        raise ReleaseValidationError("runtime source must be a lowercase full 40-character SHA")
-    if not isinstance(release_commit, str) or not FULL_SHA_RE.fullmatch(release_commit):
-        raise ReleaseValidationError("release commit must be a lowercase full 40-character SHA")
-    if runtime_source == release_commit:
-        raise ReleaseValidationError("release commit P must differ from runtime source R")
-
-
-def disallowed_release_paths(paths: list[str]) -> list[str]:
-    def allowed(path: str) -> bool:
-        return any(
-            path == item or (item.endswith("/") and path.startswith(item))
-            for item in ALLOWED_RELEASE_PATHS
-        )
-
-    return [path for path in paths if not allowed(path)]

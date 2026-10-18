@@ -19,8 +19,9 @@ this file is the concise working map, not a replacement for the linked docs.
   Tribunal owns correct invocation, endpoint selection, environment scrubbing,
   and credential isolation.
 - There is one canonical GitHub template and one synchronized installation copy.
-  Release identity comes from `release/release-inputs.json` and source-bound
-  evidence records.
+  A release is a signed tag whose canonical templates pin the released image
+  digests, verified against a cited Candidate Canary run
+  ([ADR-0004](docs/decisions/0004-simplified-release-process.md)).
 
 Adding a new product dimension — a reviewer, model stage, platform,
 state-backend family, public artifact family, plugin mechanism, decision

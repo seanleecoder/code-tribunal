@@ -839,13 +839,10 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):
-    # Canonical-template -> installed-copy parity used to be asserted here, in
-    # check_supply_chain_pins.py, and in check_release_inputs.py. It now lives
-    # only in `make workflow-parity`, which is also the one that can repair the
-    # drift. Asserting it from a test that runs inside the base image needed two
-    # skips and a function-local importlib load to survive an environment where
-    # neither .github/ nor scripts/release_common.py exists — cost with no
-    # coverage, since the skip was guaranteed to fire there.
+    # Canonical-template -> installed-copy parity lives only in
+    # `make workflow-parity`, which is also the one that can repair the drift.
+    # Asserting it from a test that runs inside the base image would need skips
+    # for an environment where neither .github/ nor scripts/ exists.
     #
     # Everything below asserts the canonical template's own shape, which parity
     # then propagates to the installed copy.

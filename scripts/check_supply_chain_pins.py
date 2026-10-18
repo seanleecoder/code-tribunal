@@ -168,8 +168,8 @@ def _github_container_pins(workflow: str) -> tuple[dict[str, set[str]], list[str
     return pins, issues
 
 
-def _image_pin_issues(gitlab: str, github: str) -> list[str]:
-    """One base and one reviewer pin, equal on both platforms, built from the trusted SHA."""
+def gitlab_image_pins(gitlab: str) -> tuple[dict[str, str], list[str]]:
+    """The GitLab template's image pins, keyed by IMAGE_PIN_KEYS, and its parse issues."""
     values = {
         key: re.findall(
             rf"^\s*{key}\s*:\s*(['\"]?)([^'\"#\s<>]+)\1\s*(?:#.*)?$", gitlab, re.M
@@ -181,7 +181,12 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
         for key, found in values.items()
         if len(found) != 1
     ]
-    pins = {key: found[0][1] for key, found in values.items() if len(found) == 1}
+    return {key: found[0][1] for key, found in values.items() if len(found) == 1}, issues
+
+
+def image_pin_issues(gitlab: str, github: str) -> list[str]:
+    """One base and one reviewer pin, equal on both platforms, built from the trusted SHA."""
+    pins, issues = gitlab_image_pins(gitlab)
     github_pins, github_issues = _github_container_pins(github)
     issues.extend(github_issues)
     for key in CONTAINER_IMAGES:
@@ -289,7 +294,7 @@ def issues() -> list[str]:
         *_dockerfile_issues("base.Dockerfile", base),
         *_dockerfile_issues("reviewer.Dockerfile", reviewer),
         *_base_image_issues(base, reviewer),
-        *_image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
+        *image_pin_issues(_read(GITLAB_REVIEW_TEMPLATE), _read(GITHUB_REVIEW_WORKFLOW)),
         *_exact_requirement_issues("python-constraints.txt", constraints),
         # Dev tools may be platform-conditional; nothing here reaches the images.
         *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS), markers=True),

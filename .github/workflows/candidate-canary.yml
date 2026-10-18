@@ -1,4 +1,5 @@
 name: Candidate Canary
+run-name: Candidate Canary ${{ inputs.runtime_source }} [${{ inputs.campaigns }}]
 
 on:
   workflow_dispatch:
@@ -47,29 +48,19 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate campaign selection
-        env:
-          CAMPAIGNS: ${{ inputs.campaigns }}
-        run: |
-          IFS=, read -ra selected <<< "$CAMPAIGNS"
-          [[ ${#selected[@]} -gt 0 ]] || { echo "::error::no campaign selected"; exit 1; }
-          for campaign in "${selected[@]}"; do
-            case "$campaign" in
-              panel|lifecycle|hostile) ;;
-              *) echo "::error::unknown campaign '$campaign'"; exit 1 ;;
-            esac
-          done
-      - name: Validate source and image inputs
+      - name: Validate source, image, and campaign inputs
         id: identity
         env:
           RUNTIME_SOURCE: ${{ inputs.runtime_source }}
           BASE_IMAGE: ${{ inputs.base_image }}
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
+          CAMPAIGNS: ${{ inputs.campaigns }}
         run: |
           python scripts/validate_candidate_identity.py \
             --runtime-source "$RUNTIME_SOURCE" \
             --base-image "$BASE_IMAGE" \
             --reviewer-image "$REVIEWER_IMAGE" \
+            --campaigns "$CAMPAIGNS" \
             --github-output "$GITHUB_OUTPUT"
       - name: Pull candidate images
         env:
@@ -84,12 +75,22 @@ jobs:
           RUNTIME_SOURCE: ${{ inputs.runtime_source }}
           BASE_IMAGE: ${{ inputs.base_image }}
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
+          CAMPAIGNS: ${{ inputs.campaigns }}
         run: |
           python scripts/validate_candidate_identity.py \
             --runtime-source "$RUNTIME_SOURCE" \
             --base-image "$BASE_IMAGE" \
             --reviewer-image "$REVIEWER_IMAGE" \
-            --verify-images
+            --campaigns "$CAMPAIGNS" \
+            --verify-images \
+            --candidate-out "$RUNNER_TEMP/identity/candidate.json"
+      # Publication binds the cited run to the release pins through this file.
+      - name: Upload candidate identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-canary-identity
+          path: ${{ runner.temp }}/identity/candidate.json
+          if-no-files-found: error
 
   campaign:
     needs: verify-candidate

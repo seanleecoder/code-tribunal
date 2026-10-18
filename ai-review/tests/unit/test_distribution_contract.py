@@ -32,17 +32,6 @@ class RepositoryDistributionContractTests(unittest.TestCase):
                 "repository distribution metadata is intentionally absent from runtime images"
             )
 
-    def _release_common(self):
-        from importlib import util
-
-        spec = util.spec_from_file_location(
-            "_release_common", _REPO_ROOT / "scripts" / "release_common.py"
-        )
-        module = util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-        return module
-
     def test_a_real_clone_carries_the_workflows_these_contracts_assert(self) -> None:
         """A clone must not silently skip the workflow contracts.
 

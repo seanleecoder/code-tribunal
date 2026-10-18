@@ -260,6 +260,8 @@ Each pull request primarily changes one boundary.
    This pull request crosses boundaries deliberately: staging a dual release
    authority would need a temporary-compatibility row for no benefit. After it
    merges, main's publish workflow can no longer publish or retry a v2.0.x tag.
+   Done on 2026-10-18. The signed tag cites the canary run in a `Canary-run:`
+   trailer, in place of `Release-manifest-sha256`.
 4. **Evidence documentation.**
    - Cut `docs/evidence/RUNBOOK.md` to the operator mechanics and carried gaps.
    - Reduce `docs/evidence/README.md` to an index.
