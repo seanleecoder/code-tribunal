@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import copy
 import unittest
+from unittest.mock import patch
 
+import ai_review.consensus as consensus_module
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
@@ -775,6 +777,35 @@ class RunHealthTests(unittest.TestCase):
         self.assertEqual(claude["outcome"], "success")
         self.assertEqual(claude["error_class"], "AdapterExit")
         self.assertEqual(claude["error_message"], "boom second line")
+
+    def test_oversized_status_text_is_bounded_before_redaction(self) -> None:
+        # Unterminated PEM headers make the redaction regex quadratic; the
+        # runner stores whole adapter stderr, so the input is model-influenced.
+        key = "-----BEGIN PRIVATE KEY----- MIIEsecret -----END PRIVATE KEY-----"
+        hostile = key + " " + "-----BEGIN PRIVATE KEY-----" * 8000
+        statuses = {
+            ("review", "opencode"): _status(
+                "opencode", "review", "model_error", error_message_redacted=hostile
+            )
+        }
+
+        with patch.object(
+            consensus_module, "redact_text", wraps=consensus_module.redact_text
+        ) as redact:
+            consensus = self._health(
+                self._ok(["claude", "codex", "cursor"]),
+                [_agree_all(critic, []) for critic in self._REVIEWERS],
+                statuses=statuses,
+            )
+
+        self.assertLessEqual(
+            max(len(call.args[0]) for call in redact.call_args_list),
+            consensus_module._REDACTION_INPUT_LIMIT,
+        )
+        message = self._job(consensus, "review", "opencode")["error_message"]
+        self.assertTrue(message.startswith("[REDACTED] "))
+        self.assertNotIn("MIIEsecret", message)
+        self.assertEqual(len(message), 300)
 
     def test_non_success_status_without_a_batch_reports_that_status(self) -> None:
         statuses = {

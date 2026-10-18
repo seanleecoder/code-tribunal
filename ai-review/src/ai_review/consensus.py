@@ -110,6 +110,10 @@ def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
 
 RUN_HEALTH_ERROR_MESSAGE_LIMIT = 300
 RUN_HEALTH_ERROR_CLASS_LIMIT = 120
+# Redaction input bound. The PEM pattern is quadratic in unterminated BEGIN
+# headers, and the runner stores whole adapter stderr unbounded. Large enough
+# that a key block starting inside the displayed prefix is still redacted whole.
+_REDACTION_INPUT_LIMIT = 8192
 
 
 def _one_line(value: object, limit: int) -> str | None:
@@ -120,7 +124,11 @@ def _one_line(value: object, limit: int) -> str | None:
     """
     if not isinstance(value, str):
         return None
-    text = " ".join(redact_text(value).split())
+    text = " ".join(value.split())
+    if len(text) > _REDACTION_INPUT_LIMIT:
+        # Drop the token the cut splits, so no secret fragment escapes redaction.
+        text = text[:_REDACTION_INPUT_LIMIT].rsplit(" ", 1)[0]
+    text = redact_text(text)
     if not text:
         return None
     return text if len(text) <= limit else text[: limit - 1] + "…"
