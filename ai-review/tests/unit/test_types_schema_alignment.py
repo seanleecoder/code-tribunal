@@ -15,13 +15,8 @@ from ai_review import types as domain_types
 from ai_review.schema import load_schema
 
 ARTIFACT_TYPES = {
-    "raw_finding_batch.schema.json": domain_types.RawFindingBatch,
-    "finding_batch.schema.json": domain_types.FindingBatch,
-    "critique_batch.schema.json": domain_types.CritiqueBatch,
-    "adapter_status.schema.json": domain_types.AdapterStatusArtifact,
     "consensus.schema.json": domain_types.Consensus,
     "state.schema.json": domain_types.State,
-    "state_aliases.schema.json": domain_types.StateAliasesArtifact,
     "post_result.schema.json": domain_types.PostResult,
 }
 ALL_JSON_TYPES = {
