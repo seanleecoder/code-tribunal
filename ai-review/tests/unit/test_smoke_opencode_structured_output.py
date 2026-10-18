@@ -147,11 +147,6 @@ class ProbeContractTests(unittest.TestCase):
             "/opt/scripts/smoke_opencode_structured_output.py",
             text,
         )
-        self.assertIn(
-            "COPY scripts/smoke_opencode_structured_output.sh "
-            "/opt/scripts/smoke_opencode_structured_output.sh",
-            text,
-        )
 
     @unittest.skipUnless(
         PUBLISH_WORKFLOW.exists(),

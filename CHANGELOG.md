@@ -62,6 +62,12 @@ versioning.
 - State loading no longer decodes the `checksum=` state-note wrapper. No
   release ever wrote it; every release writes the `state_hash=` form, which is
   unchanged. A note in the old form is no longer a state-note candidate (S14).
+- The base image, and therefore the reviewer image, no longer ships
+  `/opt/README.md`, `/opt/ai-review/README.md`, `/opt/ai-review/ci/`, the
+  supply-chain pin checker, the OpenCode preflight shell wrappers, or any file
+  of `/opt/ai-review/images/` except `ripgrep.pin`. Nothing in the image read
+  them. The two OpenCode preflight drivers in `/opt/scripts/` are unchanged
+  (N20).
 
 ### Fixed
 

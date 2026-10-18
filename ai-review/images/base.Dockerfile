@@ -20,9 +20,9 @@ RUN python -m pip install --no-cache-dir --constraint /opt/ai-review/images/pyth
       jsonschema PyYAML requests
 
 COPY ai-review/adapters /opt/ai-review/adapters
-COPY ai-review/ci /opt/ai-review/ci
 COPY ai-review/config /opt/ai-review/config
-COPY ai-review/images /opt/ai-review/images
+# The reviewer image's final-stage ripgrep guard sources this pin.
+COPY ai-review/images/ripgrep.pin /opt/ai-review/images/ripgrep.pin
 COPY ai-review/prompts /opt/ai-review/prompts
 COPY ai-review/rules /opt/ai-review/rules
 COPY ai-review/schemas /opt/ai-review/schemas
@@ -35,13 +35,10 @@ COPY ai-review/src/ai_review /opt/ai-review/src/ai_review
 # shipped layer, so changing one does change the image digest and is part of the
 # release binding.
 COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures
-COPY scripts/check_supply_chain_pins.py /opt/scripts/check_supply_chain_pins.py
+# The OpenCode preflight drivers run inside the reviewer image; their host-side
+# .sh wrappers stay in the checkout.
 COPY scripts/smoke_opencode_search_tools.py /opt/scripts/smoke_opencode_search_tools.py
-COPY scripts/smoke_opencode_search_tools.sh /opt/scripts/smoke_opencode_search_tools.sh
 COPY scripts/smoke_opencode_structured_output.py /opt/scripts/smoke_opencode_structured_output.py
-COPY scripts/smoke_opencode_structured_output.sh /opt/scripts/smoke_opencode_structured_output.sh
-COPY README.md /opt/README.md
-COPY ai-review/README.md /opt/ai-review/README.md
 
 # The curated packaged-runtime smoke suite, and the single deliberate exception to
 # "runtime images carry no test code". It is stdlib-only, imports nothing from the

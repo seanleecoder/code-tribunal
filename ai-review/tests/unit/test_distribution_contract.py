@@ -86,6 +86,33 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         )
         self.assertNotIn("COPY ai-review/src /opt/ai-review/src", dockerfile)
 
+    def test_container_ships_only_the_repository_files_it_runs(self) -> None:
+        """Repository tooling, templates and READMEs stay out of the image (N20).
+
+        The two OpenCode preflight drivers run inside the reviewer image; their
+        shell wrappers, the supply-chain pin checker and the CI templates run from
+        the checkout. Of `images/`, only `ripgrep.pin` is read inside the image.
+        """
+        dockerfile = (
+            _REPO_ROOT / "ai-review" / "images" / "base.Dockerfile"
+        ).read_text(encoding="utf-8")
+
+        copied_scripts = re.findall(r"(?m)^COPY\s+(scripts/\S*)\s", dockerfile)
+        self.assertEqual(
+            copied_scripts,
+            [
+                "scripts/smoke_opencode_search_tools.py",
+                "scripts/smoke_opencode_structured_output.py",
+            ],
+        )
+        copied_images = re.findall(r"(?m)^COPY\s+(ai-review/images\S*)\s", dockerfile)
+        self.assertEqual(
+            copied_images,
+            ["ai-review/images/python-constraints.txt", "ai-review/images/ripgrep.pin"],
+        )
+        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+ai-review/ci\b")
+        self.assertNotRegex(dockerfile, r"(?m)^COPY\s+(?:ai-review/)?README\.md\s")
+
     def test_container_ships_fixtures_and_only_the_packaged_smoke_suite(self) -> None:
         """The product test suite never ships; exactly one test-shaped thing does.
 
