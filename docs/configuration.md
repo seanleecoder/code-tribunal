@@ -373,10 +373,10 @@ rejected. Native Anthropic routing is not supported.
 | Rejected variable | Reason |
 |---|---|
 | `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_CLAUDE_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CODEX_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_OPENCODE_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CURSOR_ENABLED` | Retired in 1.0.2; set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CLAUDE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CODEX_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_OPENCODE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
+| `AI_REVIEW_CURSOR_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
 | `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in 2.0 (`review_config.v3`) with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
 | `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
 | `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
