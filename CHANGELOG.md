@@ -23,7 +23,8 @@ versioning.
   release manifest or checksum asset, `release/<version>.md` notes and
   `release/release-inputs.json` are no longer published, and tags carry a
   `Canary-run:` trailer instead of `Release-manifest-sha256`. Releases up to 2.0.3
-  are unchanged.
+  are unchanged. The generated evidence records are gone from `docs/evidence/`;
+  each earlier release's records remain at its tag.
 
 ## [2.0.3] - 2026-10-18
 

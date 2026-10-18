@@ -31,21 +31,14 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. The Candidate Canary records hostile-MR evidence, most
-recently for 2.0.2 (see the
-[hostile-MR record](evidence/record-gitlab-hostile-mr.md)). It covers one scoped
+proved per deployment. The Candidate Canary's `hostile` campaign proves one scoped
 topology: a merge request from an **unprotected** ref in the hardened mirrored
-child. The record shows four things:
-
-- GitLab withheld every protected credential: the hostile job saw each one as
-  absent.
-- Prepare failed closed with an empty input bundle, and every later stage was
-  skipped.
-- The forged publication artifacts went unconsumed.
-- The leak scan of the five redacted run summaries found no credential material.
+child. Its assertions are listed under
+[Candidate Canary](../CONTRIBUTING.md#candidate-canary), and the body of each
+release that ran it records the run.
 
 It does not scan every job trace and artifact for exact credential values. So
-“credential isolated” means that recorded scope plus the tested subprocess
+“credential isolated” means that scope plus the tested subprocess
 allowlist and template design — not a completed claim about every installation.
 Fork-based merge requests and protected-ref insiders are untested.
 
@@ -158,11 +151,9 @@ state loss do fail the `post` job.
 
 Executable security coverage lives under `ai-review/tests/security/` and in
 snapshot, trust-template, adapter-environment, state-authenticity, artifact
-integrity, and posting unit/integration tests. Deployment evidence and unexercised
-paths are indexed under [docs/evidence](evidence/README.md).
-
-Evidence must record source and image digests, expected/actual outcomes, and a
-secret audit without storing credential values or sensitive model content.
+integrity, and posting unit/integration tests. Each release body records the
+Candidate Canary run that proved it live, and unexercised paths are the
+[carried coverage gaps](evidence/RUNBOOK.md#carried-coverage-gaps).
 
 ## Reporting
 

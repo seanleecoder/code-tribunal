@@ -267,6 +267,10 @@ Each pull request primarily changes one boundary.
    - Reduce `docs/evidence/README.md` to an index.
    - Delete the generated `record-*.md` files. Tagged notes link to them by
      `blob/vX`, so nothing breaks.
+
+   Done on 2026-10-18. The record template went too, and current docs that cited a
+   record link to it at `v2.0.3`. The README's open gaps moved into the runbook's
+   carried-gaps table.
 5. **2.1.0, the trial run.**
    - Bump `IMAGE_VERSION`, build R, run the required canary campaigns (hostile
      included, because the cutover changes the template pins), re-pin in P, sign the tag,

@@ -152,15 +152,17 @@ applied, and the review checks the evidence it cites.
   `ai-review/src/ai_review/platform/runtime.py`). Confirm the cited run includes
   `hostile`, or state why it does not apply.
 - [ ] **Body-format refresh:** when the posted-body format version (`render-body.vN`)
-  changes, one refresh run against a bot thread in the previous format, authored by
-  a released image.
+  changes, one [refresh run](../evidence/RUNBOOK.md#body-format-refresh) against a
+  bot thread in the previous format, authored by a released image.
 - [ ] **Effort routes:** when effort profiles change, the effort-route check from
-  the [evidence runbook](../evidence/RUNBOOK.md).
+  the [evidence runbook](../evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
 - [ ] **Three-seat default smoke:** when the default roster or a default model
   changes, one smoke run on the exact default roster, unless the canary panel's
   model and effort routes already match it.
-- [ ] **Known limitations:** any gap, for example a race the canary cannot
-  reproduce, is written in prose in the CHANGELOG section. There are no waivers.
+- [ ] **Known limitations:** update the
+  [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps), removing
+  what this release closed and adding what it found, and write any gap that limits
+  a release claim in prose in the CHANGELOG section. There are no waivers.
 - [ ] **`R..P` review:** the diff only re-pins, updates the installed copy, and
   documents; `make release-check P=<head>` passes.
 

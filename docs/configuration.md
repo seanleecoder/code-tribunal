@@ -126,13 +126,11 @@ for stronger review quality.
 | OpenCode | `deepseek/deepseek-v4.1-flash-1017` | `low` | yes |
 | Cursor | `composer-2.5` | named-model default | no |
 
-The Claude and OpenCode defaults have not yet passed a real-provider run; the
-2.0.3 Candidate Canary is the first. GPT-6 Luna passed real review and critique in
-[GitHub smoke run 37229611088](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/37229611088)
-on 2026-10-04, and Composer 2.5 in
-[the separate four-seat run](evidence/record-current-cli-model-smoke-2026-10-04.md).
-Release validation still requires the final published images. Follow the
-[default-model smoke procedure](evidence/RUNBOOK.md#runs-1--2--current-image-lifecycle-two-independent-chains-per-platform).
+Each release's Candidate Canary panel runs real review and critique on the release
+images with the shipped efforts, and its summary records each seat's model; see
+[effort routes and the default smoke](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
+The [release checklist](development/release-process.md#release-pull-request-checklist)
+sets when a separate smoke is needed.
 
 ### Production model/effort recommendations
 
@@ -169,19 +167,16 @@ reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
 and compatibility. `auto` remains a supported operator override, but should not
 be used for reproducible CI or evidence.
 
-Recommendations do not establish release validation. Before claiming Grok 4.7
-validated, confirm its exact selector with the pinned CLI and run a real Cursor
-review and critique with no silent fallback. MiMo Pro / unset and
-`grok-4.7-medium` passed that candidate route canary on 2026-10-04; Pro's review
-job took 12m47s. These canaries predate the subsequent CLI dependency upgrade;
-they do not validate Pro/Grok on newer pins. The current-pin default/Composer
-smokes are [recorded separately](evidence/record-current-cli-model-smoke-2026-10-04.md)
-and prove availability for the recorded account, not every customer plan.
-The `xhigh` and `-fast` Cursor variants were
-not canaried. See the
-[model-refresh evidence](evidence/record-model-refresh-2026-10-04.md), the separate
-[Pro/Grok evidence](evidence/record-mimo-pro-grok-2026-10-04.md), and the
-[model-specific evidence procedure](evidence/RUNBOOK.md#run-6--cursor-model-specific-evidence-optional).
+Recommendations do not establish release validation: MiMo Pro and the Grok 4.7
+variants have no live evidence on the current pins (earlier route canaries are at
+[`v2.0.3`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence)).
+MiMo Pro's review job took nearly 13 minutes in that canary, so check reviewer timeouts.
+Before claiming one validated, run a real review and critique with no silent
+fallback: a
+[route panel](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke)
+for MiMo, and the
+[Cursor model-specific check](evidence/RUNBOOK.md#cursor-model-specific-check) for
+Grok.
 
 ### Panel
 
@@ -391,7 +386,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
 | `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
-| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and operator evidence Chain B only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
+| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and the operator's mock lifecycle runs only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
 | `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Require the real Codex CLI; prevents a missing prerequisite from falling back to mock behavior. This is the Codex seat's control name. |
 | `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |

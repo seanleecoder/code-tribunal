@@ -91,9 +91,9 @@ Open a same-repository pull request with a small, reviewable change. Confirm:
 Seeing a green run with a summary comment and no threads is normal: it means no
 finding reached two independent supporters, so every one of them is FYI.
 
-Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. Current
-repository-level live evidence and its limits are recorded in
-the [evidence index](../evidence/README.md).
+Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. What the
+project has proven live, and its limits, is indexed in the
+[evidence index](../evidence/README.md).
 
 ## Update or roll back
 

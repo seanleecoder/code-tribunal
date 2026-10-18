@@ -1,7 +1,7 @@
 # Evidence consumer projects
 
-The live-evidence runs in [`RUNBOOK.md`](RUNBOOK.md) need real consumer projects with
-real runners and protected credentials. Two long-lived,
+The Candidate Canary and the manual checks in [`RUNBOOK.md`](RUNBOOK.md) need real
+consumer projects with real runners and protected credentials. Two long-lived,
 operator-controlled, **public** scratch projects serve that purpose. They were used
 for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
@@ -105,12 +105,11 @@ one.
 The posted-body refresh check needs a bot-authored thread created by an **older**
 image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR #6
 (created `2026-07-25 20:13:42`, `issue_id` shared with the GitLab note below). The
-1.0.1 image refreshed it to `render-body.v3` on 2026-07-30
-([record](record-render-body-v3-refresh.md)), so it is the subject for the 2.0
-`render-body.v4` refresh: after the repin, merge `main` into
-`evidence/chain-b-88bc941`, confirm the branch diff is still only the fixture, and
-re-review with `AI_REVIEW_MOCK_SCENARIO=blocking_alt`. Closing the PR is fine;
-deleting the comment or the branch is not.
+1.0.1 image refreshed it to `render-body.v3` and the 2.0.0 candidate to
+`render-body.v4`. Run the next refresh with the
+[body-format refresh](RUNBOOK.md#body-format-refresh) procedure on
+`evidence/chain-b-88bc941`, after confirming its diff is still only the fixture.
+Closing the PR is fine; deleting the comment or the branch is not.
 
 ## GitLab consumer — `seanleecoder/code-tribunal-demo`
 
@@ -210,5 +209,5 @@ refresh surface.
    is what makes a *publication* failure withhold the merge; it says nothing
    about findings.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
-7. Run Chain A first, then Chain B; delete the mock variables afterwards and confirm
-   they are gone.
+7. After any manual mock run, follow the
+   [mock cleanup](RUNBOOK.md#the-deterministic-mock-reviewer).

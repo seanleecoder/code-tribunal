@@ -1,235 +1,39 @@
-# Live evidence index and runbook
+# Live evidence
 
-> **Retired process.** From 2.1.0 a release is a signed tag verified against a cited
-> Candidate Canary run; see the [release process](../development/release-process.md).
-> Release inputs, evidence records, and waivers below describe releases up to 2.0.3.
-> This page is being cut down under ADR-0004 migration step 4.
+Live evidence complements executable tests; it does not replace them. Whatever an
+operator publishes from a live run (a release body, a CHANGELOG limitation, a change
+request, a retained artifact) carries only sanitized identifiers, digests, outcomes
+and audit results. Never publish credentials, CLI session material, private consumer
+coordinates, proprietary source, or sensitive model content.
 
-Live evidence complements executable tests; it does not replace them. Record
-only sanitized identifiers, digests, expected/actual outcomes, and audit results.
-Never store credentials, CLI session material, proprietary source, or sensitive
-model content.
+| Page | Contents |
+|---|---|
+| [`RUNBOOK.md`](RUNBOOK.md) | operator mechanics for live checks, manual diagnosis of canary campaigns, and the [carried coverage gaps](RUNBOOK.md#carried-coverage-gaps) |
+| [`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md) | the public demo consumers the canary and manual checks use, and their per-release setup |
 
 ## Per-release evidence
 
-Each release's evidence table lives in one place: the **Live campaign** section of
-its notes, [`release/<version>.md`](../../release/), which is pinned byte-identical
-to the release tag. This index does not restate it. The cited records and any
-waivers, with their reasons, are listed in `release/release-inputs.json` at that
-release's tag.
+From 2.1.0, a release is traced by its signed tag and the canary run its release
+body cites, together with that run's verdicts; see the
+[release process](../development/release-process.md).
 
-- Latest: [2.0.3](../../release/2.0.3.md)
-- Earlier: [2.0.2](../../release/2.0.2.md), [2.0.1](../../release/2.0.1.md), [2.0.0](../../release/2.0.0.md),
-  [1.0.2](../../release/1.0.2.md), [1.0.1](../../release/1.0.1.md),
-  [1.0.0](../../release/1.0.0.md)
+Releases up to 2.0.3 used generated evidence records. Their notes are under
+[`release/`](../../release/), and their records stay at each tag, for example
+[`v2.0.3:docs/evidence/`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence).
 
-Up to 2.0.3, `scripts/check_release_inputs.py` rejected activation when a cited record is not a
-matching scoped pass or was not a registered waiver. Row tiers (release-gating
-versus regression-covered) and the regression tests behind each row are
-classified below.
+## Live versus regression coverage
 
-## 1.0 historical evidence matrix
+Live runs spend real tokens and platform quota, so they cover only what a test
+cannot stand in for.
 
-This section records the evidence that supported the already-released `v1.0.0`.
-It is retained for provenance and is not a passing matrix for any later release.
-
-> Historical candidates (`b674d1e`, `15d424f`, and earlier) remain useful
-> provenance only. **Every release-gating row below, including image
-> publication, must be repeated against the final rebuilt base+reviewer pair
-> for the frozen runtime source `R`.**
->
-> Digest note: `AI_REVIEW_MOCK_SCENARIO` and the gate `run_id` binding ship
-> inside the product image. Both the real default-model smoke (Chain A) and the
-> deterministic-mock lifecycle (Chain B) must run against that final pair.
-
-Live evidence spends real model tokens and real platform quota, so each row is
-classified by whether a live run proves something the regression suite cannot:
-
-- **Release-gating (live-only):** exercises a real model, a real platform
-  merge-block, real credential withholding, or the registry — behavior no unit
-  test can stand in for. A scoped live pass is required for the release under
-  preparation.
-- **Regression-covered (live-optional):** the logic is proven fail-closed by
-  named tests inside `make quality`; a live run only adds CI-wiring confidence
-  and is **not** a release gate. This is deliberate — two of these race windows
-  were never reproducible live.
-
-### 2.0.3 (released 2026-10-18)
-
-Against runtime `10f2f8deef3ee63c952df76d5f627ed6aa2e7ea9` and its final published
-image pair, [Candidate Canary 39124481046](record-candidate-canary.md) passed image
-identity/provenance, real four-seat review and critique on both platforms,
-[GitHub](record-github-current-image.md) and [GitLab](record-gitlab-current-image.md)
-lifecycles, [hostile-MR containment](record-gitlab-hostile-mr.md), and cleanup. Its
-GitHub panel supplies the [effort-route record](record-model-effort-routes.md) for
-the Claude, Codex, and OpenCode `low` defaults; no separate three-seat smoke ran.
-GitHub preparation revision-race evidence is the sole registered waiver, under the
-code-path rule.
-
-### 2.0.2 (released 2026-10-04)
-
-Against runtime `3db908f06d141d23de99e7578ae5b5482ebaa498` and its final published
-image pair, Candidate Canary 37234182540 passed image identity/provenance, real
-four-seat review and critique on both platforms, both lifecycles, hostile-MR
-containment, and cleanup; the records were rewritten for 2.0.3 and are at the
-`v2.0.2` tag.
-The separate [GitHub three-seat smoke](record-github-default-model-smoke.md) passed
-on the shipped defaults and restored v1/v2 artifact contract; its
-effort-route record binds Claude `medium`, Codex
-`low`, and absent MiMo effort to the same source and pair. GitHub preparation
-revision-race evidence is the sole registered waiver for 2.0.2. SPEC-41 remains
-open; the compatible contract still requires confidence and has no posted loss
-notice. Earlier 2026-10-04 model runs below remain supplemental.
-
-> **Gate removal.** The merge gate was deleted in `review_config.v3`. The
-> **Status** cells below are historical records of what a released image did on
-> the date given and are left exactly as recorded, including their references to
-> a required `gate` check that genuinely blocked. The **Regression coverage**
-> column is a claim about the current `make quality` and has been updated; there
-> is no `test_gate.py` any more, and no live step verifies that a check blocks.
-
-| Suite | Tier | Regression coverage (`make quality`) | Status |
-|---|---|---|---|
-| Image publication verification | release-gating | n/a (registry/attestation) | **Passed** 2026-07-25 against the final pair for `R = 88bc941` — anonymous digest resolution, OCI revision label equal to `R`, and provenance attestations bound to publication run `30125524008` on both subjects. [record](record-image-publication-verification.md) |
-| GitHub default-model + current-image lifecycle | release-gating | `test_post.py`, `integration/test_publish_e2e.py`, `integration/test_revision_lifecycle_e2e.py` (posting/state logic) | **Passed** 2026-07-25 for `R = 88bc941`. Smoke: real 3-seat panel, `panel_status: full`, 4 security findings posted (run `30174011868`). Lifecycle: create → unchanged rerun → **changed-body in-place update** → resolve → persistence → reopen → stale-head no-op, with the required `gate` check genuinely blocking (`mergeable_state=blocked`), run `30173073036` attempts 1–7. [smoke](record-github-default-model-smoke.md) · [lifecycle](record-github-current-image.md) |
-| GitLab current-image lifecycle | release-gating | same posting/state tests via `fake_gitlab` | **Passed** 2026-07-25 for `R = 88bc941` (MR !11, hardened child): create → unchanged rerun → **changed-body in-place update** → resolve → reopen on one identity, with `detailed_merge_status: ci_must_pass` withholding the merge throughout. [record](record-gitlab-current-image.md) |
-| Codex `max` / OpenCode `xhigh` effort routes | release-gating | n/a — real provider route | Not completed at 1.0.0; waived for 1.0.1 with a registered reason — [record](record-model-effort-routes.md) |
-| GitLab hostile-MR credential/enforcement boundary | release-gating | `test_verify_pipeline_trust.py` (composition), fork-secret withholding in `test_input_bundle.py` | **Passed** 2026-07-25 for `R = 88bc941` (MR !12, pipelines `2705749548`/`2705750931`): both protected credentials withheld on an unprotected ref (`OPENROUTER_API_KEY absent`, `GITLAB_TOKEN absent`), prepare failed closed with an empty `inputs/` artifact, no credential value in any trace, and the trust auditor rejected the hostile composition (exit 1) while accepting the legitimate one. **Caveat:** the hostile config *did* substitute the container image (ran `alpine:3.20`); containment came from credential withholding plus the out-of-band auditor, not in-pipeline enforcement — do not claim trusted-image enforcement. [record](record-gitlab-hostile-mr.md) |
-| Snapshot symlink containment (SPEC-31) | regression-covered | `test_input_bundle.py` — every variant (relative, absolute, parent-escaping, dangling, directory, `/proc/self/environ`) + copy/descent races + shared-builder | Confirm ≤1 representative variant live; regression suite is authoritative. Folded into the hostile-MR [record](record-gitlab-hostile-mr.md). |
-| Gate/config artifact integrity logic (SPEC-33) | regression-covered | `test_consensus_integrity.py` (run-id/digest/critic forgery); `test_gate.py` was deleted with the gate | Forged evidence from another run/config fails closed in consensus and gate. This covers the *integrity logic* only — the *live* forged-gate-at-a-credential-boundary probe stays release-gating in the hostile-MR row above. |
-| GitHub revision failures (SPEC-34) | regression-covered | `test_input_bundle.py`, `test_github_platform.py` — all three race boundaries incl. manifest-finalization, plus HTTP 406 | Live-optional; **waived** for 1.0.0 with a reason registered under `verification.evidence_waivers`. The **stale-head** boundary was nonetheless reproduced live in run `30173073036` attempt 7 (`post` returned `status: stale_head` and wrote nothing; `gate` returned `passed_stale_head`). The other two boundaries and the 406 path rest on the regression suite. [record](record-github-revision-failures.md) |
-
-### Supplemental experimental evidence (not release-gating)
-
-| Suite | Status | Evidence |
-|---|---|---|
-| Cursor reviewer real-run adapter and critique | **Observed; SPEC-21 partial; historical supporting evidence only** | [Supplemental record](record-cursor-real-runs.md): private GitLab pipeline `185695` and public GitHub workflow `30080420563` both produced successful, resolution-eligible Cursor artifacts and full panels. Both recorded `model: auto`; neither exercised the hostile permission-denial prompt or the 1.0.1 image pair. |
-| Three-seat model refresh / MiMo Flash | **Passed, scoped to older CLI pins** | [Flash record](record-model-refresh-2026-10-04.md): run `37210076322`, three-seat candidate config on runtime `e1313b5`; real review/critique, sequential tools, structured output, full consensus and posting. Unselected supplemental evidence, not final-image release validation. |
-| MiMo Pro / Cursor Grok Medium | **Passed, scoped to older CLI pins** | [Pro/Grok record](record-mimo-pro-grok-2026-10-04.md): run `37210473861` on runtime `e1313b5`; four-seat review/critique, Pro tool-error recovery, full consensus and posting. Unselected supplemental evidence, not validation of newer CLIs or final release images. |
-| Current-CLI default roster / Composer 2.5 | **Passed, current CLI pins; candidate config** | [Current-CLI record](record-current-cli-model-smoke-2026-10-04.md): default run `37229611088` and Composer run `37229616128` on runtime `46c8c46`; authenticated selectors, real review/critique, MiMo tools/structured output, full consensus and posting. Unselected supplemental evidence, not final PR #174 image or release validation. |
-
-Previous GitHub dogfood runs proved workflow execution, authenticated state, and
-some inline posting, but not all current-image lifecycle paths. Previous GitLab
-runs proved a real consumer flow but not the hostile-MR deployment boundary.
-Those pre-1.0 acceptance records were deleted rather than archived; `git log`
-retains them.
-
-### Known gaps and missing evidence
-
-- **Positive changed-body in-place update — closed 2026-07-25.** Demonstrated live
-  on **both** platforms against `R = 88bc941` using the mock `blocking_alt`
-  scenario, with platform confirmation that the existing comment was rewritten
-  rather than duplicated: GitHub comment `3650942127` (`created 20:13:42` →
-  `updated 20:20:37`) and GitLab note `3601861614` (`created 20:47:29` →
-  `updated 20:59:24`), each with `updated_discussions: 1`, `created: 0`, and the
-  same `issue_id` across both platforms. Also unit-covered by
-  `test_post.py::test_post_existing_marker_updates_changed_body`.
-- **Cursor has no deny-policy evidence.** The seat is supported and selected like
-  any other through `AI_REVIEW_REVIEWERS`, but it carries a separate credential
-  and egress path and is off in the shipped default roster. Through 1.0.2 no
-  release campaign exercised it; from 2.0.0 the four-seat Candidate Canary runs
-  it on both platforms; the 2.0.2 final-pair canary uses `composer-2.5`,
-  establishing that model route while leaving deny-policy behavior unproven. The supplemental [real-run record](record-cursor-real-runs.md) covers
-  historical coordinates.
-  A release that ships Cursor on the default roster would need its own gating row.
-  Note the distinction: `auto` is a valid Cursor selector for production use, but
-  evidence proving behavior for a *specific* model needs an explicit slug.
-  Separately, nothing verifies that the pinned `cursor-agent` honours the
-  `Shell(*)` and write denies at runtime — only that the policy reaches every
-  invocation; see
-  [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md).
-- **The added-file path is proven live on both platforms — closed 2026-09-27.**
-  The current candidate Chain B ran an **adding** fixture on GitHub and GitLab, with every seat
-  accepting its finding on the added file
-  ([GitHub](record-github-current-image.md), [GitLab](record-gitlab-current-image.md)).
-- **`render-body.v4` refresh is proven on both platforms.** A v3 GitHub thread
-  was refreshed once at 2.0.0 ([record](record-render-body-v4-refresh.md)). The
-  preserved 1.0.0-format GitLab note was refreshed once by the 2.0.1 candidate
-  with no duplicate and unchanged identity ([record](record-gitlab-body-refresh.md)).
-  Long bodies subject to truncation remain unexercised.
-- **Trusted-image enforcement is not established.** The hostile-MR probe showed a
-  consumer `.gitlab-ci.yml` can substitute the pinned base/reviewer images by
-  declaring them in its own top-level `variables:` and enabling variable
-  forwarding; nothing in the pipeline verifies the running image. Credential
-  withholding and the operator-run trust auditor are what contain it. Docs must not
-  assert in-pipeline trusted-image or trusted-composition enforcement.
-- With the release-gating rows now scoped passes against the final `R` and image
-  digests, "credential isolated" may be claimed **only** in the specific, recorded
-  sense — protected credentials withheld from an unprotected-ref MR in the
-  hardened child topology — and not as a product-wide property. Network egress is
-  still unenforced at the container/runner boundary, forks are untested on GitLab,
-  and Cursor is off in the shipped default roster with no gating row. The
-  regression-covered rows do not block the release.
-
-## Consumer projects
-
-The live runs use two long-lived, operator-controlled, public scratch consumers —
-`seanleecoder/code-tribunal-demo` on GitHub and on GitLab (project id `84667714`),
-plus the protected GitLab template project `seanleecoder/code-tribunal-ci-template`.
-Reuse them every release: they already carry protected credentials, the
-mock-variable mapping, the `evidence/` fixture branches, and the older bot
-threads the posted-body refresh check needs. The same demos host the
-[Candidate Canary](../../CONTRIBUTING.md#candidate-canary). See
-[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md).
-
-## Record format
-
-Copy [record-template.md](record-template.md) for each independently repeatable
-run. Required fields:
-
-- Platform, date/time, deployment topology, and operator-controlled project.
-- Change-request, pipeline/workflow, and job IDs/URLs.
-- Exact source commit and base/reviewer image tags and digests.
-- Template/workflow commit and protection/required-check settings.
-- Expected attack or lifecycle operation and actual result.
-- Artifact and log paths inspected.
-- Secret audit result and known unexercised paths.
-
-## GitLab hostile-MR procedure
-
-Use an unprotected source branch or fork in a scratch consumer. Attempt to
-replace jobs/templates, forward root/bridge variables, override trusted image
-and config values, print protected credential names, forge consensus or post artifacts,
-and add a symlink targeting environment data. Confirm the protected composition
-is retained or the pipeline safely withholds credentials/fails. Audit every
-trace and downloaded artifact for credential values.
-
-Exercise both the chosen production topology and the trust auditor. Child mode
-must use exactly two same-project, same-SHA includes with inheritance and both
-forwarding flags disabled.
-
-The live-only value here is real protected-credential withholding and real
-trusted-composition enforcement. The SPEC-31 symlink variants and the SPEC-33
-forged-artifact integrity binding are regression-covered
-(`test_input_bundle.py`, `test_consensus_integrity.py`); confirm
-at most one representative symlink variant live rather than re-running every
-class.
-
-## Current-image lifecycle procedure
-
-Publish both images from one reviewed release-candidate commit and verify their
-digests. On each platform, create an inline finding, rerun unchanged, change the
-body, resolve, reopen, and confirm that a `blocker`-severity finding leaves the
-pipeline green. Record post/state artifacts and platform object IDs at every step.
-Unrelated line movement is **not** in the required live sequence: its internal
-remap (finding identity + persisted anchor moved, existing discussion updated not
-duplicated) is regression-covered, and only the *platform-visible* re-anchoring of
-a moved comment is a live-optional confirmation — see the runbook.
-
-Run this as two independent chains: one **real** panel (from 2.0.0 the
-[Candidate Canary](RUNBOOK.md#step-0b--candidate-canary-before-any-consumer-repin)
-record), and one **deterministic-mock** lifecycle chain on a separate finding identity
-(`AI_REVIEW_LOCAL_MOCK=1` + `AI_REVIEW_MOCK_SCENARIO`, with `blocking_alt` for the
-changed-body step). The below-quorum FYI/summary-comment path and the
-inline-unmappable summary fallback are **regression-covered**
-(`integration/test_publish_e2e.py`, `test_post.py`), not part of the live mock
-chain. The exact minimal-token sequence is in the [RC runbook](RUNBOOK.md).
-
-## GitHub failure procedure
-
-Forcing PR head movement at each prepare boundary and the oversized-diff HTTP 406
-path are **regression-covered** by the SPEC-34 tests in
-`ai-review/tests/unit/test_input_bundle.py` and `test_github_platform.py` (all
-three race boundaries, including manifest-finalization, plus 406). A live smoke is
-optional wiring confirmation only and does not gate the release — the timing
-windows are milliseconds wide and two were never reproducible live.
+| Behavior | Proven by |
+|---|---|
+| Image identity, OCI revision labels, provenance | canary `verify-candidate` |
+| Real review and critique on every seat, both platforms | canary `panel` |
+| Posting and state lifecycle on the real platform APIs | canary `lifecycle` (mock reviewers); `test_post.py`, `integration/test_publish_e2e.py`, `integration/test_revision_lifecycle_e2e.py` |
+| Protected-credential withholding and composition audit on GitLab | canary `hostile`; `test_verify_pipeline_trust.py`, prepare failing closed without a platform token in `test_input_bundle.py` |
+| Snapshot symlink containment (SPEC-31) | `test_input_bundle.py` |
+| Artifact and configuration integrity (SPEC-33) | `test_consensus_integrity.py` |
+| GitHub revision races and the HTTP 406 path (SPEC-34) | `test_input_bundle.py`, `test_github_platform.py`; the windows are too narrow to reproduce live, except the stale-head no-op the canary drives |
+| Below-quorum FYI and the inline-unmappable summary fallback | `integration/test_publish_e2e.py`, `test_post.py` |
+| Finding identity across line movement | `integration/test_revision_lifecycle_e2e.py`, `test_anchors.py` |
