@@ -14,14 +14,10 @@ from typing import (
 from ai_review import types as domain_types
 from ai_review.schema import load_schema
 
-# Only shapes that production code types are mirrored here; a schema with no
-# TypedDict needs no alignment check. Each path selects the mirrored node.
 ARTIFACT_TYPES = {
-    ("finding_batch.schema.json", "properties/findings/items"): domain_types.Finding,
-    ("critique_batch.schema.json", "properties/critiques/items"): domain_types.Critique,
-    ("consensus.schema.json", ""): domain_types.Consensus,
-    ("state.schema.json", ""): domain_types.State,
-    ("post_result.schema.json", ""): domain_types.PostResult,
+    "consensus.schema.json": domain_types.Consensus,
+    "state.schema.json": domain_types.State,
+    "post_result.schema.json": domain_types.PostResult,
 }
 ALL_JSON_TYPES = {
     "array",
@@ -278,13 +274,10 @@ def _assert_typed_dict_matches_schema(
 
 class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
     def test_artifact_types_recursively_match_schemas(self) -> None:
-        for (schema_name, path), artifact_type in ARTIFACT_TYPES.items():
+        for schema_name, artifact_type in ARTIFACT_TYPES.items():
             with self.subTest(schema_name=schema_name, artifact_type=artifact_type.__name__):
                 schema = load_schema(schema_name)
-                node = schema
-                for part in filter(None, path.split("/")):
-                    node = node[part]
-                _assert_typed_dict_matches_schema(artifact_type, node, schema)
+                _assert_typed_dict_matches_schema(artifact_type, schema, schema)
 
     def test_conditional_branches_reference_only_live_group_fields(self) -> None:
         """`allOf` is invisible to the alignment walk above.

@@ -1,8 +1,7 @@
 from typing import Literal, NotRequired, TypedDict
 
 # JSON helper aliases for extension points whose schemas intentionally allow any
-# object shape (for example state run_history entries and raw candidate
-# signatures carried through the reducer).
+# object shape (for example state run_history entries).
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 type JsonObject = dict[str, JsonValue]
@@ -34,7 +33,6 @@ type MatchPrecedence = Literal[
     "title_anchor",
     "symbol_title",
 ]
-type CritiqueVerdict = Literal["agree", "dispute", "noise", "duplicate"]
 type PostStatus = Literal[
     "success",
     "stale_head",
@@ -70,45 +68,6 @@ class Anchor(TypedDict):
     hunk_header: str
     context_hash: str
     symbol: str | None
-
-
-class Fingerprints(TypedDict):
-    title_fingerprint: str
-    evidence_fingerprint: str
-
-
-class CandidateIssueSignature(TypedDict):
-    path_key: str
-    category: Category
-    side: AnchorSide
-    context_hash: str
-    title_fingerprint: str
-    symbol: str | None
-
-
-class Finding(TypedDict):
-    source_finding_id: str
-    run_local_id: str
-    anchor: Anchor
-    severity: Severity
-    category: Category
-    title: str
-    body: str
-    evidence: list[str]
-    suggestion: str | None
-    confidence: float
-    fingerprints: Fingerprints
-    candidate_issue_signature: CandidateIssueSignature
-
-
-class Critique(TypedDict):
-    target_source_finding_id: str
-    critic: ReviewerId
-    verdict: CritiqueVerdict
-    duplicate_of_source_finding_id: str | None
-    rationale: str
-    adjusted_severity: Severity | None
-    confidence: float
 
 
 class CritiqueSummary(TypedDict):
