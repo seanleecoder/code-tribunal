@@ -56,7 +56,7 @@ recommendation's disposition.
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
     canaries every release and the hostile canary when the trust boundary changes
-    ([draft ADR-0004](../decisions/0004-simplified-release-process.md)).
+    ([ADR-0004](../decisions/0004-simplified-release-process.md), accepted on 2026-10-18).
   - S03: the cheap Python mock switch.
   - S11: narrowed to SPEC-67.
   - S13: kept for now.
@@ -95,6 +95,7 @@ recommendation's disposition.
 | State overflow (2026-10-16) | Fix the causes in 2.0.3 through N13; close the SPEC-52 draft (#113) | Stop appending `run_history` and bound alias growth. The draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | S13 revisit (2026-10-16) | Note an option, no change | When S13 is revisited, consider "auto-resolve only on a full-grade run" as a replacement for the resolution quorum, not an addition. |
 | S14 legacy state decoder (2026-10-18) | Delete in 2.0.3 instead of registering it | No release ever wrote the `checksum=` wrapper; it was added with the current encoder before v0.1.0. Nothing needs migrating. |
+| ADR-0004 (2026-10-18) | Accept as written | The cutover pull request (ADR-0004 migration step 3) is next. |
 | Touched waivable evidence rows (2026-10-18) | Waive regression-covered rows when the diff stays off the row's code paths | Amends the [triage rule](../development/release-process.md#scoping-the-live-campaign). 2.0.3 waives the SPEC-34 revision-race row this way. |
 
 ## Recommended order
@@ -109,7 +110,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-2. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
+2. [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted. Migrate
    the release tooling (S01), replace the pin checker with Renovate and zizmor
    (N01), and prune the evidence docs.
 3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published

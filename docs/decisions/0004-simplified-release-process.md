@@ -1,6 +1,6 @@
 # ADR-0004 — Simplified release process and installation direction
 
-- **Status:** Proposed
+- **Status:** Accepted on 2026-10-18
 - **Date:** 2026-10-14
 - **Decision:** Simplification audit S01, with N01 (supply-chain pins) and N03 (GitHub
   installation)
@@ -225,6 +225,7 @@ Each pull request primarily changes one boundary.
 2. **2.0.3, on the old process.** Finalize, publish and verify as today, but skip
    `release-open-next`. Do not change `candidate-canary.yml` until 2.0.3 evidence is
    generated, because the record generator rejects unexpected artifacts.
+   Done: 2.0.3 was released on 2026-10-18.
 3. **Cutover (release and supply chain), after 2.0.3 is published.**
    - Add `check_release.py`, the new `publish-release.yml`, and the canary
      `run-name` plus its `candidate.json` identity artifact.
