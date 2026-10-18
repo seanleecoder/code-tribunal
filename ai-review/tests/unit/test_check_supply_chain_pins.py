@@ -182,9 +182,9 @@ class SupplyChainPinCheckTests(unittest.TestCase):
                     [f"r must use exact == pins only, got {loose!r}"],
                 )
 
-    def test_constraints_reject_environment_markers(self) -> None:
-        # pip skips a constraint whose marker does not match the image's Python, so
-        # a conditional constraint pins nothing and must not count as one.
+    def test_constraints_accept_only_bare_exact_pins(self) -> None:
+        # pip skips a constraint whose marker does not match the image's Python, and a
+        # glued range loosens it, so neither pins the package in the image.
         base = "RUN python -m pip install --constraint /tmp/c.txt pip requests\n"
         for constraint in (
             'requests==2.34.2; python_version < "3.14"',

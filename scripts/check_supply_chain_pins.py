@@ -195,24 +195,22 @@ def _image_pin_issues(gitlab: str, github: str) -> list[str]:
     return issues
 
 
-def _requirements(text: str, *, markers: bool = False) -> Iterator[str]:
-    """Requirement lines without comments or `-c` includes.
-
-    Environment markers are stripped only when `markers` allows them. Otherwise a
-    marked line is yielded whole and fails the exact-pin match: pip skips a
-    constraint whose marker does not apply, so it pins nothing in the image.
-    """
+def _requirements(text: str) -> Iterator[str]:
+    """Requirement lines without comments or `-c` includes."""
     for line in text.splitlines():
-        requirement = (line.split(";", 1)[0] if markers else line).strip()
+        requirement = line.strip()
         if requirement and not requirement.startswith(("#", "-c ")):
             yield requirement
 
 
 def _exact_requirement_issues(name: str, text: str, *, markers: bool = False) -> list[str]:
+    """Require `==` pins; `markers` lets an environment marker follow the pin."""
     return [
         f"{name} must use exact == pins only, got {requirement!r}"
-        for requirement in _requirements(text, markers=markers)
-        if not EXACT_REQUIREMENT.fullmatch(requirement)
+        for requirement in _requirements(text)
+        if not EXACT_REQUIREMENT.fullmatch(
+            requirement.split(";", 1)[0].rstrip() if markers else requirement
+        )
     ]
 
 
