@@ -34,6 +34,17 @@ versioning.
   `prompts/` and `rules/`, not from directories beside the file that
   `AI_REVIEW_CONFIG` names. The shipped prompt text is unchanged (SPEC-47).
 
+### Deprecated
+
+- The hardened mirrored GitLab child pipeline (`review-child.gitlab-ci.yml`,
+  `pipeline_trust.py --mode child`) is deprecated and will be removed in the
+  next major release. Its isolation holds only while merge-request authors
+  cannot edit the consumer CI file. Use a direct include protected by an
+  external CI configuration file or an `override_project_ci` policy, and
+  restrict pipeline variables; see the
+  [GitLab guide](docs/getting-started/gitlab.md#protect-the-ci-composition)
+  (SPEC-43, COMPAT-004).
+
 ### Removed
 
 - Prepare no longer writes `inputs/prompts/`, `inputs/rules/`, or

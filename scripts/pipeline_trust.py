@@ -86,6 +86,7 @@ def _validate_project_entry(
     return issues
 
 
+# COMPAT-004: hardened child mode is deprecated in 2.0.3 and removed with N02.
 def _validate_child_mode(
     config: dict[str, Any], *, expected_project: str, expected_sha: str
 ) -> list[str]:

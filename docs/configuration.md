@@ -277,7 +277,7 @@ subprocess environments. The transport-specific surface is:
 
 | Concern | GitLab | GitHub |
 |---|---|---|
-| Installation | Protected direct include or hardened child pipeline | Checked-in Actions workflow |
+| Installation | Protected direct include (hardened child pipeline deprecated) | Checked-in Actions workflow |
 | Trusted workflow | Protected template project/ref and variable boundary | Base-branch `pull_request` workflow; never `pull_request_target` |
 | Review target | Merge request | Pull request |
 | Inline posting | Discussions/DiffNotes | Pull-request review comments |
