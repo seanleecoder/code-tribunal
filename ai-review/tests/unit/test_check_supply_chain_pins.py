@@ -76,24 +76,31 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             pins._dockerfile_issues("x", text),
             ["x: FROM ${NODE_BUILDER} is not pinned by sha256 digest"] * 2,
         )
-        quoted = f'ARG BASE="python:3.14{DIGEST}"\nFROM $BASE\n'
-        self.assertEqual(pins._dockerfile_issues("x", quoted), [])
 
-    def test_arg_words_follow_buildkit(self) -> None:
-        # A quoted value is one word: NOTE's text must not invent a BASE assignment.
-        smuggled = f'ARG BASE=alpine:latest\nARG NOTE="unused BASE=alpine{DIGEST}"\nFROM $BASE\n'
-        self.assertEqual(
-            pins._dockerfile_issues("x", smuggled), ["x: FROM $BASE is not pinned by sha256 digest"]
-        )
+    def test_global_args_accept_only_plain_words(self) -> None:
         # A bare redeclaration keeps the earlier default (BuildKit's buildMetaArgs).
         redeclared = f"ARG BASE=python{DIGEST}\nARG BASE\nFROM $BASE\n"
         self.assertEqual(pins._dockerfile_issues("x", redeclared), [])
         reviewer = redeclared.replace("BASE", "AI_REVIEW_BASE_IMAGE")
         self.assertEqual(pins._base_image_issues(f"FROM python{DIGEST}\n", reviewer), [])
-        unbalanced = f'ARG BASE="python{DIGEST}\nFROM $BASE\n'
-        self.assertIn(
-            f"x: cannot parse 'ARG BASE=\"python{DIGEST}'", pins._dockerfile_issues("x", unbalanced)
-        )
+        # Each of these could make the checker resolve a different BASE than BuildKit,
+        # so it reports the ARG instead of guessing; FROM $BASE then stays unresolved.
+        for arg in (
+            f'ARG NOTE="unused BASE=alpine{DIGEST}"',
+            f'ARG "BASE"=alpine{DIGEST}',
+            f"ARG BASE=alpine\\ {DIGEST}",
+            f'ARG BASE="alpine{DIGEST}',
+            f"ARG BASE=alpine:latest\u00a0NOTE=alpine{DIGEST}",
+            f"ARG BASE=alpine:latest\vNOTE=alpine{DIGEST}",
+        ):
+            with self.subTest(arg=arg):
+                self.assertEqual(
+                    pins._dockerfile_issues("x", f"ARG BASE=alpine:latest\n{arg}\nFROM $BASE\n"),
+                    [
+                        f"x: cannot parse {arg!r}",
+                        "x: FROM $BASE is not pinned by sha256 digest",
+                    ],
+                )
 
     def test_continuations_follow_buildkit(self) -> None:
         pinned = f"FROM node:26{DIGEST}\n"
@@ -110,9 +117,14 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         # A genuine continuation makes the text a RUN argument, which Docker never builds.
         self.assertEqual(pins._dockerfile_issues("x", pinned + "RUN echo \\\nFROM alpine\n"), [])
         self.assertEqual(
-            pins._dockerfile_issues("x", "# escape=`\n" + pinned),
+            pins._dockerfile_issues("x", "# syntax=docker/dockerfile:1\n# escape=`\n" + pinned),
             ["x: cannot parse '# escape=`'"],
         )
+        # After the directive preamble an escape line is an ordinary comment.
+        for preamble in ("# note\n", "\n", pinned):
+            with self.subTest(preamble=preamble):
+                text = preamble + "# escape=`\n" + pinned
+                self.assertEqual(pins._dockerfile_issues("x", text), [])
 
     def test_shipped_dockerfiles_pin_every_stage(self) -> None:
         reviewer = _read(pins.REVIEWER_DOCKERFILE)

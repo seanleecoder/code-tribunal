@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -47,6 +46,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _dockerfile_lines(text: str) -> list[str]:
+    """Split only at newlines, as BuildKit does; str.splitlines() also splits at \\v and \\f."""
+    return [line.removesuffix("\r") for line in text.split("\n")]
+
+
 def _instructions(text: str) -> list[str]:
     """Join Dockerfile lines into instructions the way BuildKit's parser does.
 
@@ -57,7 +61,7 @@ def _instructions(text: str) -> list[str]:
     """
     instructions: list[str] = []
     current = ""
-    for line in text.splitlines():
+    for line in _dockerfile_lines(text):
         if line.lstrip().startswith("#") or not line.strip():
             continue
         continued = re.search(r"(?:^|[^\\])\\[ \t]*$", line)
@@ -72,26 +76,35 @@ def _parse_dockerfile(text: str) -> tuple[dict[str, str], list[tuple[str, str]],
     """Return the global ARG defaults, each FROM's (image, stage), and unparsed instructions.
 
     A FROM sees only the ARGs declared before the first FROM, so stage-local
-    redeclarations never resolve one. ARG words are split quote-aware, and a
-    declaration without `=` keeps the earlier default, as BuildKit's buildMetaArgs
-    does. Anything this cannot model is reported rather than guessed.
+    redeclarations never resolve one, and a declaration without `=` keeps the earlier
+    default, as BuildKit's buildMetaArgs does.
+
+    This deliberately accepts less than BuildKit rather than re-implementing its
+    tokenizer: global ARGs must be plain `NAME` or `NAME=value` words with no quotes
+    or escapes, and space and tab are the only whitespace accepted. Anything else is
+    reported, so syntax the checker cannot model fails instead of being guessed at.
     """
     global_args: dict[str, str] = {}
     froms: list[tuple[str, str]] = []
     unparsed: list[str] = []
-    escape = re.search(r"(?im)^#\s*escape\s*=\s*(\S*)", text)
-    if escape and escape.group(1) != "\\":
-        unparsed.append(escape.group(0))
+    # BuildKit reads parser directives only from the leading `# key=value` lines.
+    for line in _dockerfile_lines(text):
+        directive = re.fullmatch(r"#\s*([A-Za-z]+)\s*=\s*(\S*)\s*", line)
+        if directive is None:
+            break
+        if directive.group(1).lower() == "escape" and directive.group(2) != "\\":
+            unparsed.append(line)
     for instruction in _instructions(text):
+        if any(character.isspace() and character not in " \t" for character in instruction):
+            unparsed.append(instruction.strip())
+            continue
         keyword, *words = instruction.split() or [""]
         if keyword.upper() == "ARG" and not froms and not unparsed:
-            try:
-                assignments = shlex.split(instruction.split(None, 1)[1])
-            except (IndexError, ValueError):
+            if not words or not all(re.fullmatch(r"\w+(=[^\s\"'\\]*)?", word) for word in words):
                 unparsed.append(instruction.strip())
                 continue
-            for assignment in assignments:
-                key, separator, value = assignment.partition("=")
+            for word in words:
+                key, separator, value = word.partition("=")
                 if separator:
                     global_args[key] = value
         elif keyword.upper() == "FROM":
