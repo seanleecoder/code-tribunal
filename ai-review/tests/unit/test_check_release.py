@@ -172,6 +172,14 @@ class ReleaseTagTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "annotated signed"):
             tool.verify_tag(self.root, "v2.1.0")
 
+    def test_a_ref_must_carry_the_tag_object_signed_under_its_name(self) -> None:
+        _git(self.root, "tag", "-s", "v2.1.1", "-m", "Canary-run: 4242\n")
+        _git(self.root, "update-ref", "refs/tags/v2.1.0",
+             _git(self.root, "rev-parse", "refs/tags/v2.1.1"))
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "signed as 'v2.1.1'"):
+            tool.verify_tag(self.root, "v2.1.0")
+        self.assertEqual(tool.verify_tag(self.root, "v2.1.1")[2], "4242")
+
     def test_a_tag_off_main_is_rejected(self) -> None:
         _git(self.root, "update-ref", "refs/remotes/origin/main", self.repo.runtime_source)
         self._tag("Canary-run: 4242\n")
@@ -338,6 +346,27 @@ class ReleaseBodyTests(unittest.TestCase):
                 tool.ReleaseValidationError, "no `## \\["
             ):
                 tool.changelog_section(CHANGELOG, version)
+
+    def test_repository_links_are_pinned_to_the_tag(self) -> None:
+        blob = "https://github.com/seanleecoder/code-tribunal/blob/v2.1.0/"
+        notes = (
+            "- See [ADR-0004](docs/decisions/0004.md) and [guide](<docs/g.md#protect> \"Guide\").\n"
+            "- Root [file](/README.md?plain=1), [here](#unreleased), [web](https://example.test/x),"
+            " [mail](mailto:a@example.test), [up](./docs/../SECURITY.md).\n"
+            "[ref]: docs/ref.md \"Title\"\n"
+            "```md\n[example](docs/untouched.md)\n```\n"
+            "[after](docs/after.md)"
+        )
+        self.assertEqual(tool.absolute_links(notes, "v2.1.0"), (
+            f"- See [ADR-0004]({blob}docs/decisions/0004.md) and"
+            f" [guide](<{blob}docs/g.md#protect> \"Guide\").\n"
+            f"- Root [file]({blob}README.md?plain=1), [here]({blob}CHANGELOG.md#unreleased),"
+            " [web](https://example.test/x), [mail](mailto:a@example.test),"
+            f" [up]({blob}SECURITY.md).\n"
+            f"[ref]: {blob}docs/ref.md \"Title\"\n"
+            "```md\n[example](docs/untouched.md)\n```\n"
+            f"[after]({blob}docs/after.md)"
+        ))
 
     def test_the_body_records_identity_verdicts_and_the_attestation_command(self) -> None:
         source = "a" * 40

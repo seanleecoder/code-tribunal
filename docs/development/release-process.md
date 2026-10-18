@@ -105,7 +105,8 @@ row whose target has arrived, and remove completed spec files from the active
    checks out protected `main`, never the tag, and runs
    `scripts/check_release.py publish`:
    - The tag must be annotated, on `main`, and signed by a key in `main`'s
-     `.github/allowed_signers`.
+     `.github/allowed_signers`. The signed object's own tag name must equal the
+     tag being published, so a ref moved onto another release's signed tag fails.
    - `P` must pass the release check from step 3. `P`'s files are read through
      `git archive`, and no tag code executes.
    - The cited canary run must be a successful, first-attempt `workflow_dispatch`
@@ -115,7 +116,8 @@ row whose target has arrived, and remove completed spec files from the active
      `panel` and `lifecycle`. Every campaign summary must name the same candidate.
    - The `## [X.Y.Z]` section of `P`'s `CHANGELOG.md` must exist.
 
-   It then writes the release body: the CHANGELOG section, followed by an identity
+   It then writes the release body: the CHANGELOG section, with its
+   repository-relative links pinned to `blob/vX.Y.Z/`, followed by an identity
    block with `R`, `P`, both image references, the canary run with one verdict line
    per campaign and platform, the publication run, and the `gh attestation verify`
    command. The write-enabled job checks that the remote tag still points at the

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import posixpath
 import re
 import subprocess
 import sys
@@ -23,6 +24,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ai_review.canonical import json_loads_no_duplicates
 from check_supply_chain_pins import gitlab_image_pins, image_pin_issues
@@ -48,6 +50,10 @@ FIRST_VERSION = "2.1.0"
 RELEASE_PATHS = (GITHUB_TEMPLATE, GITHUB_INSTALLED, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/")
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
+# Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
+INLINE_DESTINATION = re.compile(r"(\]\([ \t]*<?)([^\s()<>]+)")
+REFERENCE_DESTINATION = re.compile(r"^( {0,3}\[[^\]\r\n]+\]:[ \t]*<?)([^\s<>]+)")
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 IDENTITY_ARTIFACT = "candidate-canary-identity"
 REQUIRED_CAMPAIGNS = ("panel", "lifecycle")
 # Campaign -> (job family, {platform: summary artifact}), as candidate-canary.yml runs them.
@@ -194,6 +200,13 @@ def verify_tag(root: Path, tag: str) -> tuple[str, str, str]:
             f"gpg.ssh.allowedSignersFile={trust}", "verify-tag", tag_object,
         )
     message = _git(root, "cat-file", "-p", tag_object)
+    # verify-tag checks the object's signature, not the ref that points at it: a
+    # signed v2.1.1 object under refs/tags/v2.1.0 must not publish as v2.1.0.
+    names = re.findall(r"(?m)^tag (.*)$", message.partition("\n\n")[0])
+    if names != [tag]:
+        raise ReleaseValidationError(
+            f"refs/tags/{tag} points at a tag object signed as {names[0] if names else None!r}"
+        )
     runs = CANARY_TRAILER.findall(message)
     if len(runs) != 1 or message.count("Canary-run:") != 1:
         raise ReleaseValidationError("the signed tag must cite exactly one `Canary-run: <run id>`")
@@ -310,6 +323,39 @@ def changelog_section(changelog: str, version: str) -> str:
     return match.group(1).strip()
 
 
+def absolute_links(notes: str, tag: str) -> str:
+    """Pin the CHANGELOG's repository-relative links to the tag.
+
+    A release description resolves relative links against the release page, not
+    the repository tree, so `docs/x.md` would break once copied out of CHANGELOG.md.
+    """
+    base = f"https://github.com/{REPOSITORY}/blob/{tag}/"
+
+    def absolute(match: re.Match[str]) -> str:
+        destination = match.group(2)
+        parts = urlsplit(destination)
+        if parts.scheme or parts.netloc:
+            return match.group(0)
+        # CHANGELOG.md is at the root, so relative and root-relative paths agree.
+        path = posixpath.normpath(parts.path.lstrip("/")) if parts.path else "CHANGELOG.md"
+        suffix = destination[len(parts.path):]
+        return f"{match.group(1)}{base}{path}{suffix}"
+
+    lines, fence = [], None
+    for line in notes.split("\n"):
+        opening = FENCE.match(line)
+        if fence is None and opening is not None:
+            fence = opening.group(1)
+        elif fence is not None:
+            if opening is not None and opening.group(1)[0] == fence[0] \
+                    and len(opening.group(1)) >= len(fence):
+                fence = None
+        else:
+            line = REFERENCE_DESTINATION.sub(absolute, INLINE_DESTINATION.sub(absolute, line))
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def release_body(
     notes: str, release_commit: str, pins: Pins, canary: CanaryRun, publish_run_url: str
 ) -> str:
@@ -346,7 +392,9 @@ def publish(
     _, pins = release_pins(root, release_commit)
     with tempfile.TemporaryDirectory(prefix="code-tribunal-canary-") as temporary:
         canary = verify_canary(run_id, pins, Path(temporary))
-    notes = changelog_section(_git(root, "show", f"{release_commit}:CHANGELOG.md"), version)
+    notes = absolute_links(
+        changelog_section(_git(root, "show", f"{release_commit}:CHANGELOG.md"), version), tag
+    )
     out.mkdir(parents=True, exist_ok=True)
     body = out / "release-body.md"
     body.write_text(
