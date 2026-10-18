@@ -32,7 +32,8 @@ internal container implementation, not a supported Python package or API.
 
 ## Important limitations
 
-- Repositories containing symlinks are rejected during snapshot preparation.
+- Repositories containing symlinks are rejected during snapshot preparation,
+  except symlinks named like reviewer agent files, which are left out.
 - Container/runner network egress is not enforced. Adapter endpoint validation
   reduces exposure but does not constrain a compromised reviewer CLI.
 - Model output is untrusted and may be wrong. Requiring two independent

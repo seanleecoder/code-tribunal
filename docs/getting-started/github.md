@@ -47,44 +47,22 @@ normally report authorized users as `MEMBER` or `COLLABORATOR`, so configure the
 resolve token there for command authorization. Ordinary comments and state
 continue to use `GITHUB_TOKEN`.
 
-### Strict state handling
-
-For a strict install, set `state.fail_closed_on_load_error: true` in a custom
-config mounted into the trusted image, or accept the shipped default only during
-advisory rollout. The shipped default is `false` so a transient state-load error
-starts from empty recoverable state (conservative repost risk) rather than
-failing prepare.
-
-### Cursor
-
-Cursor is a supported peer reviewer seat, off in the shipped default roster.
-Enabling it sends review prompts, diffs, and any snapshot content the Cursor CLI
-reads to Cursor's backend as a second egress destination, so leave it off unless
-you deliberately accept that path. Select it by naming it in
-`AI_REVIEW_REVIEWERS` and supply `CURSOR_API_KEY`. The shipped selector is
-`composer-2.5` for reproducible smoke and compatibility. Set
-`AI_REVIEW_CURSOR_MODEL` to override it; `auto` remains supported for ordinary
-operation, while reproducible CI and evidence require an exact model slug.
+Cursor is off in the shipped roster because its backend is a second egress
+destination; see [choosing the panel](../configuration.md#choosing-the-panel)
+before enabling it. On GitHub, enable it through the `AI_REVIEW_REVIEWERS`
+repository variable, not YAML alone, so the workflow passes it `CURSOR_API_KEY`.
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
-unset for shipped defaults. Never set `AI_REVIEW_LOCAL_MOCK` in production.
-
-When upgrading to the MiMo default, clear any persisted
-`AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
-See [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
+unset for shipped defaults. For a strict install, set
+`state.fail_closed_on_load_error: true`; see
+[posting and state](../configuration.md#posting-and-state).
 
 ## Branch protection
 
 **Code Tribunal is informational and requires no status check.** It publishes
 review threads and a summary; it never decides whether a change may merge. There
 is no gate job to require.
-
-If you are upgrading from a release that had one, remove the `gate` entry from
-the target branch's ruleset or branch protection **before or together with** the
-workflow upgrade. A required status check that never reports leaves pull requests
-permanently unmergeable — the workflow does not fail, it simply never produces
-the check the ruleset is waiting for.
 
 If you want the review to have *run* before a merge, you may require the `post`
 check instead. Understand what that does and does not give you:
@@ -131,8 +109,7 @@ do not reuse old prepare/reviewer artifacts across versions.
 ## Uninstall
 
 Remove `.github/workflows/ai-review.yml` and delete Code Tribunal secrets and
-variables. If your ruleset or branch protection requires an **AI Review** check —
-`post`, or a `gate` entry left over from a release before the gate was removed —
+variables. If your ruleset or branch protection requires the `post` check,
 delete that entry too, or the branch stays blocked on a check that will never
 report again. Existing bot comments remain as
 review history and can be removed according to repository policy.

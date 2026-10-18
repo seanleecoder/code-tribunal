@@ -372,11 +372,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
         text = _CONFIG_DOC.read_text(encoding="utf-8")
         text = " ".join(text.split())
 
-        self.assertIn("shared `AI review` and `AI critique` matrix jobs", text)
-        self.assertIn("older included template", text)
         # Cursor's instances exist regardless of the roster; the reference must
         # explain that a seat sitting out is a cheap no-op.
-        self.assertIn("whatever the roster says", text)
+        self.assertIn("`AI review` and `AI critique` matrix instances", text)
         self.assertIn("complete quickly with skipped artifacts", text)
         self.assertIn("second egress destination, not because it ranks below", text)
 

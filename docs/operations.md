@@ -55,58 +55,6 @@ images, variables, and configuration, and start again at prepare. Threads receiv
 one reverse cosmetic update back to `render-body.v3`. Re-add the required gate
 check only if you restore a 1.0.x template.
 
-## Upgrade from 0.4.x to 1.0
-
-This section is retained for installations still on 0.4.x. Complete it, then
-apply [the 1.0.x to 2.0 upgrade](#upgrade-from-10x-to-20).
-
-Treat the upgrade as a coordinated template, image, configuration, schema, and
-state migration.
-
-1. Save the current template SHA, image digests, custom configuration, required
-   check/settings, and bot credential identities for rollback.
-2. Remove retired top-level and nested placeholders. In particular, remove
-   `critique.max_rounds`, split GitLab token variables, obsolete retention
-   overflow fields, and removed `respond`/artifact enum values.
-3. Rename `keep_resolved_runs` and `keep_stale_runs` to
-   `keep_resolved_records` and `keep_stale_records`. Replace legacy
-   `state.overflow_behavior: fail_closed` with the explicit
-   `state.fail_closed_on_load_error` choice. For enforcing installs prefer
-   `state.fail_closed_on_load_error: true`.
-4. Configure one protected `GITLAB_TOKEN`. Verify the resolution threshold
-   against the enabled reviewer count, and that at least three seats are
-   enabled. Do not set
-   `AI_REVIEW_LOCAL_MOCK` or `AI_REVIEW_ALLOW_LOCAL_MOCK` on the consumer
-   project.
-5. Update the complete canonical workflow or the protected GitLab template SHA;
-   keep base image, reviewer image, and trusted source SHA together.
-6. Start a fresh run at prepare. Old finding/critique batches lack required
-   quality/digest fields and must not be reused. Expanded effective-config
-   hashing also invalidates old prepare manifests.
-7. Expect a one-time update of existing bot-authored bodies when the render-body
-   version changes. This should update existing identities, not duplicate them.
-8. Verify state ownership, posting, and commands.
-9. Leave Cursor off unless you deliberately accept its separate egress path. It
-   is a supported peer seat; enabling it requires `CURSOR_API_KEY`.
-
-Consumers upgrading from a pre-0.3.1 GitLab template must also update custom
-`needs`, overrides, dashboards, and scripts that refer to the old job names:
-
-| Previous job | Current grouped job |
-|---|---|
-| `review_claude` | `AI review: [claude]` |
-| `review_codex` | `AI review: [codex]` |
-| `review_opencode` | `AI review: [opencode]` |
-| `critique_claude` | `AI critique: [claude]` |
-| `critique_codex` | `AI critique: [codex]` |
-| `critique_opencode` | `AI critique: [opencode]` |
-
-Cursor review/critique jobs are new optional grouped jobs and have no legacy
-identifier.
-
-Python-package consumers must move to the supported containers and CI templates.
-There is no supported installable Python distribution.
-
 ## Failure behavior
 
 | Failure class | Behavior | Operator action |
@@ -115,7 +63,7 @@ There is no supported installable Python distribution.
 | All findings from a seat are malformed | Seat is not resolution-eligible or operationally successful | Fix model/schema compatibility; do not lower thresholds reflexively |
 | Critique disabled or optional evidence absent | Consensus uses valid reviewer evidence without critique | Confirm this matches rollout policy |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
-| Run/config/artifact identity mismatch | Consensus exits 3 before combining evidence | Rerun from prepare with identical project-scoped overrides |
+| Run/config/artifact identity mismatch | The first stage to see it stops before consequential work: review or critique writes `config_error`, consensus exits 3, post exits 1 ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with identical project-scoped overrides |
 | State load fails and `fail_closed_on_load_error=false` | Prepare warns and begins from empty recoverable state | Investigate ownership/API/checksum; expect conservative repost risk |
 | State load fails and option is true | Prepare fails | Restore state/API access or make a deliberate policy change |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
@@ -150,10 +98,9 @@ serialization.
 
 Start with `out/status/`, then the consensus and post artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
-resolution-eligible reviewers, post status, and `post_result.warnings`. GitLab
-canonical prepare/review/critique artifacts expire after seven days;
-consensus/post evidence expires after 30 days. GitHub follows repository/organization retention.
-Export sanitized evidence before expiry.
+resolution-eligible reviewers, post status, and `post_result.warnings`. Export
+sanitized evidence before the artifacts
+[expire](reference/artifacts-and-schemas.md).
 
 Never retain credentials, CLI session files, sensitive prompts, raw proprietary
 source beyond policy, or unnecessary model-authored content in evidence.
@@ -171,14 +118,11 @@ record it per run when collecting live evidence.
 For validation and lifecycle rehearsal without model spend, the deterministic
 mock reviewer (`AI_REVIEW_LOCAL_MOCK=1` with `AI_REVIEW_ALLOW_LOCAL_MOCK=true`,
 scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state path
-with a canned finding set and no provider calls. Mock mode is forbidden in
-production consumer projects: GitLab project/pipeline variables can override the
-template's `AI_REVIEW_LOCAL_MOCK: "0"`, so the companion allow flag is required.
-Every adapter fallback—including missing CLI or credential—requires the allow
-flag. It is defense against accidental fallback, not an authorization boundary:
-an actor able to inject both mock variables can enable mock mode. Production
-templates therefore keep `AI_REVIEW_REQUIRE_REAL_*=1` as the fail-closed guard.
-These are adapter controls that affect only review/critique behavior and are not
+with a canned finding set and no provider calls. It is forbidden in production
+consumer projects; the allow flag's limits are described with the
+[internal runtime variables](configuration.md#template-and-internal-runtime-variables),
+and production templates keep `AI_REVIEW_REQUIRE_REAL_*=1` as the fail-closed
+guard. These are adapter controls that affect only review/critique behavior and are not
 part of the effective-config digest, so set them consistently on the review and
 critique jobs. Config-affecting overrides (critique/reviewer/panel) do feed the
 digest, so scope any of those consistently across all jobs or consensus fails

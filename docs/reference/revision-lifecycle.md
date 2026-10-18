@@ -26,7 +26,9 @@ the state record being authentic and available.
 
 ## Human dispositions
 
-Authorized users may reply on the finding thread with a command on its own line:
+Reply on the finding's GitLab discussion or GitHub root inline review comment
+with a command on its own line. GitLab requires Developer access or higher;
+GitHub accepts Write, Maintain, or Admin.
 
 - `/ai-review resolve`
 - `/ai-review wontfix`
@@ -41,8 +43,7 @@ identifier needed to resolve or reopen its thread through GraphQL.
 Open and `wontfix` records are retained by default. Bounded resolved and stale
 record counts plus a total byte limit prevent unbounded state. Overflow is an
 operational failure that makes the `post` job exit nonzero. The posted-body
-format is now `render-body.v4`, with a `Support:` footer. Existing bot-authored
-inline threads, including `render-body.v3` threads written by 1.0.x, receive one
-content refresh on the next run; issue IDs, markers, state records, and resolution status remain
-unchanged. Summary notes update through their normal body-hash upsert. A rollback
+format is `render-body.v4`. When it changes, existing bot-authored inline threads
+receive one content refresh on the next run; issue IDs, markers, state records,
+and resolution status remain unchanged. Summary notes update through their normal body-hash upsert. A rollback
 causes one reverse refresh and does not discard state.

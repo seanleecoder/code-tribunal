@@ -16,7 +16,7 @@ credentials or sensitive model content into issues.
 | `/ai-review` command ignored | Wrong thread, syntax, insufficient access, or collaborator permission could not be verified | Root finding marker, author permission, and `post_result.json` warnings naming the note and author | Reply in the finding thread with one exact command line; on GitHub organization repositories configure the fine-grained resolve token |
 | Thread resolution or reopening fails | Platform token cannot mutate the thread or its root comment was deleted; `post` reports `partial_failed` and exits nonzero | `post_result.json` warnings and platform API error | Repair the token or thread access and rerun; on GitHub add a fine-grained resolve token and preserve root comments |
 | GitHub prepare reports stale input | PR changed or checkout is dirty/untracked | Prepare error with selected/current SHA | Rerun current revision; never weaken SHA checks |
-| GitHub prepare reports dubious repository ownership | Old image pin, custom image user/config, or prepare running from an unexpected checkout | Image source SHA, working directory, checkout owner, container uid, and prepare log | Publish the fix from trusted `main`, update all image pins together, and verify custom workflow paths; never configure `safe.directory=*` |
+| GitHub prepare reports dubious repository ownership | Custom image user/config, or prepare running from an unexpected checkout | Image source SHA, working directory, checkout owner, container uid, and prepare log | Publish the fix from trusted `main`, update all image pins together, and verify custom workflow paths; never configure `safe.directory=*` |
 | GitHub prepare reports HTTP 406/too-large | GitHub refused a complete raw diff | Prepare log | Split/reduce the PR; do not use incomplete `/files` data as a substitute |
 | GitLab prepare reports a truncated or collapsed diff | Both the paginated and raw-diff APIs failed to provide one complete matching change | Prepare log naming the affected path and fallback failure | Split/reduce the MR or repair the GitLab diff backend; do not ignore the file or bypass completeness checks |
 | GitLab prepare reports that the MR version changed during diff collection | The source or target revision moved while prepare read the paginated or raw diff | Prepare log and current MR revision | Rerun the pipeline for the current revision; do not reuse artifacts from the stale run |
@@ -33,8 +33,7 @@ credentials or sensitive model content into issues.
 - `schema_error`: model output could not satisfy the structured contract.
 - `timeout`: the complete process group exceeded the stage-specific timeout:
   `reviewers.<name>.timeout_seconds` for review or
-  `reviewers.<name>.critique_timeout_seconds` for critique. A configuration that
-  omits the latter resolves critique to a flat 900 seconds.
+  `reviewers.<name>.critique_timeout_seconds` for critique.
 - `config_error`: configuration or an environment override failed strict
   validation.
 
@@ -68,58 +67,14 @@ example `model emitted no answer part` — means the reviewer never produced an
 answer, only reasoning or tool calls. That is a model or prompt problem, not
 malformed adapter output.
 
-## Human commands
-
-Reply on the finding's GitLab discussion or GitHub root inline review comment.
-The command must appear alone on a line:
-
-```text
-/ai-review resolve
-/ai-review wontfix
-/ai-review reopen
-```
-
-GitLab requires Developer access or higher. GitHub accepts Write, Maintain, or
-Admin. UI-only thread resolution is not the same as durable `wontfix`.
-
-## Known issues in older releases
-
-### GitHub: every finding dropped and consensus exits 3 (added or deleted files)
-
-Defect **present in the shipped 1.0.0 runtime and fixed in 1.0.1**. If your
-templates still pin the 1.0.0 image digests, the workaround below is required;
-repinning to the 1.0.1 pair removes the need for it. Symptoms, in the order you
-meet them:
-
-1. A reviewer job log contains `absolute paths are not allowed: /dev/null` followed
-   by `kept 0 finding(s), dropped N malformed/unresolvable finding(s)`.
-2. `out/status/<reviewer>.json` shows `dropped_finding_count` equal to
-   `raw_finding_count` with `usable_for_resolution: false` — often on every seat.
-3. The `consensus` job exits 3, so no review is published. On GitHub the `post`
-   job then fails rather than being skipped, reporting the upstream consensus
-   failure.
-
-Cause: GitHub renders an added file's diff with `--- /dev/null`, which anchor
-resolution rejects as an absolute path while scanning for the anchor's file. It
-triggers when a finding is on an added or deleted file, or on a file ordered after
-one in the diff. It affects real reviewers, not only the deterministic mock. GitLab
-is unaffected, because its prepared diff uses `--- a/<path>` for added files.
-
-Fix: repin both image digests to the 1.0.1 pair. Anchor finalization now maps the
-added/deleted-file sides instead of failing the scan, so a finding on an added file
-is accepted (`accepted_finding_count == raw_finding_count`).
-
-Workaround on 1.0.0 images: split file additions into a separate change request
-from the code you want reviewed, or re-run the review once the added file has
-merged. Nothing in Code Tribunal blocks the merge in the first place — the review
-is simply missing its findings.
-
 ## Configuration drift
 
-Prepare records the consequential effective configuration in the manifest and
-binds it by SHA-256. Current consensus behavior **fails with exit 3** when a
-later stage sees consequential drift; it does not merely warn. Set supported
-overrides at project/group or repository workflow scope and rerun from prepare.
+Prepare binds the effective configuration by SHA-256, and every later stage fails
+when it sees drift; see
+[stage visibility and integrity](configuration.md#stage-visibility-and-integrity).
+Set supported overrides at project/group or repository workflow scope and rerun
+from prepare. Human command syntax and access levels are in the
+[revision lifecycle](reference/revision-lifecycle.md#human-dispositions).
 
 ## Local reproduction
 

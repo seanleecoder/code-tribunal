@@ -85,44 +85,25 @@ In **Settings → CI/CD → Variables**, configure:
 | `CURSOR_API_KEY` | yes | yes | only when Cursor is selected | Peer reviewer seat; required only when `AI_REVIEW_REVIEWERS` names `cursor` |
 | `AI_REVIEW_REVIEWERS` | no | yes | optional | Comma-separated panel of at least three seats; defaults to Claude, Codex, and OpenCode |
 
-Use one `GITLAB_TOKEN`; the retired split read/write variables are rejected.
-Configure runtime overrides as protected project/group variables so every stage
-sees the same effective configuration.
+Configure runtime overrides, listed in the
+[environment reference](../configuration.md#environment-variables), as protected
+project/group variables so every stage sees the same effective configuration.
+GitLab variable precedence can override the template's
+`AI_REVIEW_LOCAL_MOCK: "0"`, so never set `AI_REVIEW_LOCAL_MOCK` or
+`AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. For a strict install, set
+`state.fail_closed_on_load_error: true`; see
+[posting and state](../configuration.md#posting-and-state).
 
-When upgrading to the MiMo default, clear any persisted
-`AI_REVIEW_OPENCODE_EFFORT` override; model-only overrides inherit YAML effort.
-See [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
-
-Never set `AI_REVIEW_LOCAL_MOCK` (or `AI_REVIEW_ALLOW_LOCAL_MOCK`) as a
-project/pipeline variable in production. GitLab variable precedence can override
-the template's `AI_REVIEW_LOCAL_MOCK: "0"`; mock mode additionally requires
-`AI_REVIEW_ALLOW_LOCAL_MOCK=true` and is reserved for image preflight and
-operator evidence Chain B.
-
-### Strict state handling
-
-For a strict install, prefer a trusted config with
-`state.fail_closed_on_load_error: true`. The shipped default is `false` so a
-transient state-load error starts from empty recoverable state rather than
-failing prepare.
-
-### Cursor
-
-Cursor is a supported peer reviewer seat, off in the shipped default roster.
-Enabling it is a deliberate second egress destination: the Cursor CLI cannot route
-through OpenRouter, so prompts, diffs, and any snapshot content it reads reach
-Cursor's backend. Select it by naming it in `AI_REVIEW_REVIEWERS` and supply
-`CURSOR_API_KEY`. The shipped selector is `composer-2.5` for reproducible smoke
-and compatibility. Set `AI_REVIEW_CURSOR_MODEL` to override it; `auto` remains
-supported for ordinary operation, while reproducible CI and evidence require
-an exact model slug.
+Cursor is off in the shipped roster because its backend is a second egress
+destination; see [choosing the panel](../configuration.md#choosing-the-panel)
+before enabling it. Project and group variables reach every job, so on GitLab
+`CURSOR_API_KEY` is kept from the other seats only by the adapter environment
+([credentials](../configuration.md#credentials)).
 
 ## Merge-request settings
 
 **Code Tribunal is informational and requires no merge check.** It publishes
-review threads and a summary; it never decides whether a change may merge. There
-is no `ai_review_gate` job any more — if you are upgrading from a release that
-had one, remove any custom `needs`, dashboard, or script that names it.
+review threads and a summary; it never decides whether a change may merge.
 
 **Pipelines must succeed** remains worth enabling, but understand what it covers
 here: a failed `post_ai_review` job means publication or state persistence
@@ -171,5 +152,5 @@ configuration into another.
 Remove the include or bridge job, remove `ai_review` from a consumer-only stage
 list if unused, delete Code Tribunal variables, and review whether **Pipelines
 must succeed** still has another required pipeline. Also delete any custom
-`needs` or script still referring to `ai_review_gate` or `post_ai_review`. Existing discussions and
+`needs` or script still referring to `post_ai_review`. Existing discussions and
 state notes remain until removed under project policy.
