@@ -63,6 +63,12 @@ versioning.
   `input_manifest_sha256` does not match the manifest in its inputs, before
   creating a platform client. A retried job or replay can no longer mutate
   threads under another run's result (SPEC-68 fix 3).
+- Posting state no longer grows with every run, which could overflow it and
+  make post exit 1 without publishing. State stops appending `run_history`,
+  and the next write drops an existing one. Each record keeps at most 8 values
+  per alias family, newest first, instead of every value ever seen. The unread
+  `candidate_issue_signatures` alias is written empty. The state schema is
+  unchanged (N13, COMPAT-005).
 
 - A finding whose match to earlier threads is ambiguous no longer lets post
   resolve those threads as absent. Its open candidate threads are marked stale

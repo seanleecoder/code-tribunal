@@ -13,6 +13,7 @@ from .memory import (
     find_matching_record,
     normalize_state,
     normalize_state_record,
+    ordered_unique,
     state_overflow_reason,
 )
 from .notes import ExistingReviewDiscussion
@@ -51,11 +52,15 @@ def _pipeline_id(manifest: dict[str, Any]) -> str:
     return os.environ.get("CI_PIPELINE_ID") or str(manifest.get("run_id") or "")
 
 
-def _candidate_signature_hashes(group: Mapping[str, Any]) -> list[str]:
-    values = group.get("candidate_issue_signature_hashes")
-    if not isinstance(values, list):
-        values = group.get("_candidate_issue_signature_hashes", [])
-    return sorted({str(value) for value in values if isinstance(value, str)})
+# Each alias family keeps this run's keys first, then the newest older ones.
+# Matching only needs recent keys, and unbounded families overflowed state.
+MAX_ALIASES_PER_FAMILY = 8
+
+
+def _recent_aliases(current: Any, previous: Any) -> list[str]:
+    return ordered_unique([*ordered_unique(current), *ordered_unique(previous)])[
+        :MAX_ALIASES_PER_FAMILY
+    ]
 
 
 def _record_for_group(
@@ -79,29 +84,30 @@ def _record_for_group(
     match_keys = raw_match_keys if isinstance(raw_match_keys, dict) else {}
     raw_aliases = previous.get("aliases")
     aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
+    title = group.get("title", previous.get("title", ""))
+    # normalize_state_record puts the title's fingerprint first; include it here
+    # so the family stays within the bound.
+    current_title_fps = [
+        title_fingerprint(str(title)) if title else None,
+        *ordered_unique(match_keys.get("title_fingerprints")),
+    ]
     merged_aliases = {
-        "candidate_issue_signatures": sorted(
-            set(aliases.get("candidate_issue_signatures", []))
-            | set(_candidate_signature_hashes(group))
+        "candidate_issue_signatures": [],
+        "source_finding_ids": _recent_aliases(
+            group.get("source_finding_ids"), aliases.get("source_finding_ids")
         ),
-        "source_finding_ids": sorted(
-            set(aliases.get("source_finding_ids", [])) | set(group.get("source_finding_ids", []))
+        "context_hashes": _recent_aliases(
+            match_keys.get("context_hashes"), aliases.get("context_hashes")
         ),
-        "context_hashes": sorted(
-            set(aliases.get("context_hashes", [])) | set(match_keys.get("context_hashes", []))
-        ),
-        "title_fingerprints": sorted(
-            set(aliases.get("title_fingerprints", []))
-            | set(match_keys.get("title_fingerprints", []))
-        ),
-        "symbols": sorted(set(aliases.get("symbols", [])) | set(match_keys.get("symbols", []))),
+        "title_fingerprints": _recent_aliases(current_title_fps, aliases.get("title_fingerprints")),
+        "symbols": _recent_aliases(match_keys.get("symbols"), aliases.get("symbols")),
     }
     return normalize_state_record(
         {
             **previous,
             "issue_id": previous.get("issue_id") or group["issue_id"],
             "category": group.get("category", previous.get("category", "other")),
-            "title": group.get("title", previous.get("title", "")),
+            "title": title,
             "aliases": merged_aliases,
             "discussion_id": discussion_id
             if discussion_id is not None
@@ -327,7 +333,6 @@ def _planned_state_payload(
     persisted_state: State,
     *,
     manifest: dict[str, Any],
-    consensus: Consensus,
     pipeline_id: str,
     planned_records: list[StateRecord],
 ) -> dict[str, Any]:
@@ -337,12 +342,6 @@ def _planned_state_payload(
         "written_by_pipeline_id": pipeline_id,
         "updated_at": now_iso(),
         "records": planned_records,
-        "run_history": (
-            persisted_state.get("run_history", [])
-            if isinstance(persisted_state.get("run_history"), list)
-            else []
-        )
-        + [{"run_id": consensus["run_id"], "head_sha": manifest["head_sha"]}],
     }
 
 
@@ -488,7 +487,6 @@ def plan_state(
     planned_state = _planned_state_payload(
         persisted_state,
         manifest=manifest,
-        consensus=consensus,
         pipeline_id=pipeline_id,
         planned_records=planned_records,
     )

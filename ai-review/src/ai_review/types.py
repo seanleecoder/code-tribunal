@@ -270,6 +270,7 @@ class Consensus(TypedDict):
 
 
 class StateAliases(TypedDict):
+    # COMPAT-005: always written empty; removed by the next major state migration.
     candidate_issue_signatures: list[str]
     source_finding_ids: list[str]
     context_hashes: list[str]
@@ -308,6 +309,7 @@ class State(TypedDict):
     updated_at: str
     records: list[StateRecord]
     state_hash: str
+    # COMPAT-005: read from older notes only; never written.
     run_history: NotRequired[list[JsonObject]]
 
 
