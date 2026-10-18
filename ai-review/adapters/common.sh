@@ -84,12 +84,13 @@ resolve_output_schema() {
 }
 
 # Copy the pinned MR snapshot into $1. The reviewed files must sit at the
-# working-tree root or paths from the diff (src/foo.py) will not resolve.
-# Prepare already dropped the agent instruction and configuration files every
-# reviewer CLI reads from its working tree (_SNAPSHOT_IGNORE_ALWAYS in
+# working-tree root or paths from the diff (src/foo.py) will not resolve. The
+# copy keeps CLI writes out of the shared input bundle, and keeps the input
+# directory off the path a CLI walks upward to find project config. Prepare
+# already dropped the agent files every CLI reads (_SNAPSHOT_IGNORE_ALWAYS in
 # input_bundle.py).
-#   prepare_review_root <root>
-prepare_review_root() {
+#   copy_review_snapshot <root>
+copy_review_snapshot() {
   review_root="$1"
   snapshot="$AI_REVIEW_INPUT_DIR/repo_snapshot"
   if [ ! -d "$snapshot" ]; then

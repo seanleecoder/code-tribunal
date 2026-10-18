@@ -26,7 +26,7 @@ mkdir -p "$CURSOR_REVIEW_ROOT" "$CURSOR_HOME_DIR/.cursor"
 trap 'rm -rf "$CURSOR_REVIEW_ROOT"' EXIT
 
 if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
-  prepare_review_root "$CURSOR_REVIEW_ROOT"
+  copy_review_snapshot "$CURSOR_REVIEW_ROOT"
 fi
 
 cat > "$CURSOR_HOME_DIR/.cursor/cli-config.json" <<'JSON'

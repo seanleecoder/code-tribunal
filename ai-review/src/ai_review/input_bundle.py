@@ -52,15 +52,10 @@ class _BoundRevision:
     revalidate: Callable[[], None] = lambda: None
 
 
-# Always skipped at every depth: VCS and local harness metadata, and the project
-# files a reviewer CLI would read as instructions or configuration from its
-# working tree. These CLIs resolve such files hierarchically, so they are dropped
-# at every depth, whatever their type. A skipped entry is never opened, so a
-# symlinked CLAUDE.md is dropped rather than rejecting the snapshot.
-_SNAPSHOT_IGNORE_ALWAYS = frozenset(
+# Project files a reviewer CLI would read from its working tree as instructions
+# or configuration. Every reviewer loses all of them, not just its own CLI's.
+_REVIEWER_AGENT_FILE_NAMES = frozenset(
     {
-        ".git",
-        ".ai-review-local",
         # Read by more than one reviewer CLI.
         "AGENTS.md",
         "CLAUDE.md",
@@ -79,6 +74,11 @@ _SNAPSHOT_IGNORE_ALWAYS = frozenset(
         "tui.json",
     }
 )
+# Skipped at every depth, whatever their type: VCS and local harness metadata,
+# and the agent files, which the CLIs resolve hierarchically. A skipped entry is
+# never opened, so a symlinked CLAUDE.md is dropped rather than rejecting the
+# snapshot.
+_SNAPSHOT_IGNORE_ALWAYS = frozenset({".git", ".ai-review-local"}) | _REVIEWER_AGENT_FILE_NAMES
 _COPY_BUFFER_SIZE = 1024 * 1024
 _MAX_SNAPSHOT_DEPTH = 512
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)

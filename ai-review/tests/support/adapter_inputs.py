@@ -1,12 +1,11 @@
 """The prepared input bundle an adapter run reads.
 
 ``run_adapter`` renders its prompt from a real bundle -- diff, rules, prompts,
-manifest, prior decisions, and a repo snapshot carrying every project-level agent
-configuration file the adapters are supposed to strip. Two suites need exactly
-that shape: the registry-driven reviewer contract in
-``unit/test_reviewers.py`` and the provider-specific adapter suite in
-``unit/test_openrouter_adapters.py``. It lives here so neither owns it, and so a
-new steering file only has to be added in one place to be covered by both.
+manifest, prior decisions, and a repo snapshot as prepare leaves it, with the
+reviewer agent files already dropped. Two suites need exactly that shape: the
+registry-driven reviewer contract in ``unit/test_reviewers.py`` and the
+provider-specific adapter suite in ``unit/test_openrouter_adapters.py``. It
+lives here so neither owns it.
 
 ``run_prepared_adapter`` is shared more widely: every adapter-runner suite that
 writes its own manifest needs prepare's effective-config binding in it.
@@ -56,7 +55,6 @@ def write_adapter_input_bundle(input_dir: Path) -> None:
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
     (input_dir / ".opencode").mkdir()
     (input_dir / ".opencode" / "agent.md").write_text("bundle agent\n", encoding="utf-8")
-    # Prepare has already dropped every reviewer agent file from the snapshot.
     repo_snapshot = input_dir / "repo_snapshot"
     repo_snapshot.mkdir()
     (repo_snapshot / "src").mkdir()

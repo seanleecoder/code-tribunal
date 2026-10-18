@@ -70,15 +70,15 @@ if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   # resolved and the "explore the codebase" prompt sent the agent searching from
   # the wrong root until it hit the reviewer timeout.
   #
-  # --safe-mode already ignores CLAUDE.md; prepare dropping it, AGENTS.md and
-  # .claude from the snapshot is defense in depth.
+  # --safe-mode already ignores CLAUDE.md; prepare also drops it from the
+  # snapshot.
   resolve_tmp_dir
   CLAUDE_REVIEW_ROOT="$TMP_DIR/claude-review-root.$$"
   mkdir -p "$CLAUDE_REVIEW_ROOT"
   # Remove the snapshot copy on exit so repeated local-harness runs don't
   # accumulate review roots (in CI the whole container is ephemeral anyway).
   trap 'rm -rf "$CLAUDE_REVIEW_ROOT"' EXIT
-  prepare_review_root "$CLAUDE_REVIEW_ROOT"
+  copy_review_snapshot "$CLAUDE_REVIEW_ROOT"
 
   RUN_DIR="$CLAUDE_REVIEW_ROOT"
   set -- "$@" --add-dir "$CLAUDE_REVIEW_ROOT" --tools "Read,Grep,Glob"

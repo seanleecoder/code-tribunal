@@ -38,9 +38,8 @@ mkdir -p "$CODEX_HOME_DIR" "$CODEX_REVIEW_ROOT"
 if [ "${AI_REVIEW_STAGE:-}" = "review" ]; then
   # Explore the pinned MR snapshot, not the ambient CI checkout (which may be
   # absent under GIT_STRATEGY: none, or point at a different ref than the reviewed
-  # diff). CODEX_HOME is already redirected; AGENTS.md and .codex are read from
-  # the working tree, so prepare dropped them from the snapshot.
-  prepare_review_root "$CODEX_REVIEW_ROOT"
+  # diff). CODEX_HOME is already redirected.
+  copy_review_snapshot "$CODEX_REVIEW_ROOT"
 fi
 # critique reasons only over the pooled findings in the prompt (critique.md:
 # "grounded only in the finding data, rules, and manifest"), so the working root
