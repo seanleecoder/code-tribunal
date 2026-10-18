@@ -22,9 +22,12 @@ Start from the failed job's log and the campaign's summary artifact
 or `candidate-canary-gitlab-hostile-summary`). The summaries record each passed
 step's observations and the failing step's error.
 
-- **`panel`:** open the summary's `external_run_url`, the demo run that holds the
-  failing seat's job log and artifacts. Never re-dispatch `panel` to diagnose; it
-  spends a real two-platform panel that a release cannot cite.
+- **`panel`:** open the demo run that holds the failing job's log and artifacts. The
+  summary's `external_run_url` names it only when the demo run succeeded and
+  validation failed; when the demo run itself failed it reads `unavailable`, so open
+  the summary's `change_url` and take the run from that pull request or merge
+  request (on GitLab, the downstream child pipeline). Never re-dispatch `panel` to
+  diagnose; it spends a real two-platform panel that a release cannot cite.
 - **`lifecycle` or `hostile`:** both spend no tokens, so re-dispatch only that
   campaign, or run its script locally, and read the new summary. Drive a step by
   hand with the [manual lifecycle chain](#manual-lifecycle-chain) or the
