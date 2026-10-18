@@ -95,7 +95,7 @@ recommendation's disposition.
 | State overflow (2026-10-16) | Fix the causes in 2.0.3 through N13; close the SPEC-52 draft (#113) | Stop appending `run_history` and bound alias growth. The draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | S13 revisit (2026-10-16) | Note an option, no change | When S13 is revisited, consider "auto-resolve only on a full-grade run" as a replacement for the resolution quorum, not an addition. |
 | S14 legacy state decoder (2026-10-18) | Delete in 2.0.3 instead of registering it | No release ever wrote the `checksum=` wrapper; it was added with the current encoder before v0.1.0. Nothing needs migrating. |
-| Touched waivable evidence rows (2026-10-18) | Waive when the diff stays off the row's code paths | The triage rule in the release process allows it for rows marked waivable, with a reason naming the changed functions. 2.0.3 waives the SPEC-34 revision-race row this way. |
+| Touched waivable evidence rows (2026-10-18) | Waive regression-covered rows when the diff stays off the row's code paths | Amends the [triage rule](../development/release-process.md#scoping-the-live-campaign). 2.0.3 waives the SPEC-34 revision-race row this way. |
 
 ## Recommended order
 

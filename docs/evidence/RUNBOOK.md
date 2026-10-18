@@ -13,8 +13,8 @@ marked as such, so a future operator can tell the procedure apart from the resul
 
 **Not every row needs a live re-run every release.** Scope the campaign with the
 [change-impact triage table](../development/release-process.md#scoping-the-live-campaign)
-before booking operator time: rows whose impact set carries no diff may ship under a
-registered evidence waiver instead.
+before booking operator time: its rule says which rows may ship under a registered
+evidence waiver instead.
 
 For the accepted release-version grammar and derived notes path, see the
 [release version contract](../development/release-process.md#release-version-contract).
@@ -447,7 +447,7 @@ discovered, so the next release starts here instead of rediscovering it.
 | Protected-ref insider | not attempted | out of scope unless the threat model changes |
 | Cursor deny policy | an ordinary Candidate Canary review success says nothing about the pinned CLI's runtime honouring of the `Shell(*)` and write denies | Run 6 below; a release shipping Cursor on the default roster would want it as a gating row |
 | Noise-demoted FYI entry (SPEC-67) | the mock critique stage emits no critiques, so a noise majority occurs live only by chance in a real panel | needs a mock critique scenario that votes noise; unit and golden consensus tests cover it meanwhile |
-| Non-default effort routes | the 2.0.3 campaign covers only the `low` defaults on all three OpenRouter seats; the 2.0.2 Claude `medium` and absent MiMo effort routes bind only to the 2.0.2 pair | scope a separate route campaign if a release changes or claims non-default efforts |
+| Non-default effort routes | only the shipped default routes have live evidence against the current pair | scope a separate route campaign if a release changes or claims non-default efforts |
 | OpenRouter token/cost | no artifact carries a token or cost field | read the dashboard, or add usage capture to the adapters |
 
 ## The runs
