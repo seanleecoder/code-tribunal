@@ -49,7 +49,8 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S02, S10, S17, N09, N13.
-- **Partial:** S11 (the noise half, through SPEC-67), S18, S19.
+- **Partial:** S11 (the noise half, through SPEC-67), S14 (the legacy state
+  decoder, deleted on 2026-10-18), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
@@ -92,6 +93,7 @@ recommendation's disposition.
 | Hostile canary (2026-10-16) | Only when the trust boundary changes | Recorded in ADR-0004 decision 2. A unit test covers prepare failing closed without credentials. |
 | State overflow (2026-10-16) | Fix the causes in 2.0.3 through N13; close the SPEC-52 draft (#113) | Stop appending `run_history` and bound alias growth. The draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | S13 revisit (2026-10-16) | Note an option, no change | When S13 is revisited, consider "auto-resolve only on a full-grade run" as a replacement for the resolution quorum, not an addition. |
+| S14 legacy state decoder (2026-10-18) | Delete in 2.0.3 instead of registering it | No release ever wrote the `checksum=` wrapper; it was added with the current encoder before v0.1.0. Nothing needs migrating. |
 
 ## Recommended order
 
@@ -105,7 +107,6 @@ process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator reject
 unexpected artifacts.
 
 1. Small cleanups:
-   - register the S14 legacy state decoder;
    - delete test-only TypedDicts (N16);
    - prune the docs (N19);
    - image hygiene (N20).
