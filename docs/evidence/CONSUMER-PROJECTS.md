@@ -38,7 +38,15 @@ repo's canonical template.
 - **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
   `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
   `pull_request` runs, which manual mode skips),
-  `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`. The roster variable must
+  `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`.
+  Since 2026-10-18 the other seats pin the 2.0.3 shipped defaults explicitly,
+  because the consumer still runs an older image:
+  `AI_REVIEW_CLAUDE_MODEL=anthropic/claude-haiku-5.5`,
+  `AI_REVIEW_CODEX_MODEL=openai/gpt-6-luna`,
+  `AI_REVIEW_OPENCODE_MODEL=deepseek/deepseek-v4.1-flash-1017`, and each
+  `AI_REVIEW_<SEAT>_EFFORT=low`. The canaries clear the effort variables but
+  not the model variables, so keep the model variables equal to the shipped
+  defaults or delete them. The roster variable must
   include `cursor`: the canonical workflow reads it before exposing
   `CURSOR_API_KEY`. Keep this four-seat resting roster for `make demo-preflight`;
   scope an exact three-seat default smoke to its temporary workflow, then rerun
@@ -115,6 +123,14 @@ Public, project id `84667714`. Verified present:
   `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
   packaged roster. `AI_REVIEW_MERGE_GATE_ENABLED` is absent, and must stay so: it
   is retired and a current image fails at config load while it is set.
+- Protected, unmasked seat variables, the same values as the GitHub consumer:
+  `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`,
+  `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and since 2026-10-18 the 2.0.3 defaults
+  `AI_REVIEW_CLAUDE_MODEL=anthropic/claude-haiku-5.5`,
+  `AI_REVIEW_CODEX_MODEL=openai/gpt-6-luna`,
+  `AI_REVIEW_OPENCODE_MODEL=deepseek/deepseek-v4.1-flash-1017`, and each
+  `AI_REVIEW_<SEAT>_EFFORT=low`. The same canary caveat applies: keep the model
+  variables equal to the shipped defaults or delete them.
 - `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge
   (`detailed_merge_status: ci_must_pass`). `merge_method = merge`.
 - **Mock variables absent.** `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_ALLOW_LOCAL_MOCK`,
