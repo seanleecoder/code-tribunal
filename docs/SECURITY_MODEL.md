@@ -60,37 +60,32 @@ declares the image variables in its own top-level `variables:` and enables
 variable forwarding can run the stages on an arbitrary image, and no stage
 verifies what it is running. Containment came from credential withholding and
 from `scripts/pipeline_trust.py`, which rejects such a composition but
-runs out-of-band. Run that auditor against your consumer configuration, and do
-not read “digest-pinned templates” as a runtime guarantee against a hostile
-consumer config.
+runs out-of-band. Do not read “digest-pinned templates” as a runtime guarantee
+against a hostile consumer config.
 
 No in-pipeline check can close this. The consumer CI file composes the pipeline,
 so the edit that swaps the image can also delete a verification job, a required
 audit stage, or the variable a check compares against, and a substituted image
 will not run a check that lives in the trusted image. The hardened child's
-`inherit.variables: false` and `forward.*: false` settings are subject to the
-same limit: they hold only while merge-request authors cannot edit the consumer
-CI file. The real boundary is outside that file:
+`inherit.variables: false` and `forward.*: false` settings hold only while
+merge-request authors cannot edit the consumer CI file. The boundary is outside
+that file: the composition must come from a project merge-request authors cannot
+edit, and no author-written job may run in a pipeline that receives protected
+credentials. A protected external CI configuration file or an
+`override_project_ci` pipeline execution policy meets that bar. An
+`inject_policy` policy does not, because project jobs still run beside the
+injected ones.
 
-- a protected external CI configuration file
-  (`.gitlab-ci.yml@group/protected-project`), or
-- a pipeline execution policy in `override_project_ci` mode that does not
-  re-include the project's own CI file.
+Pipeline variables are a second route to the image pins. The template runs on
+`web` and `api` pipelines whose caller supplies `CI_MERGE_REQUEST_IID`, and a
+pipeline variable overrides the template's image variables. A user allowed to run
+pipelines on a protected branch can therefore substitute the image without
+editing any CI file, so restricting pipeline variables is part of the boundary.
+The deprecated child's `forward.pipeline_variables: false` blocked this route.
 
-Either way, merge-request authors cannot edit the composition, and no
-author-written job runs in a pipeline that receives protected credentials. An
-`inject_policy` policy does not meet that bar: project jobs still run beside the
-injected ones and can read protected variables in any protected-ref pipeline.
-
-The composition is not the only route to the image variables. The template runs
-on `web` and `api` pipelines that set `CI_MERGE_REQUEST_IID`, and a pipeline
-variable overrides the template's image pins. A user allowed to run pipelines on
-a protected branch can therefore substitute the image without editing any CI
-file, unless the project restricts pipeline variables to no one or to trusted
-maintainers. Treat that restriction as part of the boundary. Run
-`pipeline_trust.py` from a protected scheduled pipeline or an approval-rule
-check so that composition drift is detected without an operator remembering to
-run it. See [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition).
+[Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition)
+gives the settings and schedules `pipeline_trust.py` so that composition drift is
+detected without an operator remembering to run it.
 
 ### Repository snapshot containment
 
@@ -140,13 +135,9 @@ and must not be described as implemented container isolation.
 ### Forks and untrusted workflow changes
 
 Canonical GitHub workflows skip external forks. GitLab protected variables are
-withheld from unprotected refs. Either GitLab mode is safe only when the root CI
-file and all relevant includes are protected from merge-request authors, by a
-protected external CI configuration or an `override_project_ci` pipeline policy.
-The deprecated hardened child's `forward.pipeline_variables: false` also keeps
-pipeline variables from manual and API runs out of the review jobs; a direct
-include needs the project's pipeline-variable restriction to match it. The
-child's settings protect nothing when the CI file is editable.
+withheld from unprotected refs; beyond that, a GitLab install is safe only with
+the controls in
+[Trusted CI delivery](#trusted-ci-delivery-and-reviewer-credentials).
 
 ## Failure policy
 

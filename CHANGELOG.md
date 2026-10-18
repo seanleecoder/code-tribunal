@@ -38,16 +38,12 @@ versioning.
 
 - The hardened mirrored GitLab child pipeline (`review-child.gitlab-ci.yml`,
   `pipeline_trust.py --mode child`) is deprecated and will be removed in the
-  next major release. Its `inherit.variables: false` and `forward.*: false`
-  settings are a boundary only while merge-request authors cannot edit the
-  consumer CI file, which is exactly when a direct include is already safe.
-  Use a direct include with a protected external CI configuration file or an
-  `override_project_ci` pipeline execution policy, and restrict pipeline
-  variables to no one or to trusted maintainers. The child's
-  `forward.pipeline_variables: false` kept manual and API pipeline variables
-  away from the image pins, so a direct include needs that restriction to
-  match it. The GitLab guide and security model now document these controls as
-  the trust boundary (SPEC-43, COMPAT-004).
+  next major release. Its isolation holds only while merge-request authors
+  cannot edit the consumer CI file. Use a direct include protected by an
+  external CI configuration file or an `override_project_ci` policy, and
+  restrict pipeline variables; see the
+  [GitLab guide](docs/getting-started/gitlab.md#protect-the-ci-composition)
+  (SPEC-43, COMPAT-004).
 
 ### Removed
 

@@ -104,9 +104,7 @@ same code, and before any feature that would otherwise build on top of it.
 process. Do not change `candidate-canary.yml`: 2.0.3's evidence generator rejects
 unexpected artifacts.
 
-1. Done: SPEC-43, the GitLab trust-boundary documentation and the child-mode
-   deprecation (N02, COMPAT-004).
-2. Small cleanups:
+1. Small cleanups:
    - register the S14 legacy state decoder;
    - strip agent files in prepare (N09);
    - delete test-only TypedDicts (N16);
@@ -117,32 +115,32 @@ unexpected artifacts.
 
 **Step 2 — 2.1.0, the first release on the new process.**
 
-3. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
+2. Accept [ADR-0004](../decisions/0004-simplified-release-process.md). Then migrate
    the release tooling (S01), replace the pin checker with Renovate and zizmor
    (N01), and prune the evidence docs.
-4. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
+3. SPEC-66: `run_health`, the job-log rendering, and the summary on every published
    run with space reserved for state (N04). This makes dropped findings visible.
-5. The hash-only body (N12).
-6. Delete the over-built integrity checks (N15).
+4. The hash-only body (N12).
+5. Delete the over-built integrity checks (N15).
 
 **Step 3 — 2.1.x minor releases.**
 
-7. Merge the canary scripts into two platform modules (N18). This comes after
+6. Merge the canary scripts into two platform modules (N18). This comes after
    2.1.0, so the assurance tool and the process do not change together.
-8. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
-9. The S03 mock switch, then seat setup in the registry (N08).
-10. The typed configuration object (N05), before the S04 knob removal.
-11. The `input_bundle` revision cleanup (N17).
+7. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
+8. The S03 mock switch, then seat setup in the registry (N08).
+9. The typed configuration object (N05), before the S04 knob removal.
+10. The `input_bundle` revision cleanup (N17).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 
-12. Re-land S05, which restores `resolve_location` and removes `confidence`.
-13. Consensus becomes state-free (N11). `consensus.v3` also drops
+11. Re-land S05, which restores `resolve_location` and removes `confidence`.
+12. Consensus becomes state-free (N11). `consensus.v3` also drops
     `group.body_hash` and removes the `drop` decision and `summary.drop_count`
     (COMPAT-003).
-14. One S14 state migration: state moves into the summary comment (N04), and the
+13. One S14 state migration: state moves into the summary comment (N04), and the
     anchor remap uses context hashes (N14).
-15. Consumer-visible changes:
+14. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in
       `pipeline_trust.py` and their tests;
