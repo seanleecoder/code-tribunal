@@ -243,5 +243,6 @@ the [security model](../SECURITY_MODEL.md).
 | Confidence-related finding loss | the `0.0` default is unit-tested only; since 2.1.0 the summary's run details post each job's dropped and cap-omitted counts (SPEC-66), but no live run has produced a loss | a mock scenario whose seat omits `confidence` |
 | Platform-visible re-anchoring of a moved comment | updating a comment rewrites its body, not its diff position; the internal remap is regression-covered | an optional live push that moves the anchored line |
 | Long bodies subject to truncation | no refresh has exercised a truncated body | a fixture with an oversized finding body |
+| GitLab body-format refresh | every refresh so far, including 2.1.0's, used the GitHub thread; the preserved GitLab note `3601861614` on MR `!11` ([consumer projects](CONSUMER-PROJECTS.md)) still carries the 1.0.0 format | run the [body-format refresh](#body-format-refresh) on that note |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry | reuse the existing `evidence/p0-symlink-*` branches; at most one variant is needed |
 | Non-default effort routes | only the shipped defaults have live evidence on the current pair | a route panel when a release changes or claims non-default efforts |
