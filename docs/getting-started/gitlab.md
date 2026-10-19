@@ -130,9 +130,10 @@ Open a small merge request and verify:
    succeeded. A `blocker` finding posts a thread and does not fail the job.
 5. Job traces and downloaded artifacts contain no credential values.
 
-Seeing a green pipeline with a summary note and no discussions is normal: it
-means no finding reached two independent supporters, so every one of them is
-FYI.
+Every published run creates or refreshes one summary note, headed by the review
+health. Seeing a green pipeline with a summary note and no discussions is
+normal: it means no finding reached two independent supporters. Check the
+health headline to tell a clean change from a panel that lost seats.
 
 Before a production rollout, execute the hostile-MR checklist in the
 [evidence runbook](../evidence/RUNBOOK.md#gitlab-hostile-mr-checklist). Repository-only tests do not

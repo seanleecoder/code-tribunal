@@ -25,9 +25,11 @@ from .grouping import (
 )
 from .memory import find_matching_record, state_from_aliases
 from .render import platform_comment_limit, render_body
+from .run_health import build_run_health_jobs, load_status_files, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
     batch_quality_fields,
+    batch_usable_for_panel,
     load_json_file,
     validate_instance,
     write_canonical_json,
@@ -87,16 +89,6 @@ def _final_severity(findings: list[dict[str, Any]]) -> str:
     return max((str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value])
 
 
-def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
-    """Operational panel seat and resolution eligibility predicate.
-
-    Requires ``adapter_status == "success"`` and ``usable_for_resolution``; callers
-    that load untrusted artifacts must run ``validate_consensus_inputs`` first so
-    the flag is checked against status and finding counts.
-    """
-    return batch.get("adapter_status") == "success" and batch.get("usable_for_resolution") is True
-
-
 def _require_quality_invariants(batch: dict[str, Any], *, reviewer: str) -> None:
     """Reject self-reported quality fields that disagree with batch contents."""
     try:
@@ -143,12 +135,14 @@ def build_consensus(
     config: dict[str, Any],
     state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
+    statuses: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> Consensus:
     """Build consensus from finding/critique batches.
 
     Direct callers that supply untrusted artifacts should run
     ``validate_consensus_inputs`` first; critique application may raise
-    ``ConsensusIntegrityError`` for unknown targets.
+    ``ConsensusIntegrityError`` for unknown targets. ``statuses`` (from
+    ``load_status_files``) feeds only ``run_health``.
     """
     posting_mode = str(config.get("posting", {}).get("mode", "gitlab_discussions"))
     # Fail fast on unsupported modes before performing consensus work.
@@ -265,6 +259,7 @@ def build_consensus(
         )
         group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
+    jobs = build_run_health_jobs(config, finding_batches, critique_batches, statuses or {})
     return {
         "schema_version": "consensus.v2",
         "run_id": manifest["run_id"],
@@ -282,6 +277,10 @@ def build_consensus(
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
             # COMPAT-003: required by consensus.v2; majority noise now demotes to fyi.
             "drop_count": 0,
+        },
+        "run_health": {
+            "grade": run_health_grade(status, jobs),
+            "jobs": jobs,
         },
     }
 
@@ -400,6 +399,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--findings-dir", default="out/findings")
     parser.add_argument("--critiques-dir", default="out/critiques")
+    parser.add_argument("--status-dir", default="out/status")
     parser.add_argument("--state")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
@@ -439,8 +439,14 @@ def cli(argv: list[str] | None = None) -> int:
             critique_batches=critique_inputs,
         )
         critique_batches = [batch for _filename_critic, batch in critique_inputs]
+        statuses = load_status_files(Path(args.status_dir), config, run_id)
         consensus = build_consensus(
-            manifest, batches, config, state=state, critique_batches=critique_batches
+            manifest,
+            batches,
+            config,
+            state=state,
+            critique_batches=critique_batches,
+            statuses=statuses,
         )
         validate_instance(consensus, "consensus.schema.json")
     except (OSError, json.JSONDecodeError) as exc:
@@ -450,6 +456,8 @@ def cli(argv: list[str] | None = None) -> int:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
 
+    # run_health_text neutralizes CI workflow-command syntax in untrusted text.
+    print(run_health_text(consensus["run_health"]))
     write_canonical_json(args.out, consensus)
     if consensus["panel_status"] == "failed":
         return 3

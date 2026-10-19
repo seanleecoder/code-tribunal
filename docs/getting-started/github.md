@@ -88,8 +88,10 @@ Open a same-repository pull request with a small, reviewable change. Confirm:
 5. `out/post/post_result.json` reports `status: success` and the `post` job
    exited 0. A `blocker` finding does not change either.
 
-Seeing a green run with a summary comment and no threads is normal: it means no
-finding reached two independent supporters, so every one of them is FYI.
+Every published run creates or refreshes one summary comment, headed by the
+review health. Seeing a green run with a summary comment and no threads is
+normal: it means no finding reached two independent supporters. Check the health
+headline to tell a clean change from a panel that lost seats.
 
 Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. What the
 project has proven live, and its limits, is indexed in the

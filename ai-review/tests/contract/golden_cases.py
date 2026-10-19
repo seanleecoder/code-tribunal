@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from ai_review.consensus import build_consensus
+from ai_review.schema import adapter_status_artifact, empty_critique_batch, empty_finding_batch
 
 
 def _config() -> dict:
     return {
         "reviewers": {
-            "opencode": {"enabled": True},
-            "claude": {"enabled": True},
-            "codex": {"enabled": True},
+            "opencode": {"enabled": True, "model": "model", "timeout_seconds": 600},
+            "claude": {"enabled": True, "model": "model", "timeout_seconds": 600},
+            "codex": {"enabled": True, "model": "model", "timeout_seconds": 600},
         },
         # The reducer reads nothing else from config on this path. Surfacing is
         # decided by independent support, which is not configurable.
@@ -132,6 +133,111 @@ def default_transitive_split_consensus() -> dict:
     )
 
 
+def _status(reviewer: str, stage: str, status: str, duration_ms: int, **fields: object) -> dict:
+    return adapter_status_artifact(
+        reviewer,
+        stage,
+        status,
+        "2026-06-29T00:00:00Z",
+        "2026-06-29T00:30:00Z",
+        duration_ms,
+        f"{stage}/{reviewer}.json",
+        run_id="run",
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+def degraded_run_health_inputs() -> tuple[list[dict], list[dict], dict]:
+    """A degraded panel: one review timeout, one critique without a status."""
+    claude = _batch(
+        "claude",
+        _finding(
+            "claude",
+            "1" * 64,
+            title="Config lookup crashes",
+            body="The config lookup raises KeyError for missing required values.",
+            context_hash="1" * 64,
+            title_fingerprint="a" * 64,
+            evidence_fingerprint="b" * 64,
+        ),
+    )
+    claude.update(raw_finding_count=3, dropped_finding_count=1)
+    codex = _batch(
+        "codex",
+        _finding(
+            "codex",
+            "2" * 64,
+            title="Missing config key raises",
+            body="A missing required key raises KeyError.",
+            context_hash="2" * 64,
+            title_fingerprint="a" * 64,
+            evidence_fingerprint="c" * 64,
+        ),
+    )
+    opencode = empty_finding_batch(
+        "opencode",
+        "timeout",
+        run_id="run",
+        model="model",
+        started_at="2026-06-29T00:00:00Z",
+        completed_at="2026-06-29T00:00:01Z",
+        effective_config_sha256="0" * 64,
+    )
+    critiques = [
+        empty_critique_batch(
+            critic,
+            "success",
+            run_id="run",
+            started_at="2026-06-29T00:00:00Z",
+            effective_config_sha256="0" * 64,
+        )
+        for critic in ("claude", "codex")
+    ]
+    statuses = {
+        ("review", "claude"): _status("claude", "review", "success", 724_000),
+        ("review", "codex"): _status("codex", "review", "success", 521_000),
+        ("review", "opencode"): _status(
+            "opencode",
+            "review",
+            "timeout",
+            1_795_012,
+            error_class="TimeoutExpired",
+            error_message_redacted="reviewer exceeded 1795s",
+        ),
+        ("critique", "claude"): _status("claude", "critique", "success", 242_000),
+        ("critique", "codex"): _status("codex", "critique", "success", 370_000),
+    }
+    return [claude, codex, opencode], critiques, statuses
+
+
+def degraded_run_health_config() -> dict:
+    config = _config()
+    for reviewer in config["reviewers"].values():
+        reviewer["timeout_seconds"] = 1800
+    config["reviewers"]["claude"]["effort"] = "medium"
+    config["critique"] = {
+        "enabled": True,
+        "blind_reviewer_identity": True,
+        "allow_severity_downgrade": False,
+    }
+    return config
+
+
+def degraded_run_health_consensus(
+    inputs: tuple[list[dict], list[dict], dict] | None = None,
+) -> dict:
+    """The degraded golden; ``inputs`` lets a test reorder the same artifacts."""
+    batches, critiques, statuses = inputs or degraded_run_health_inputs()
+    return build_consensus(
+        _manifest(),
+        batches,
+        degraded_run_health_config(),
+        critique_batches=critiques,
+        statuses=statuses,
+    )
+
+
 GOLDEN_CASES = {
     "default_transitive_split_consensus.json": default_transitive_split_consensus,
+    "degraded_run_health_consensus.json": degraded_run_health_consensus,
 }

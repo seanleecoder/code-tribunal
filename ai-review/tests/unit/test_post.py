@@ -22,6 +22,7 @@ from ai_review.config import (
     load_config,
     validate_config,
 )
+from ai_review.consensus import build_consensus
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import (
     parse_marker,
@@ -39,6 +40,8 @@ from ai_review.posting import (
 from ai_review.render import render_body, source_hash
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from ai_review.state_plan import plan_state
+
+from .test_consensus_state_matching import _batch, _empty_batch, _finding, _manifest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -281,6 +284,56 @@ class PostTests(PostCase):
 
             message = self._assert_refused_before_platform(root, argv)
             self.assertIn("re-run prepare", message)
+
+    def test_cli_refuses_a_consensus_artifact_without_run_health(self) -> None:
+        """A 2.0.2-shaped artifact still validates but comes from an earlier release."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            consensus = load_json_file(_GOLDEN_CONSENSUS)
+            del consensus["run_health"]
+            validate_instance(consensus, "consensus.schema.json")
+            argv = _write_post_cli_run(root, consensus)
+
+            message = self._assert_refused_before_platform(root, argv)
+            self.assertIn("no run_health", message)
+            self.assertIn("earlier release", message)
+
+    def test_seat_with_every_finding_dropped_grades_degraded_in_artifact_and_summary(
+        self,
+    ) -> None:
+        config = self._config()
+        rejected = _empty_batch("opencode", "success", raw_finding_count=3, dropped_finding_count=3)
+        consensus = build_consensus(
+            _manifest(),
+            [
+                _batch(reviewer, _finding(reviewer, source_id, "major"))
+                for reviewer, source_id in (
+                    ("claude", "1" * 64),
+                    ("codex", "2" * 64),
+                    ("cursor", "3" * 64),
+                )
+            ]
+            + [rejected],
+            config,
+        )
+        validate_instance(consensus, "consensus.schema.json")
+        self.assertEqual(consensus["run_health"]["grade"], "degraded")
+        client = FakePostClient("h" * 40)
+
+        post_consensus(
+            client,  # type: ignore[arg-type]
+            config,
+            _manifest(),
+            consensus,
+        )
+
+        body = client.summary_notes[0]["body"]
+        self.assertIn("**Review health: degraded — re-run optional.**", body)
+        self.assertIn(
+            "- `opencode` review: every reported finding was rejected during normalization.",
+            body,
+        )
+        self.assertIn("Findings: 6 raw, 3 accepted, 3 dropped", body)
 
     def test_post_consensus_rejects_unknown_mode_at_boundary(self) -> None:
         # validate_config rejects this mode, so the value is injected after
@@ -996,7 +1049,7 @@ class PostTests(PostCase):
                 )
 
                 self.assertEqual(result["created_discussions"], 1)
-                self.assertEqual(result["summary_comment"]["action"], "none")
+                self.assertEqual(result["summary_comment"]["surface_findings"], 0)
                 self.assertIn("line_range", client.created_positions[0])
                 validate_instance(result, "post_result.schema.json")
 
@@ -1018,13 +1071,14 @@ class PostTests(PostCase):
         self.assertIn("Advisory (FYI) findings", client.summary_notes[0]["body"])
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_with_no_findings_writes_state_and_mutates_nothing_else(self) -> None:
-        """The most common run: a clean change, and the pipeline must stay quiet.
+    def test_post_with_no_findings_posts_only_the_health_summary(self) -> None:
+        """The most common run: a clean change.
 
-        Quiet means no thread and no summary note -- a "nothing found" comment on
-        every clean merge request is noise the product does not post. State is still
-        written, because a later run has to tell "nothing found" apart from "never
-        ran" in order to resolve a finding that has since disappeared.
+        The only comment is the summary with its health headline and collapsed
+        details, so a maintainer can tell a clean change from a panel that lost
+        seats. No thread is created. State is still written, because a later run
+        has to tell "nothing found" apart from "never ran" in order to resolve a
+        finding that has since disappeared.
         """
         client = FakePostClient("head")
         consensus = self._consensus()
@@ -1040,13 +1094,55 @@ class PostTests(PostCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["posted_discussions"], [])
-        self.assertEqual(result["summary_comment"]["action"], "none")
+        self.assertEqual(result["summary_comment"]["action"], "created")
         self.assertEqual(result["warnings"], [])
         self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
-        self.assertEqual(client.summary_notes, [])
+        self.assertEqual(len(client.summary_notes), 1)
+        body = client.summary_notes[0]["body"]
+        self.assertTrue(body.startswith("**AI review summary**\n\n**Review health: full.**"))
+        self.assertIn("<details>", body)
+        self.assertNotIn("Findings not posted inline", body)
+        self.assertNotIn("Advisory (FYI) findings", body)
         self.assertEqual(len(client.state_notes), 1)
         validate_instance(result, "post_result.schema.json")
+
+    def test_summary_refreshes_when_a_later_run_recovers_and_is_idempotent(self) -> None:
+        client = FakePostClient("head")
+        degraded = self._consensus()
+        degraded["groups"] = []
+        degraded["run_health"]["grade"] = "rerun_recommended"
+        degraded["run_health"]["jobs"][0].update(
+            outcome="timeout",
+            raw_finding_count=None,
+            accepted_finding_count=None,
+            dropped_finding_count=None,
+            cap_omitted_finding_count=None,
+            duration_ms=1_795_000,
+        )
+        recovered = self._consensus()
+        recovered["groups"] = []
+
+        actions = []
+        bodies = []
+        for consensus in (degraded, recovered, recovered):
+            result = post_consensus(
+                client,  # type: ignore[arg-type]
+                self._config(),
+                self._manifest("head"),
+                consensus,
+            )
+            actions.append(result["summary_comment"]["action"])
+            bodies.append(client.summary_notes[0]["body"])
+
+        self.assertEqual(actions, ["created", "updated", "unchanged"])
+        self.assertEqual(len(client.summary_notes), 1)
+        self.assertIn("Review health: re-run recommended.", bodies[0])
+        self.assertIn("timed out after 29m55s (limit 30m00s)", bodies[0])
+        self.assertEqual(bodies[1], bodies[2])
+        refreshed = bodies[1]
+        self.assertIn("**Review health: full.**", refreshed)
+        self.assertNotIn("timed out", refreshed)
 
     def test_post_creates_a_thread_for_every_anchorable_surface_group(self) -> None:
         # There is no surfaced-thread cap: a run with more surface findings than
@@ -1068,9 +1164,9 @@ class PostTests(PostCase):
         self.assertEqual(result["created_discussions"], 30)
         self.assertEqual(client.created, 30)
         self.assertEqual(result["summary_comment"]["surface_findings"], 0)
-        self.assertEqual(result["summary_comment"]["action"], "none")
-        self.assertEqual(client.summary_notes, [])
-        # No summary, but state is always written: 30 threads to track.
+        self.assertEqual(len(client.summary_notes), 1)
+        self.assertNotIn("Findings not posted inline", client.summary_notes[0]["body"])
+        # State is always written: 30 threads to track.
         self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(result["warnings"], [])
         validate_instance(result, "post_result.schema.json")
@@ -1294,7 +1390,8 @@ class PostTests(PostCase):
         )
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["created_discussions"], 1)
-        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(len(client.state_notes), 1)
+        self.assertEqual(len(client.summary_notes), 1)
         self.assertEqual(len(client.updated_mr_notes), 1)
         state = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         validate_instance(state, "state.schema.json")
@@ -1604,7 +1701,7 @@ class PostTests(PostCase):
                 self.assertEqual(result["created_discussions"], 0)
                 self.assertEqual(result["updated_discussions"], 1)
                 self.assertEqual(result["stale_unverified"], 0)
-                self.assertEqual(result["summary_comment"]["action"], "none")
+                self.assertEqual(result["summary_comment"]["surface_findings"], 0)
                 self.assertEqual(client.updated_notes[0]["discussion_id"], "existing-discussion")
                 record_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])[
                     "records"

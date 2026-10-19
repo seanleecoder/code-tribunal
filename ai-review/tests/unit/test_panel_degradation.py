@@ -9,6 +9,7 @@ from unittest import mock
 from ai_review.config import effective_config_binding, effective_config_digest, load_config
 from ai_review.consensus import cli
 from ai_review.schema import (
+    empty_critique_batch,
     empty_finding_batch,
     finalize_finding_batch,
     load_json_file,
@@ -110,8 +111,12 @@ def _error_batch(reviewer: str, status: str) -> dict[str, Any]:
 
 class PanelDegradationTests(unittest.TestCase):
     def _run_consensus(
-        self, root: Path, batches: dict[str, dict[str, Any]]
+        self,
+        root: Path,
+        batches: dict[str, dict[str, Any]],
+        critics: tuple[str, ...] = (),
     ) -> tuple[int, dict[str, Any]]:
+        """Run the consensus CLI; each named critic delivers an empty successful batch."""
         input_dir = root / "inputs"
         input_dir.mkdir(parents=True, exist_ok=True)
         (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
@@ -119,6 +124,18 @@ class PanelDegradationTests(unittest.TestCase):
         findings_dir = root / "findings"
         for reviewer, batch in batches.items():
             write_canonical_json(findings_dir / f"{reviewer}.json", batch)
+        critiques_dir = root / "critiques"
+        for critic in critics:
+            write_canonical_json(
+                critiques_dir / f"{critic}.json",
+                empty_critique_batch(
+                    critic,
+                    "success",
+                    run_id="local-test",
+                    started_at="2026-06-29T00:00:00Z",
+                    effective_config_sha256=_CONFIG_DIGEST,
+                ),
+            )
         out_path = root / "out" / "consensus.json"
         code = cli(
             [
@@ -128,6 +145,10 @@ class PanelDegradationTests(unittest.TestCase):
                 str(input_dir),
                 "--findings-dir",
                 str(findings_dir),
+                "--critiques-dir",
+                str(critiques_dir),
+                "--status-dir",
+                str(root / "status"),
                 "--out",
                 str(out_path),
             ]
@@ -144,10 +165,13 @@ class PanelDegradationTests(unittest.TestCase):
                 reviewer: _success_batch(reviewer, input_dir)
                 for reviewer in ("claude", "codex", "opencode")
             }
-            code, consensus = self._run_consensus(root, batches)
+            code, consensus = self._run_consensus(
+                root, batches, critics=("claude", "codex", "opencode")
+            )
 
             self.assertEqual(code, 0)
             self.assertEqual(consensus["panel_status"], "full")
+            self.assertEqual(consensus["run_health"]["grade"], "full")
             self.assertEqual(
                 consensus["successful_reviewers"],
                 ["claude", "codex", "opencode"],
@@ -256,10 +280,11 @@ class PanelDegradationTests(unittest.TestCase):
                 "codex": _success_batch("codex", input_dir),
                 "opencode": _error_batch("opencode", "model_error"),
             }
-            code, consensus = self._run_consensus(root, batches)
+            code, consensus = self._run_consensus(root, batches, critics=("claude", "codex"))
 
             self.assertEqual(code, 0)
             self.assertEqual(consensus["panel_status"], "degraded")
+            self.assertEqual(consensus["run_health"]["grade"], "degraded")
             self.assertEqual(consensus["successful_reviewers"], ["claude", "codex"])
             self.assertEqual(consensus["failed_reviewers"], ["opencode"])
             self.assertEqual(len(consensus["groups"]), 1)
@@ -285,6 +310,8 @@ class PanelDegradationTests(unittest.TestCase):
             # One seat's findings simply have nothing to corroborate them, and a
             # critique seat could still supply the second support.
             self.assertEqual(consensus["panel_status"], "degraded")
+            # No critic of another identity ran, so nothing could surface.
+            self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
             self.assertEqual(consensus["successful_reviewers"], ["claude"])
             self.assertEqual(consensus["failed_reviewers"], ["codex", "opencode"])
             for group in consensus["groups"]:
@@ -304,6 +331,7 @@ class PanelDegradationTests(unittest.TestCase):
 
             self.assertEqual(code, 3)
             self.assertEqual(consensus["panel_status"], "failed")
+            self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
             self.assertEqual(consensus["successful_reviewers"], [])
             self.assertEqual(consensus["resolution_eligible_reviewers"], [])
             self.assertEqual(consensus["failed_reviewers"], ["claude", "codex", "opencode"])
@@ -360,6 +388,14 @@ class PanelDegradationTests(unittest.TestCase):
             code, consensus = self._run_consensus(root, batches)
             self.assertEqual(code, 3)
             self.assertEqual(consensus["panel_status"], "failed")
+            self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
+            jobs = {
+                job["reviewer"]: job
+                for job in consensus["run_health"]["jobs"]
+                if job["stage"] == "review"
+            }
+            self.assertEqual(jobs["claude"]["outcome"], "unusable")
+            self.assertEqual(jobs["claude"]["dropped_finding_count"], 1)
             self.assertEqual(consensus["successful_reviewers"], [])
             self.assertEqual(consensus["resolution_eligible_reviewers"], [])
 

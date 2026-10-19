@@ -173,7 +173,7 @@ consensus_ai_review:
       artifacts: true
       optional: true
   script:
-    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --out out/consensus/consensus.json
+    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --status-dir out/status --out out/consensus/consensus.json
   artifacts:
     when: always
     expire_in: 30 days

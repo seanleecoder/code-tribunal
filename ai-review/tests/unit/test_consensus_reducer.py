@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import copy
 import unittest
+from unittest.mock import patch
 
+import ai_review.run_health as run_health_module
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
@@ -21,15 +23,17 @@ from .test_consensus_state_matching import (
     _config,
     _critique,
     _critique_batch,
+    _empty_batch,
     _finding,
     _manifest,
     _record,
+    _status,
 )
 
 
 def _critique_config(**overrides: object) -> dict:
     config = copy.deepcopy(_config())
-    config["reviewers"]["cursor"] = {"enabled": True}
+    config["reviewers"]["cursor"] = {"enabled": True, "model": "model", "timeout_seconds": 600}
     config["critique"] = {
         "enabled": True,
         "blind_reviewer_identity": True,
@@ -614,6 +618,259 @@ class PanelStatusTests(unittest.TestCase):
         self.assertEqual(panel_status(["a"], ["a", "b", "c"]), "degraded")
         self.assertEqual(panel_status(["a", "b"], ["a", "b", "c"]), "degraded")
         self.assertEqual(panel_status(["a", "b", "c"], ["a", "b", "c"]), "full")
+
+
+def _agree_all(critic: str, reviewers: list[str]) -> dict:
+    return _critique_batch(
+        critic, [_critique(critic, _SOURCE_IDS[reviewer], "agree") for reviewer in reviewers]
+    )
+
+
+class RunHealthTests(unittest.TestCase):
+    """SPEC-66: the observational grade and per-job outcomes."""
+
+    _REVIEWERS = ["claude", "codex", "cursor", "opencode"]
+
+    def _health(
+        self,
+        batches: list[dict],
+        critique_batches: list[dict] | None = None,
+        statuses: dict | None = None,
+        config: dict | None = None,
+    ) -> dict:
+        consensus = build_consensus(
+            _manifest(),
+            batches,
+            config or _critique_config(),
+            critique_batches=critique_batches,
+            statuses=statuses,
+        )
+        validate_instance(consensus, "consensus.schema.json")
+        return consensus
+
+    def _all_agree(self) -> list[dict]:
+        """A successful, empty critique batch from every critic."""
+        return [_agree_all(critic, []) for critic in self._REVIEWERS]
+
+    def _ok(self, reviewers: list[str]) -> list[dict]:
+        return [
+            _batch(reviewer, _finding(reviewer, _SOURCE_IDS[reviewer], "major"))
+            for reviewer in reviewers
+        ]
+
+    def _job(self, consensus: dict, stage: str, reviewer: str) -> dict:
+        return next(
+            job
+            for job in consensus["run_health"]["jobs"]
+            if job["stage"] == stage and job["reviewer"] == reviewer
+        )
+
+    def test_every_enabled_job_is_listed_review_first_then_by_reviewer(self) -> None:
+        consensus = self._health(
+            self._ok(self._REVIEWERS),
+            self._all_agree(),
+        )
+
+        self.assertEqual(
+            [(job["stage"], job["reviewer"]) for job in consensus["run_health"]["jobs"]],
+            [("review", r) for r in self._REVIEWERS] + [("critique", r) for r in self._REVIEWERS],
+        )
+        self.assertEqual(consensus["run_health"]["grade"], "full")
+        critique = self._job(consensus, "critique", "claude")
+        self.assertEqual(critique["critique_count"], 0)
+        self.assertEqual(critique["timeout_seconds"], 900)
+        self.assertIsNone(critique["raw_finding_count"])
+
+    def test_disabled_critique_lists_review_jobs_only(self) -> None:
+        consensus = self._health(self._ok(["claude", "codex", "opencode"]), config=_config())
+
+        self.assertEqual(
+            {job["stage"] for job in consensus["run_health"]["jobs"]}, {"review"}
+        )
+        self.assertEqual(consensus["run_health"]["grade"], "full")
+
+    def test_failed_panel_grades_rerun_recommended(self) -> None:
+        consensus = self._health([], None)
+
+        self.assertEqual(consensus["panel_status"], "failed")
+        self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
+        self.assertEqual(self._job(consensus, "review", "claude")["outcome"], "missing")
+
+    def test_every_critic_failing_grades_rerun_recommended(self) -> None:
+        consensus = self._health(
+            self._ok(self._REVIEWERS),
+            [_critique_batch(critic, [], status="timeout") for critic in self._REVIEWERS],
+        )
+
+        self.assertEqual(consensus["panel_status"], "full")
+        self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
+        self.assertEqual(self._job(consensus, "critique", "codex")["outcome"], "timeout")
+
+    def test_one_usable_seat_needs_a_critic_from_another_identity(self) -> None:
+        others = ("codex", "cursor", "opencode")
+        failed = [_empty_batch(reviewer, "timeout") for reviewer in others]
+        own_critic_only = [_agree_all("claude", [])] + [
+            _critique_batch(critic, [], status="timeout") for critic in others
+        ]
+        other_critic = [_agree_all("claude", []), _agree_all("codex", ["claude"])] + [
+            _critique_batch(critic, [], status="timeout") for critic in ("cursor", "opencode")
+        ]
+
+        for label, critiques, grade in (
+            ("own critic only", own_critic_only, "rerun_recommended"),
+            ("another identity critiques", other_critic, "degraded"),
+        ):
+            with self.subTest(label):
+                consensus = self._health(self._ok(["claude"]) + failed, critiques)
+                self.assertEqual(consensus["panel_status"], "degraded")
+                self.assertEqual(consensus["run_health"]["grade"], grade)
+
+    def test_success_status_without_a_batch_is_batch_missing(self) -> None:
+        statuses = {("review", "opencode"): _status("opencode", "review", "success")}
+        consensus = self._health(
+            self._ok(["claude", "codex", "cursor"]),
+            self._all_agree(),
+            statuses=statuses,
+        )
+
+        job = self._job(consensus, "review", "opencode")
+        self.assertEqual(job["outcome"], "batch_missing")
+        self.assertEqual(job["duration_ms"], 60_000)
+        self.assertEqual(consensus["run_health"]["grade"], "degraded")
+
+    def test_status_never_promotes_and_the_batch_wins(self) -> None:
+        statuses = {
+            ("review", "codex"): _status("codex", "review", "success"),
+            ("review", "claude"): _status(
+                "claude", "review", "model_error", error_class="AdapterExit",
+                error_message_redacted="boom\n  second   line",
+            ),
+        }
+        consensus = self._health(
+            self._ok(["claude", "cursor", "opencode"]) + [_empty_batch("codex", "schema_error")],
+            self._all_agree(),
+            statuses=statuses,
+        )
+
+        self.assertEqual(self._job(consensus, "review", "codex")["outcome"], "schema_error")
+        claude = self._job(consensus, "review", "claude")
+        self.assertEqual(claude["outcome"], "success")
+        self.assertEqual(claude["error_class"], "AdapterExit")
+        self.assertEqual(claude["error_message"], "boom second line")
+
+    def test_oversized_status_text_is_omitted_before_redaction(self) -> None:
+        # Unterminated PEM headers make the redaction regex quadratic, and the
+        # runner stores whole adapter stderr. Cutting instead of omitting would
+        # split a secret past recognition and, once earlier secrets are masked,
+        # pull the fragment into the displayed prefix.
+        key = "-----BEGIN PRIVATE KEY----- {} -----END PRIVATE KEY-----".format(
+            " ".join(f"KEYBYTES{index:05d}" for index in range(240))
+        )
+        cases = {
+            "quadratic headers": "-----BEGIN PRIVATE KEY-----" * 8000,
+            "key block across the bound": " ".join([key] * 3),
+            "whitespace-free JWT across the bound": "eyJ" + "a" * 20 + "." + "b" * 9000 + ".sig",
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                statuses = {
+                    ("review", "opencode"): _status(
+                        "opencode", "review", "model_error", error_message_redacted=text
+                    )
+                }
+                with patch.object(
+                    run_health_module, "redact_text", wraps=run_health_module.redact_text
+                ) as redact:
+                    consensus = self._health(
+                        self._ok(["claude", "codex", "cursor"]),
+                        self._all_agree(),
+                        statuses=statuses,
+                    )
+
+                self.assertLessEqual(
+                    max((len(call.args[0]) for call in redact.call_args_list), default=0),
+                    run_health_module.REDACTION_INPUT_LIMIT,
+                )
+                job = self._job(consensus, "review", "opencode")
+                self.assertEqual(job["error_message"], "[omitted: too long to redact]")
+
+        within_bound = {
+            ("review", "opencode"): _status(
+                "opencode", "review", "model_error", error_message_redacted=key + " tail"
+            )
+        }
+        consensus = self._health(
+            self._ok(["claude", "codex", "cursor"]),
+            self._all_agree(),
+            statuses=within_bound,
+        )
+        self.assertEqual(
+            self._job(consensus, "review", "opencode")["error_message"], "[REDACTED] tail"
+        )
+
+    def test_non_success_status_without_a_batch_reports_that_status(self) -> None:
+        statuses = {
+            ("review", "opencode"): _status(
+                "opencode", "review", "config_error", duration_ms=1_000,
+                error_class="EffectiveConfigMismatch",
+                # A rewritten status file need not honor its field name.
+                error_message_redacted="token=example_secret " + "x" * 400,
+            )
+        }
+        consensus = self._health(
+            self._ok(["claude", "codex", "cursor"]),
+            self._all_agree(),
+            statuses=statuses,
+        )
+
+        job = self._job(consensus, "review", "opencode")
+        self.assertEqual(job["outcome"], "config_error")
+        self.assertEqual(len(job["error_message"]), 300)
+        self.assertTrue(job["error_message"].startswith("token=[REDACTED]"))
+        self.assertTrue(job["error_message"].endswith("…"))
+        self.assertIsNone(job["raw_finding_count"])
+
+    def test_every_finding_rejected_is_unusable(self) -> None:
+        rejected = _empty_batch("opencode", "success", raw_finding_count=2, dropped_finding_count=2)
+        consensus = self._health(
+            self._ok(["claude", "codex", "cursor"]) + [rejected],
+            self._all_agree(),
+        )
+
+        job = self._job(consensus, "review", "opencode")
+        self.assertEqual(job["outcome"], "unusable")
+        self.assertEqual(job["dropped_finding_count"], 2)
+        self.assertEqual(consensus["run_health"]["grade"], "degraded")
+
+    def test_drops_or_cap_omissions_alone_grade_degraded(self) -> None:
+        for label, raw, dropped in (("dropped", 3, 2), ("cap omitted", 3, 0)):
+            with self.subTest(label):
+                batches = self._ok(self._REVIEWERS)
+                batches[0].update(raw_finding_count=raw, dropped_finding_count=dropped)
+                consensus = self._health(
+                    batches, self._all_agree()
+                )
+                job = self._job(consensus, "review", "claude")
+                self.assertEqual(job["outcome"], "success")
+                self.assertEqual(job["cap_omitted_finding_count"], raw - 1 - dropped)
+                self.assertEqual(consensus["run_health"]["grade"], "degraded")
+
+    def test_status_files_change_only_run_health(self) -> None:
+        batches = self._ok(["claude", "codex"]) + [_empty_batch("cursor", "timeout")]
+        critiques = [_agree_all("claude", ["codex"]), _critique_batch("codex", [], "timeout")]
+        statuses = {
+            (stage, reviewer): _status(reviewer, stage, "timeout", duration_ms=5)
+            for stage in ("review", "critique")
+            for reviewer in self._REVIEWERS
+        }
+
+        with_status = self._health(batches, critiques, statuses=statuses)
+        without = self._health(batches, critiques)
+
+        self.assertNotEqual(with_status["run_health"], without["run_health"])
+        with_status.pop("run_health")
+        without.pop("run_health")
+        self.assertEqual(with_status, without)
 
 
 if __name__ == "__main__":

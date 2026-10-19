@@ -685,6 +685,10 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 "user.name=Test",
                 "-c",
                 "user.email=test@example.com",
+                # Otherwise the commit starts a detached `git maintenance run
+                # --auto` that can write into .git during temp-dir cleanup.
+                "-c",
+                "maintenance.auto=false",
                 "commit",
                 "-q",
                 "-m",

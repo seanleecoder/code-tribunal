@@ -7,6 +7,22 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Review health in the summary comment (SPEC-66). Every published run now
+  creates or refreshes the summary comment, including a clean run with no
+  findings. Its first section shows a `full`, `degraded` or `re-run recommended`
+  grade, the completed review and critique jobs, panel-wide finding counts, each
+  failed job with its redacted error, and one action line. Collapsed run details
+  give each job's model, effort, outcome and duration. A failed panel is still
+  not published; the consensus job log now prints the same health report
+  before exiting 3. Consensus reads the adapter status files through a new
+  `--status-dir` argument, which both canonical templates pass, and writes the
+  record as `run_health`, an optional property of `consensus.v2`. Health never
+  changes a decision, `panel_status` or an exit code. Post refuses a consensus
+  artifact without `run_health`, which means one from an earlier release. Each
+  existing summary comment is refreshed once on the next run.
+
 ### Changed
 
 - Contributor tooling: Renovate keeps the npm, Python, image-digest and action

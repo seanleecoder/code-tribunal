@@ -17,7 +17,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/findings/<reviewer>.json` | reviewer adapter | consensus/critique | [`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json) |
 | `out/pooled_findings/<reviewer>.json` | critique preparation | critic | anonymized finding pool contract |
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
-| `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); the `drop` decision and `summary.drop_count` are retained for compatibility, and `drop_count` is always `0` |
+| `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); the `drop` decision and `summary.drop_count` are retained for compatibility, and `drop_count` is always `0`. `run_health` is always written and post requires it |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
 | encoded state note/comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and checksum |
 
@@ -26,6 +26,20 @@ render prompts and rules from `prompts/` and `rules/` below the image's trusted
 runtime root, never from the bundle or from wherever `AI_REVIEW_CONFIG` points.
 Every stage loads `AI_REVIEW_CONFIG` itself and must reproduce the manifest's
 `effective_config_sha256`.
+
+`consensus.json` carries `run_health`, an observational record of the run: one
+job row per enabled review seat (and per critic when critique is enabled), with
+model, effort, stage timeout, outcome, duration, finding counts and the redacted
+error, plus a `full`, `degraded` or `rerun_recommended` grade. Consensus builds
+it from the finding and critique batches and the status files it is given with
+`--status-dir`. It never changes a group decision, `panel_status`,
+`failed_reviewers`, resolution eligibility, or an exit code. Post renders it as
+the first section of the summary comment and refuses an artifact without it.
+
+`run_health` is an optional property of `consensus.v2`, so a consensus artifact
+from 2.0.x still validates. Adding an optional property under the same schema
+identifier is a minor change. That is sound only because producer and consumer
+always run from one pinned image pair and artifacts are never mixed across runs.
 
 `post_result.json` is the terminal artifact: nothing downstream reads it, and
 `post` validates it against its schema on write. It is operator diagnostics plus

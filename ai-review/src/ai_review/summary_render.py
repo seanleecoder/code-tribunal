@@ -14,7 +14,16 @@ from .render import (
     platform_comment_limit,
     prose_block,
 )
-from .types import FindingGroup
+from .run_health import (
+    counts_text,
+    headline_and_action,
+    job_findings,
+    job_outcome_cell,
+    job_time,
+    longest,
+    problems,
+)
+from .types import FindingGroup, RunHealth
 
 
 def _anchor_location(anchor: dict[str, Any]) -> str:
@@ -46,6 +55,54 @@ def _summary_line(group: Mapping[str, Any]) -> str:
         return header
     indented_detail = "\n".join(f"  {line}" if line else "" for line in detail.split("\n"))
     return f"{header}\n  Body:\n{indented_detail}"
+
+
+def _literal(value: str) -> str:
+    return literal_span(value, max_length=200, required=True)
+
+
+def _table_literal(value: str) -> str:
+    # A pipe ends a GFM table cell even inside a code span unless escaped.
+    return _literal(value).replace("|", "\\|")
+
+
+def run_health_section(run_health: RunHealth) -> str:
+    """The summary comment's health section: always present, never truncated."""
+    jobs = run_health["jobs"]
+    headline, action = headline_and_action(run_health, _literal)
+    parts = [f"**{headline}** {counts_text(jobs)}"]
+    problem_lines = [
+        bullet + (f"\n  - Error: {error}" if error is not None else "")
+        for bullet, error in problems(run_health, _literal)
+    ]
+    if problem_lines:
+        parts.append("\n".join(problem_lines))
+    if action is not None:
+        parts.append(f"Action: {action}")
+    rows = [
+        "| Stage | Reviewer | Model | Effort | Outcome | Time | Findings raw/acc/drop/cap |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for job in jobs:
+        effort = _table_literal(job["effort"]) if job["effort"] is not None else "default"
+        rows.append(
+            f"| {job['stage']} | {_table_literal(job['reviewer'])} | "
+            f"{_table_literal(job['model'])} | {effort} | {job_outcome_cell(job)} | "
+            f"{job_time(job)} | {job_findings(job)} |"
+        )
+    summary = " · ".join(
+        [
+            "Run details",
+            *(
+                f"longest {stage} {value}"
+                for stage in ("review", "critique")
+                if (value := longest(jobs, stage)) is not None
+            ),
+        ]
+    )
+    table = "\n".join(rows)
+    parts.append(f"<details>\n<summary>{summary}</summary>\n\n{table}\n\n</details>")
+    return "\n\n".join(parts)
 
 
 @overload
@@ -86,8 +143,10 @@ class SummarySectionDescriptor:
             )
 
 
-def _compose_summary_sections(sections: list[SummarySectionDescriptor]) -> str:
-    rendered_sections = ["**AI review summary**"]
+def _compose_summary_sections(sections: list[SummarySectionDescriptor], health: str) -> str:
+    # The health section is reserved space; only finding sections are truncated.
+    # SPEC-66/N04: persisted state later claims its own reserved block here.
+    rendered_sections = ["**AI review summary**", health]
     for section in sections:
         total = len(section.entries)
         section_lines = [
@@ -116,6 +175,7 @@ def _drop_lowest_priority_trailing_entry(
 
 def render_summary_body(
     run_id: str,
+    run_health: RunHealth,
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     max_fyi: int,
@@ -128,6 +188,7 @@ def render_summary_body(
     fallback_entries = [_summary_line(group) for group in fallback_sorted]
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
+    health = run_health_section(run_health)
     placeholder_marker = (
         "<!-- ai-review-summary:v1 run_id="
         f"{encode_marker_token(run_id)} body_hash={'0' * 64} -->"
@@ -178,11 +239,11 @@ def render_summary_body(
             )
         )
 
-    body_without_marker = _compose_summary_sections(sections)
+    body_without_marker = _compose_summary_sections(sections, health)
     while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
         if not _drop_lowest_priority_trailing_entry(sections):
             raise ValueError("platform comment limit is too small for summary marker")
-        body_without_marker = _compose_summary_sections(sections)
+        body_without_marker = _compose_summary_sections(sections, health)
 
     body_hash = sha256_hex(body_without_marker)
     marker = (
