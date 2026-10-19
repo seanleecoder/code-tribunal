@@ -58,7 +58,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             digest = effective_config_digest(config)
             manifest = _manifest_for_config(config, run_id="run-1")
             good = _batch("claude", _finding("claude", "1" * 64, "major"))
-            good["model"] = "model-a"
             good["effective_config_sha256"] = digest
             good["run_id"] = "run-1"
 
@@ -72,7 +71,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     {
                         **good,
                         "reviewer": "codex",
-                        "model": "model-b",
                         "adapter_status": "success",
                     },
                     "disabled reviewer",
@@ -152,7 +150,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
@@ -272,7 +269,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             ):
                 for reviewer in order:
                     batch = _batch(reviewer, _finding(reviewer, "1" * 64, "major"))
-                    batch["model"] = "model-a" if reviewer == "claude" else "model-b"
                     batch["effective_config_sha256"] = digest
                     batch["run_id"] = "run"
                     write_canonical_json(findings_dir / f"{reviewer}.json", batch)
@@ -346,7 +342,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             digest = effective_config_digest(config)
             manifest = _manifest_for_config(config, run_id="run-1")
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             critique = {
@@ -396,7 +391,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
@@ -446,7 +440,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
@@ -492,7 +485,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
@@ -542,7 +534,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)
@@ -607,7 +598,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                         _manifest_for_config(config, run_id="run-1"),
                     )
                     batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-                    batch["model"] = "model-a"
                     batch["effective_config_sha256"] = digest
                     batch["run_id"] = "run-1"
                     write_canonical_json(findings_dir / "claude.json", batch)
@@ -696,7 +686,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                         _manifest_for_config(config, run_id="run-1"),
                     )
                     batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-                    batch["model"] = "model-a"
                     batch["effective_config_sha256"] = digest
                     batch["run_id"] = "run-1"
                     write_canonical_json(findings_dir / "claude.json", batch)
@@ -762,7 +751,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 _manifest_for_config(config, run_id="run-1"),
             )
             batch = _batch("claude", _finding("claude", "1" * 64, "major"))
-            batch["model"] = "model-a"
             batch["effective_config_sha256"] = digest
             batch["run_id"] = "run-1"
             write_canonical_json(findings_dir / "claude.json", batch)

@@ -267,16 +267,14 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(
                     f"finding batch run_id mismatch for reviewer={reviewer}"
                 )
-            # Missing status defaults to success (fail-closed for the digest check).
-            status = str(batch.get("adapter_status") or "success")
+            status = batch["adapter_status"]
             # Digest binding is required for success evidence; non-success batches
             # degrade the panel instead of hard-failing the whole run.
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(
                     f"finding batch effective_config_sha256 mismatch for reviewer={reviewer}"
                 )
-            reviewer_cfg = reviewers_cfg.get(reviewer)
-            if not isinstance(reviewer_cfg, dict):
+            if not isinstance(reviewers_cfg.get(reviewer), dict):
                 raise ConsensusIntegrityError(f"finding batch for unknown reviewer={reviewer}")
             # Matrix jobs may still emit skipped artifacts for disabled seats.
             if reviewer not in enabled and status != "skipped":
@@ -296,14 +294,11 @@ def validate_consensus_inputs(
             seen_critics.add(critic)
             if batch.get("run_id") != run_id:
                 raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
-            status = str(batch.get("adapter_status") or "success")
-            critic_cfg = reviewers_cfg.get(critic)
-            if not isinstance(critic_cfg, dict):
+            status = batch["adapter_status"]
+            if not isinstance(reviewers_cfg.get(critic), dict):
                 raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
-            if critic not in enabled:
-                if status != "skipped":
-                    raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
-                continue
+            if critic not in enabled and status != "skipped":
+                raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(
                     f"critique batch effective_config_sha256 mismatch for critic={critic}"
