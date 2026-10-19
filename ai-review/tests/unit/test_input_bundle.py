@@ -675,9 +675,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
     def _init_git_repo(root: Path) -> str:
         root.mkdir(parents=True)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        # A commit otherwise starts a detached `git maintenance run --auto`,
-        # which can write into .git while the temporary directory is removed.
-        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=root, check=True)
         (root / ".gitignore").write_text("*.cache\ninputs/\n", encoding="utf-8")
         (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
         subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
@@ -688,6 +685,10 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 "user.name=Test",
                 "-c",
                 "user.email=test@example.com",
+                # Otherwise the commit starts a detached `git maintenance run
+                # --auto` that can write into .git during temp-dir cleanup.
+                "-c",
+                "maintenance.auto=false",
                 "commit",
                 "-q",
                 "-m",
