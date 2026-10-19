@@ -16,6 +16,11 @@ from ai_review.schema import validate_instance, write_canonical_json
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
+REVIEWER_CREDENTIALS = tuple(sorted(
+    {name for definition in REVIEWERS.values() for name in definition.credential_variables}
+))
+GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
+GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
 DEMO_CANARY_DEFECT = (
     "# Candidate-canary defect: prefix membership grants unintended users.\n"
@@ -101,18 +106,18 @@ def canary_stage_environment(*, mock: bool = False) -> str:
     return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {controls}{mock_switches}"
 
 
-def _configure_collect(parser: argparse.ArgumentParser) -> None:
+def configure_collect(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--destination", required=True)
 
 
-def build_campaign_parser(
-    description: str,
+def add_campaign_actions(
+    parser: argparse.ArgumentParser,
     configure_create: CreateParser,
     *,
-    drive: tuple[str, CreateParser] = ("collect", _configure_collect),
-) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=description)
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    drive: tuple[str, CreateParser] = ("collect", configure_collect),
+) -> None:
+    """Give one campaign's parser its create, drive (collect or run), and cleanup actions."""
+    subparsers = parser.add_subparsers(dest="action", required=True)
     create = subparsers.add_parser("create")
     create.add_argument("--branch", required=True)
     create.add_argument("--runtime-source", required=True)
@@ -127,7 +132,6 @@ def build_campaign_parser(
     configure_drive(drive_parser)
     cleanup = subparsers.add_parser("cleanup")
     cleanup.add_argument("--state", required=True)
-    return parser
 
 
 def candidate_identity(args: argparse.Namespace) -> dict[str, str]:

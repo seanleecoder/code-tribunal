@@ -23,10 +23,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ai_review.config import RETIRED_ENV_OVERRIDES
-from ai_review.reviewers import REVIEWERS
-from candidate_canary_common import require_real_controls
-from github_candidate_canary import DEMO_REPOSITORY
-from gitlab_candidate_canary import DEMO_PROJECT
+from canary_github import DEMO_REPOSITORY
+from canary_gitlab import DEMO_PROJECT
+from candidate_canary_common import GITHUB_SECRETS, GITLAB_SECRETS, require_real_controls
 
 MOCK_VARIABLES = frozenset({
     "AI_REVIEW_LOCAL_MOCK",
@@ -34,11 +33,6 @@ MOCK_VARIABLES = frozenset({
     "AI_REVIEW_MOCK_SCENARIO",
     *require_real_controls(),
 })
-REVIEWER_CREDENTIALS = tuple(sorted(
-    {name for definition in REVIEWERS.values() for name in definition.credential_variables}
-))
-GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
-GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 # The resolve token is a fine-grained GitHub token, which expires, and an expired
 # one prevents thread mutations, so its age is surfaced before a run.
 EXPIRING_SECRET = "AI_REVIEW_GITHUB_RESOLVE_TOKEN"

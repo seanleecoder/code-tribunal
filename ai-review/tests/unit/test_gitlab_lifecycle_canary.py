@@ -17,10 +17,10 @@ common = load_repository_script(
     "candidate_canary_common", ROOT / "scripts/candidate_canary_common.py"
 )
 canary = load_repository_script(
-    "gitlab_candidate_canary", ROOT / "scripts/gitlab_candidate_canary.py"
+    "canary_gitlab", ROOT / "scripts/canary_gitlab.py"
 )
 lifecycle = load_repository_script(
-    "gitlab_lifecycle_canary", ROOT / "scripts/gitlab_lifecycle_canary.py"
+    "canary_gitlab", ROOT / "scripts/canary_gitlab.py"
 )
 ARGS = argparse.Namespace(
     base_image="ghcr.io/example/ai-review-base:2.0-" + "a" * 40 + "@sha256:" + "b" * 64,
