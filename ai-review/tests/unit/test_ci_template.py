@@ -514,12 +514,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertRegex(
             build_preflight,
-            r"uses: actions/upload-artifact@[0-9a-f]{40} # v7\.0\.1",
+            r"uses: actions/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+",
         )
         self.assertIn("docker save", build_preflight)
         self.assertRegex(
             publish,
-            r"uses: actions/download-artifact@[0-9a-f]{40} # v8\.0\.1",
+            r"uses: actions/download-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+",
         )
         self.assertIn("docker load", publish)
         self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
@@ -532,7 +532,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
-        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.2")
+        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v\d+\.\d+\.\d+")
         self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)

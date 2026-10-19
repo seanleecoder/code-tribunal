@@ -55,6 +55,11 @@ versioning.
   `Canary-run:` trailer instead of `Release-manifest-sha256`. Releases up to 2.0.3
   are unchanged. The generated evidence records are gone from `docs/evidence/`;
   each earlier release's records remain at its tag.
+- Upgraded reviewer CLIs to Claude Code 2.1.303, Codex 0.163.0, OpenCode
+  1.19.3, and Cursor Agent 2026.10.18-ea085cb; refreshed the Python, Node builder
+  and Debian base image digests, Node to 26.12.0, certifi to 2026.10.18, rpds-py
+  to 2026.9.1, and Ruff to 0.17.1. OpenCode remains paired with its expected
+  ripgrep 15.1.0.
 
 ## [2.0.3] - 2026-10-18
 

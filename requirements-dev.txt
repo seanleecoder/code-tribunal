@@ -9,9 +9,9 @@ requests==2.34.2
 mypy==2.4.0
 pytest==9.1.1
 pytest-cov==7.1.0
-ruff==0.16.10
+ruff==0.17.1
 types-PyYAML==6.0.12.20260906
-types-requests==2.33.0.20260906
+types-requests==2.33.0.20261006
 # PyPI has no Android wheel and the sdist needs a Rust toolchain. On Android, put
 # the binary from zizmor's static musllinux wheel on PATH instead.
 zizmor==1.31.1; sys_platform != "android"

@@ -115,7 +115,7 @@ jobs:
           AI_REVIEW_GITHUB_PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
           AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
         run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-review-inputs
           path: inputs/
@@ -136,7 +136,7 @@ jobs:
       matrix:
         reviewer: [claude, codex, opencode, cursor]
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ai-review-inputs
           path: inputs
@@ -161,7 +161,7 @@ jobs:
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ai-review-review-${{ matrix.reviewer }}
@@ -182,11 +182,11 @@ jobs:
       matrix:
         reviewer: [claude, codex, opencode, cursor]
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ai-review-review-*
           path: out
@@ -212,7 +212,7 @@ jobs:
           AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
           AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ai-review-critique-${{ matrix.reviewer }}
@@ -227,11 +227,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.0-10f2f8deef3ee63c952df76d5f627ed6aa2e7ea9@sha256:e6ca87a2082cd4820b780a14164212a33e3d176812541e9ede68dd1b2169ccdd
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ai-review-review-*
           path: reviewer-artifacts
@@ -239,7 +239,7 @@ jobs:
       - name: Download critique artifacts
         id: download-critiques
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ai-review-critique-*
           path: reviewer-artifacts
@@ -249,7 +249,7 @@ jobs:
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
         run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --status-dir reviewer-artifacts/status --out out/consensus/consensus.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-review-consensus
           path: out/consensus/
@@ -275,11 +275,11 @@ jobs:
         run: |
           echo "::error::consensus job result was '${{ needs.consensus.result }}'; no review to publish."
           exit 1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ai-review-inputs
           path: inputs
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ai-review-consensus
           path: out/consensus
@@ -288,7 +288,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
         run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ai-review-post

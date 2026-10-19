@@ -1,7 +1,7 @@
-ARG AI_REVIEW_BASE_IMAGE=python:3.14.8-slim-trixie@sha256:c3e521df8b2b498a7a682e7e18676771cb80c6b75b8699af886b2d554ce40151
+ARG AI_REVIEW_BASE_IMAGE=python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 # Codex's native package directory, shared by the builder prune and the final-stage shim.
 ARG CODEX_VENDOR=@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl
-FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS reviewer-clis
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS reviewer-clis
 ARG CODEX_VENDOR
 
 WORKDIR /opt/ai-review/reviewer-clis
@@ -29,7 +29,7 @@ RUN set -eu; \
 # checks, placeholder rejection, pinned URL, checksum, extract). The two stay
 # duplicated rather than sharing a base stage so a change to one pinned artifact's
 # verification cannot silently alter the other's.
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS cursor-cli
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS cursor-cli
 
 WORKDIR /opt/cursor-agent-src
 COPY ai-review/images/cursor-agent.pin ./cursor-agent.pin
@@ -66,7 +66,7 @@ RUN set -eu; \
 
 # Deliberately parallel to the cursor-cli stage above; see the comment there for why
 # the verification bodies are not shared.
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS ripgrep-bin
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS ripgrep-bin
 
 WORKDIR /opt/ripgrep-src
 COPY ai-review/images/ripgrep.pin ./ripgrep.pin
