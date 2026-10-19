@@ -24,7 +24,6 @@ from .grouping import (
     issue_id_for_group,
 )
 from .memory import find_matching_record, state_from_aliases
-from .render import platform_comment_limit, render_body
 from .run_health import build_run_health_jobs, load_status_files, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
@@ -144,9 +143,6 @@ def build_consensus(
     ``ConsensusIntegrityError`` for unknown targets. ``statuses`` (from
     ``load_status_files``) feeds only ``run_health``.
     """
-    posting_mode = str(config.get("posting", {}).get("mode", "gitlab_discussions"))
-    # Fail fast on unsupported modes before performing consensus work.
-    platform_comment_limit(posting_mode)
     enabled = sorted(enabled_reviewers(config))
     # successful_reviewers / resolution_eligible_reviewers share one predicate.
     successful = sorted(
@@ -196,6 +192,7 @@ def build_consensus(
                 "suggestion": representative.get("suggestion"),
                 "evidence_by_reviewer": _evidence_by_reviewer(findings),
                 "critique_disputes": [],
+                # COMPAT-007: posting hashes the body it publishes; nothing reads this.
                 "body_hash": "0" * 64,
                 "agreeing_critics": [],
                 "support_count": 0,
@@ -251,13 +248,6 @@ def build_consensus(
     else:
         valid_duplicate_links = set()
     _apply_critiques(groups, critique_batches, config, valid_duplicate_links)
-    for group in groups:
-        _body, body_hash = render_body(
-            cast(FindingGroup, group),
-            manifest["run_id"],
-            posting_mode=posting_mode,
-        )
-        group["body_hash"] = body_hash
     groups = sorted(groups, key=_group_sort_key)
     jobs = build_run_health_jobs(config, finding_batches, critique_batches, statuses or {})
     return {

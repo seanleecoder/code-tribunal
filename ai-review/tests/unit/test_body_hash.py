@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from ai_review.canonical import sha256_hex
 from ai_review.notes import _unwrap_span, parse_marker, parse_review_note
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
@@ -41,7 +42,7 @@ class BodyHashTests(unittest.TestCase):
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
 
-    def test_body_hash_includes_canonical_source_identity(self) -> None:
+    def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()
         second_group = self._group()
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
@@ -53,11 +54,9 @@ class BodyHashTests(unittest.TestCase):
             second_group, "run", posting_mode="gitlab_discussions"
         )
 
-        self.assertEqual(
-            first.rsplit("\n\n<!--", 1)[0], second.rsplit("\n\n<!--", 1)[0]
-        )
-        self.assertNotEqual(first_hash, second_hash)
-        self.assertNotEqual(parse_marker(first), parse_marker(second))
+        self.assertEqual(first, second)
+        self.assertEqual(first_hash, second_hash)
+        self.assertNotIn("source=", first)
 
     def test_boundary_backticks_get_standard_code_span_padding(self) -> None:
         self.assertEqual(literal_span("`leading", required=True), "`` `leading ``")
@@ -74,7 +73,7 @@ class BodyHashTests(unittest.TestCase):
             "`` `xx ``",
         )
 
-    def test_v2_and_v3_markers_remain_parseable(self) -> None:
+    def test_markers_with_and_without_source_remain_parseable(self) -> None:
         body, _body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
         self.assertIsNotNone(parse_marker(body))
         old_marker = (
@@ -87,7 +86,6 @@ class BodyHashTests(unittest.TestCase):
                 "issue_id": "a" * 64,
                 "run_id": "old",
                 "body_hash": "b" * 64,
-                "source_hash": "c" * 64,
             },
         )
 
@@ -123,10 +121,7 @@ class BodyHashTests(unittest.TestCase):
                 ]
             ),
         )
-        self.assertEqual(
-            body_hash,
-            "3499f3002412134ca1601885f35d1161b8c32ad59444164e0c50f841a09f986d",
-        )
+        self.assertEqual(body_hash, sha256_hex(body_without_marker))
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
         group = self._group()
