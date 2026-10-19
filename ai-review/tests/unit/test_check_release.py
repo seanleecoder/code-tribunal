@@ -43,8 +43,11 @@ class ReleaseRepository:
     def __init__(self, root: Path) -> None:
         self.root = root
         _git(root, "init", "-q", "-b", "main")
+        # Each commit otherwise starts a detached `git maintenance run --auto`,
+        # which can write into .git while the temporary directory is removed.
         for key, value in (("user.name", "Fixture"), ("user.email", "fixture@example.test"),
-                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false")):
+                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"),
+                           ("maintenance.auto", "false")):
             _git(root, "config", key, value)
         for relative in TEMPLATES:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
