@@ -107,6 +107,9 @@ recommendation's disposition.
 | N15 seat usability (2026-10-19) | Trust the runner's `usable_for_resolution` | Consensus deletes the quality-count and usability re-check and the model check. The adapter runner is the only writer and computes the flag with `batch_quality_fields`; the schema still bounds the counts, which feed only `run_health`. The config-digest binding covers the model. |
 | N15 unknown `duplicate_of` (2026-10-19) | A dispute, not a fatal error | Validation stops checking critique targets and links. `critique.py` keeps the unknown-target error and already turns every unusable duplicate link into `dispute`. One `Changed` changelog line covers N15. |
 | Dependency release age (2026-10-19) | No minimum release age | Renovate opens an update as soon as it is released, and manual refreshes take the latest release, including the `.pin` files. |
+| 2.1.0 version (2026-10-19) | Stable 2.1.0, no release candidate | Most publication failures are fixed on `main` and retried by dispatch; a wrong release body is edited in place. |
+| 2.1.0 hostile campaign (2026-10-19) | Included | ADR-0004 migration step 5 requires it for the trial run, and `review.gitlab-ci.yml` changed (`--status-dir`). |
+| 2.1.0 body-format refresh (2026-10-19) | Run alongside the canary, mock set in a temporary workflow | The fixture's workflow carries the mock switches, so the demo's repository variables never change while the canary runs. |
 
 ## Recommended order
 
