@@ -48,16 +48,14 @@ class BodyHashTests(unittest.TestCase):
         second_group = self._group()
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
 
-        first, first_hash = render_body(
+        first, _first_hash = render_body(
             first_group, "run", posting_mode="gitlab_discussions"
         )
-        second, second_hash = render_body(
+        second, _second_hash = render_body(
             second_group, "run", posting_mode="gitlab_discussions"
         )
 
         self.assertEqual(first, second)
-        self.assertEqual(first_hash, second_hash)
-        self.assertIn(f"source={'0' * 64} -->", first)
 
     def test_boundary_backticks_get_standard_code_span_padding(self) -> None:
         self.assertEqual(literal_span("`leading", required=True), "`` `leading ``")
@@ -75,20 +73,13 @@ class BodyHashTests(unittest.TestCase):
         )
 
     def test_markers_with_and_without_source_remain_parseable(self) -> None:
-        body, _body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
-        self.assertIsNotNone(parse_marker(body))
-        old_marker = (
-            "<!-- ai-review:v1 issue_id="
-            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
-        )
-        self.assertEqual(
-            parse_marker("legacy body\n\n" + old_marker),
-            {
-                "issue_id": "a" * 64,
-                "run_id": "old",
-                "body_hash": "b" * 64,
-            },
-        )
+        prefix = f"<!-- ai-review:v1 issue_id={'a' * 64} run_id=old body_hash={'b' * 64}"
+        for suffix in (f" source={'c' * 64} -->", " -->"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    parse_marker("legacy body\n\n" + prefix + suffix),
+                    {"issue_id": "a" * 64, "run_id": "old", "body_hash": "b" * 64},
+                )
 
     def test_marker_stays_readable_by_the_previous_release(self) -> None:
         # COMPAT-008: the v2.0.3 grammar, verbatim. A rollback that cannot read

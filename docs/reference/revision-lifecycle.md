@@ -48,4 +48,4 @@ renders an unchanged finding differently, each surfaced bot-authored inline
 thread receives one content refresh on its next run; issue IDs, state records,
 and resolution status remain unchanged. A rollback causes one reverse refresh
 of surfaced threads and does not discard state; `wontfix` and resolved threads
-are not re-rendered, and their markers stay readable by the previous release.
+are not re-rendered.

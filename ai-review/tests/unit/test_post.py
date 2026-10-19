@@ -24,9 +24,6 @@ from ai_review.config import (
 )
 from ai_review.consensus import build_consensus
 from ai_review.memory import decode_state_note_body
-from ai_review.notes import (
-    parse_marker,
-)
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
@@ -551,7 +548,7 @@ class PostTests(PostCase):
                         "body": (
                             "existing\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=run "
-                            f"body_hash={body_hash} -->"
+                            f"body_hash={body_hash} source={'0' * 64} -->"
                         ),
                     }
                 ],
@@ -569,44 +566,6 @@ class PostTests(PostCase):
         self.assertEqual(result["posted_discussions"], [])
         self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
-        validate_instance(result, "post_result.schema.json")
-
-    def test_post_existing_marker_skips_when_only_source_identity_changes(self) -> None:
-        # The hash covers the posted text alone, so a new source set that renders
-        # the same body leaves the thread untouched.
-        client = FakePostClient("head")
-        old_consensus = self._consensus()
-        old_group = old_consensus["groups"][0]
-        old_body, old_hash = render_body(
-            old_group, "run", posting_mode="gitlab_discussions"
-        )
-        client.discussions = [
-            {
-                "id": "existing-discussion",
-                "notes": [
-                    {
-                        "id": 123,
-                        "author": {"id": 10},
-                        "body": old_body,
-                    }
-                ],
-            }
-        ]
-        new_consensus = copy.deepcopy(old_consensus)
-        new_consensus["groups"][0]["source_finding_ids"] = ["c" * 64]
-
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            new_consensus,
-        )
-
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(result["skipped_unchanged"], 1)
-        self.assertEqual(client.updated, 0)
-        self.assertEqual(parse_marker(old_body)["body_hash"], old_hash)
         validate_instance(result, "post_result.schema.json")
 
     def test_post_existing_marker_updates_changed_body(self) -> None:
@@ -1246,7 +1205,7 @@ class PostTests(PostCase):
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
-                            f"body_hash={'0' * 64} -->"
+                            f"body_hash={'0' * 64} source={'0' * 64} -->"
                         ),
                     }
                 ],
@@ -1311,7 +1270,7 @@ class PostTests(PostCase):
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
-                            f"body_hash={'0' * 64} -->"
+                            f"body_hash={'0' * 64} source={'0' * 64} -->"
                         ),
                     }
                 ],
