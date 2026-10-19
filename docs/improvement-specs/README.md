@@ -66,7 +66,7 @@ recommendation's disposition.
   below.
 - **Not on the roadmap:** X01.
 
-## Maintainer decisions (2026-10-13 to 2026-10-18)
+## Maintainer decisions (2026-10-13 to 2026-10-19)
 
 | Question | Decision | Consequence |
 |---|---|---|
@@ -101,6 +101,9 @@ recommendation's disposition.
 | N01 `.pin` files (2026-10-18) | No Renovate regex managers | Renovate cannot recompute the checksums; ripgrep follows `opencode-ai`, and Cursor has no datasource. The manual refresh steps and the `opencode_version` equality check stay. |
 | N01 Renovate hosting (2026-10-18) | The hosted Mend app | Only `renovate.json` is committed: no secret and no extra workflow. The maintainer installs the app. |
 | Canary citation (2026-10-18) | A `Canary-run: <run id>` trailer in the signed tag | Publication verifies exactly the cited run against P's pins, so retries are deterministic and the signature covers the choice. It takes the place of `Release-manifest-sha256`. |
+| N12 consensus `group.body_hash` (2026-10-19) | A zero placeholder until `consensus.v3` | Posting re-renders and hashes every body itself, and nothing reads the consensus field. Consensus stops rendering, so render changes stop touching the consensus goldens. Registered as a compatibility row. |
+| N12 thread refresh (2026-10-19) | Accept one in-place edit per surfaced thread | The stored hashes change once, so each existing bot thread is updated on its next surfaced run. Noted in the changelog; no old-formula dual path. |
+| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar | Threads that are never refreshed keep `source=` indefinitely. The parser ignores it for good, so it is grammar, not a temporary decoder. |
 
 ## Recommended order
 
