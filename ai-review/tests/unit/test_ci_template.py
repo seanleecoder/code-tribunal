@@ -514,12 +514,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertRegex(
             build_preflight,
-            r"uses: actions/upload-artifact@[0-9a-f]{40} # v7\.0\.1",
+            r"uses: actions/upload-artifact@[0-9a-f]{40}",
         )
         self.assertIn("docker save", build_preflight)
         self.assertRegex(
             publish,
-            r"uses: actions/download-artifact@[0-9a-f]{40} # v8\.0\.1",
+            r"uses: actions/download-artifact@[0-9a-f]{40}",
         )
         self.assertIn("docker load", publish)
         self.assertIn('docker image inspect "$AI_REVIEW_BASE_TAG"', publish)
@@ -532,7 +532,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertNotIn("base_push_output", text)
         self.assertNotIn("reviewer_push_output", text)
         self.assertNotIn("sed -n 's/.*digest:", text)
-        self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40} # v4\.2\.2")
         self.assertRegex(text, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(text, r"uses: actions/attest@[0-9a-f]{40}")
         self.assertNotIn(":latest", text)
@@ -1010,10 +1009,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn('core.setOutput("head_sha", headSha)', script)
         self.assertIn('core.setOutput("pr_number", pullNumber)', script)
         self.assertNotIn("${{ inputs.pr_number }}", script)
-        self.assertIn(
-            "uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
-            prepare,
-        )
+        self.assertRegex(prepare, r"uses: actions/github-script@[0-9a-f]{40}")
         self.assertIn("persist-credentials: false", prepare)
 
     def test_github_resolver_executes_trust_and_input_boundaries(self) -> None:

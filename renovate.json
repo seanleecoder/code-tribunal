@@ -1,8 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "minimumReleaseAge": "7 days",
-  "internalChecksFilter": "strict",
   "github-actions": {
     "managerFilePatterns": ["/^ai-review/ci/review\\.github-actions\\.yml$/"]
   },

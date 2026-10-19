@@ -106,6 +106,7 @@ recommendation's disposition.
 | N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until the next major | Threads that are never refreshed keep `source=` indefinitely. 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so dropping it would break their commands after a rollback. |
 | N15 seat usability (2026-10-19) | Trust the runner's `usable_for_resolution` | Consensus deletes the quality-count and usability re-check and the model check. The adapter runner is the only writer and computes the flag with `batch_quality_fields`; the schema still bounds the counts, which feed only `run_health`. The config-digest binding covers the model. |
 | N15 unknown `duplicate_of` (2026-10-19) | A dispute, not a fatal error | Validation stops checking critique targets and links. `critique.py` keeps the unknown-target error and already turns every unusable duplicate link into `dispute`. One `Changed` changelog line covers N15. |
+| Dependency release age (2026-10-19) | No minimum release age | Renovate opens an update as soon as it is released, and manual refreshes take the latest release, including the `.pin` files. |
 
 ## Recommended order
 
