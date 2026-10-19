@@ -17,7 +17,7 @@ import yaml
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
-hostile = load_repository_script("gitlab_hostile_canary", ROOT / "scripts/gitlab_hostile_canary.py")
+hostile = load_repository_script("canary_gitlab", ROOT / "scripts/canary_gitlab.py")
 TEMPLATE_SHA = "a" * 40
 CONSUMER = (
     "ai_review:\n"

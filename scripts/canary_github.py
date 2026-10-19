@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Drive the zero-token GitHub mock lifecycle (Chain B) for a candidate pair.
+"""GitHub candidate-canary campaigns: the scoped panel and the mock lifecycle.
 
-The canary pushes its own workflow copy to a temporary demo branch with the
-candidate images and mock mode baked in, and a ``mock_scenario`` dispatch input
-so every step re-runs the same head without a commit. It then walks the Chain
-B steps from the runbook against the real GitHub posting, state, and command
-APIs, and writes a redacted step summary. The mock emits no model content.
+Each campaign pushes its own workflow copy, pinned to the candidate images, to a
+temporary demo branch and opens a pull request. The panel collects the real
+review run's artifacts. The zero-token mock lifecycle (Chain B) bakes mock mode
+and a ``mock_scenario`` dispatch input into the copy, so every step re-runs the
+same head without a commit. It then walks the Chain B steps from the runbook
+against the real GitHub posting, state, and command APIs, and writes a redacted
+step summary. The mock emits no model content.
 """
 
 from __future__ import annotations
@@ -13,39 +15,291 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ai_review.notes import parse_marker
 from ai_review.schema import load_json_file
 from candidate_canary_common import (
+    DEMO_REPOSITORY,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
     LifecycleFailure,
-    build_campaign_parser,
     candidate_identity,
+    effort_variables,
     expect,
+    inject_demo_defect,
     lifecycle_reviewer_results,
     post_counts,
     post_mutated,
     read_state,
     require_real_controls,
+    reviewer_ids,
     run_lifecycle_steps,
     saved_wontfix,
     write_state,
 )
-from github_candidate_canary import (
-    DEMO_REPOSITORY,
-    GitHubCanaryError,
-    _configure_create,
-    _run,
-    candidate_workflow,
-    cleanup_campaign,
-    commit_and_push,
-    download_run,
-    push_candidate_branch,
+
+# gh authenticates only the git commands it runs itself, and the protected
+# checkout persists no credentials, so the push must borrow gh's GH_TOKEN helper.
+GH_CREDENTIAL_HELPER = (
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
 )
+
+
+class GitHubCanaryError(RuntimeError):
+    pass
+
+
+def _run(*args: str, cwd: Path | None = None) -> str:
+    completed = subprocess.run(list(args), cwd=cwd, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
+        raise GitHubCanaryError(f"{args[0]} {args[1] if len(args) > 1 else ''} failed: {detail}")
+    return completed.stdout.strip()
+
+
+def candidate_workflow(workflow: str, *, base_image: str, reviewer_image: str) -> str:
+    """Pin the canonical workflow to the candidate pair with shipped defaults."""
+    replacements = (
+        (r"ghcr\.io/[^\s]+/ai-review-base:[^\s@]+@sha256:[0-9a-f]{64}", base_image),
+        (
+            r"ghcr\.io/[^\s]+/ai-review-reviewer:[^\s@]+@sha256:[0-9a-f]{64}",
+            reviewer_image,
+        ),
+    )
+    for pattern, replacement in replacements:
+        workflow, count = re.subn(pattern, replacement, workflow)
+        if count == 0:
+            raise GitHubCanaryError(f"canonical workflow had no image matching {pattern}")
+    roster = ",".join(reviewer_ids())
+    workflow, roster_count = re.subn(
+        r"(?m)^  AI_REVIEW_REVIEWERS:.*$",
+        f'  AI_REVIEW_REVIEWERS: "{roster}"',
+        workflow,
+    )
+    if roster_count != 1:
+        raise GitHubCanaryError("canonical workflow must declare AI_REVIEW_REVIEWERS once")
+    for variable in effort_variables():
+        workflow, count = re.subn(rf"(?m)^  {variable}:.*$", f'  {variable}: ""', workflow)
+        if count != 1:
+            raise GitHubCanaryError(f"canonical workflow must declare {variable} once")
+    # Opening the PR is the campaign's only review trigger, so the copy's
+    # pull_request run must execute whatever the demo's AI_REVIEW_MANUAL says.
+    workflow, manual_count = re.subn(r"\n *vars\.AI_REVIEW_MANUAL != 'true' &&", "", workflow)
+    if manual_count != 1:
+        raise GitHubCanaryError("canonical workflow must check AI_REVIEW_MANUAL once")
+    return workflow
+
+
+def commit_and_push(demo: Path, paths: list[str], message: str, branch: str) -> None:
+    _run("git", "add", *paths, cwd=demo)
+    _run("git", "commit", "-m", message, cwd=demo)
+    _run("git", *GH_CREDENTIAL_HELPER, "push", "origin", f"HEAD:{branch}", cwd=demo)
+
+
+def download_run(run_id: str | int, destination: Path, *selector: str) -> Path:
+    """Download ``run_id``'s artifacts, optionally narrowed by ``--name``/``--pattern``."""
+    _run(
+        "gh",
+        "run",
+        "download",
+        str(run_id),
+        "--repo",
+        DEMO_REPOSITORY,
+        *selector,
+        "--dir",
+        str(destination),
+    )
+    return destination
+
+
+def push_candidate_branch(
+    args: argparse.Namespace,
+    *,
+    workflow: str,
+    edit: Callable[[Path], list[str]],
+    message: str,
+    title: str,
+) -> dict[str, Any]:
+    """Push a demo branch carrying ``workflow`` and ``edit``'s files, then open its PR."""
+    root = Path(args.workdir)
+    demo = root / "demo"
+    root.mkdir(parents=True, exist_ok=True)
+    _run("gh", "repo", "clone", DEMO_REPOSITORY, str(demo), "--", "--depth=1")
+    _run("git", "switch", "-c", args.branch, cwd=demo)
+    (demo / ".github/workflows/ai-review.yml").write_text(workflow, encoding="utf-8")
+    paths = [".github/workflows/ai-review.yml", *edit(demo)]
+    _run("git", "config", "user.name", "code-tribunal-canary", cwd=demo)
+    _run("git", "config", "user.email", "canary@users.noreply.github.com", cwd=demo)
+    commit_and_push(demo, paths, message, args.branch)
+    state: dict[str, Any] = {"branch": args.branch}
+    write_state(args.state, state)
+    _run(
+        "gh",
+        "pr",
+        "create",
+        "--repo",
+        DEMO_REPOSITORY,
+        "--head",
+        args.branch,
+        "--base",
+        "main",
+        "--title",
+        title,
+        "--body",
+        "Automated candidate canary; this PR will be closed without merge.",
+    )
+    pr = json.loads(
+        _run(
+            "gh",
+            "pr",
+            "view",
+            args.branch,
+            "--repo",
+            DEMO_REPOSITORY,
+            "--json",
+            "number,url",
+        )
+    )
+    state.update({"pr_number": str(pr["number"]), "change_url": pr["url"]})
+    write_state(args.state, state)
+    return state
+
+
+def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
+    workflow = candidate_workflow(
+        Path(args.workflow).read_text(encoding="utf-8"),
+        base_image=args.base_image,
+        reviewer_image=args.reviewer_image,
+    )
+
+    def inject_defect(demo: Path) -> list[str]:
+        access_path = demo / "src/access.py"
+        access_path.write_text(
+            inject_demo_defect(access_path.read_text(encoding="utf-8"), GitHubCanaryError),
+            encoding="utf-8",
+        )
+        return ["src/access.py"]
+
+    return push_candidate_branch(
+        args,
+        workflow=workflow,
+        edit=inject_defect,
+        message="candidate canary fixture",
+        title=f"Candidate canary {args.runtime_source[:12]}",
+    )
+
+
+def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
+    state = read_state(args.state)
+    deadline = time.monotonic() + args.timeout_seconds
+    run: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        runs = json.loads(
+            _run(
+                "gh",
+                "run",
+                "list",
+                "--repo",
+                DEMO_REPOSITORY,
+                "--workflow",
+                "ai-review.yml",
+                "--branch",
+                state["branch"],
+                "--event",
+                "pull_request",
+                "--limit",
+                "1",
+                "--json",
+                "databaseId",
+            )
+        )
+        if runs:
+            run = runs[0]
+            break
+        time.sleep(5)
+    if run is None:
+        raise GitHubCanaryError("the canary pull request's review run did not appear")
+    run_id = str(run["databaseId"])
+    while time.monotonic() < deadline:
+        run = json.loads(
+            _run(
+                "gh",
+                "run",
+                "view",
+                run_id,
+                "--repo",
+                DEMO_REPOSITORY,
+                "--json",
+                "databaseId,url,status,conclusion",
+            )
+        )
+        if run.get("status") == "completed":
+            conclusion = str(run.get("conclusion") or "unknown")
+            if conclusion != "success":
+                raise GitHubCanaryError(f"GitHub candidate run ended with {conclusion}")
+            break
+        time.sleep(15)
+    else:
+        raise GitHubCanaryError("timed out waiting for GitHub candidate run")
+
+    destination = Path(args.destination)
+    artifacts = download_run(run_id, destination / "artifacts")
+    inputs = destination / "inputs"
+    output = destination / "out"
+    shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
+    for reviewer in reviewer_ids():
+        shutil.copytree(artifacts / f"ai-review-review-{reviewer}", output, dirs_exist_ok=True)
+        shutil.copytree(artifacts / f"ai-review-critique-{reviewer}", output, dirs_exist_ok=True)
+    shutil.copytree(artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True)
+    shutil.copytree(artifacts / "ai-review-post", output / "post", dirs_exist_ok=True)
+    state.update({"run_id": run_id, "external_run_url": run["url"]})
+    write_state(args.state, state)
+    return state
+
+
+def cleanup_campaign(args: argparse.Namespace) -> None:
+    state_path = Path(args.state)
+    if not state_path.exists():
+        return
+    state = read_state(state_path)
+    pr_number = state.get("pr_number")
+    if pr_number:
+        _run(
+            "gh",
+            "pr",
+            "close",
+            str(pr_number),
+            "--repo",
+            DEMO_REPOSITORY,
+            "--delete-branch",
+        )
+        return
+    branch = state.get("branch")
+    if branch:
+        _run(
+            "gh",
+            "api",
+            "--method",
+            "DELETE",
+            f"repos/{DEMO_REPOSITORY}/git/refs/heads/{branch}",
+        )
+
+
+def configure_create(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--workflow", required=True)
+    parser.add_argument("--workdir", required=True)
+
+
+# -- mock lifecycle ------------------------------------------------------
 
 BOT_LOGIN = "github-actions[bot]"
 
@@ -450,22 +704,6 @@ def run_lifecycle(args: argparse.Namespace) -> int:
     )
 
 
-def _configure_run(parser: argparse.ArgumentParser) -> None:
+def configure_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--summary-out", required=True)
-
-
-def cli(argv: list[str] | None = None) -> int:
-    parser = build_campaign_parser(__doc__, _configure_create, drive=("run", _configure_run))
-    args = parser.parse_args(argv)
-    if args.command == "create":
-        create_lifecycle(args)
-        return 0
-    if args.command == "run":
-        return run_lifecycle(args)
-    cleanup_campaign(args)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())

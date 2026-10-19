@@ -5,11 +5,13 @@ import http.client
 import io
 import json
 import os
+import re
 import ssl
 import subprocess
 import tempfile
 import unittest
 import urllib.error
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -22,8 +24,9 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "candidate-canary.yml"
 VALIDATOR = ROOT / "scripts" / "validate_candidate_canary.py"
 IDENTITY_VALIDATOR = ROOT / "scripts" / "validate_candidate_identity.py"
-GITHUB_ORCHESTRATOR = ROOT / "scripts" / "github_candidate_canary.py"
-GITLAB_ORCHESTRATOR = ROOT / "scripts" / "gitlab_candidate_canary.py"
+GITHUB_ORCHESTRATOR = ROOT / "scripts" / "canary_github.py"
+GITLAB_ORCHESTRATOR = ROOT / "scripts" / "canary_gitlab.py"
+CANARY_CLI = ROOT / "scripts" / "canary.py"
 
 
 class CandidateCanaryWorkflowTests(unittest.TestCase):
@@ -176,8 +179,8 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
                     self.assertNotIn(status, job["if"])
 
     def test_demo_coordinates_and_gitlab_artifact_authority_are_fixed(self) -> None:
-        github = load_repository_script("github_candidate_canary", GITHUB_ORCHESTRATOR)
-        gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        github = load_repository_script("canary_github", GITHUB_ORCHESTRATOR)
+        gitlab = load_repository_script("canary_gitlab", GITLAB_ORCHESTRATOR)
         self.assertEqual(github.DEMO_REPOSITORY, "seanleecoder/code-tribunal-demo")
         self.assertEqual(gitlab.DEMO_PROJECT, "84667714")
         self.assertEqual(gitlab.TEMPLATE_PROJECT, "84667707")
@@ -190,6 +193,76 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
             self.assertIn(f"{definition.require_real_control}=1", environment)
             effort = f"AI_REVIEW_{reviewer.upper()}_EFFORT"
             self.assertEqual(f"-u {effort}" in environment, definition.supports_effort)
+
+
+class CanaryCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.cli = load_repository_script("canary", CANARY_CLI)
+
+    def test_every_campaign_job_calls_create_drive_and_cleanup(self) -> None:
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job_name, campaign in (
+            ("campaign", "panel"),
+            ("lifecycle", "lifecycle"),
+            ("hostile", "hostile"),
+        ):
+            job = workflow["jobs"][job_name]
+            matrix = (job.get("strategy") or {}).get("matrix", {}).get("include", [])
+            platforms = [entry["platform"] for entry in matrix] or ["gitlab"]
+            seen: set[tuple[str, str]] = set()
+            for step in job["steps"]:
+                for platform, name, action in re.findall(
+                    r"python scripts/canary\.py (\S+) (\S+) (\S+)", step.get("run", "")
+                ):
+                    self.assertEqual(name, campaign, step["name"])
+                    resolved = platforms if platform == '"$PLATFORM"' else [platform]
+                    seen.update((p, action) for p in resolved)
+            with self.subTest(job=job_name):
+                self.assertEqual(
+                    seen,
+                    {
+                        (p, action)
+                        for p in platforms
+                        for action in (
+                            "create",
+                            self.cli.CAMPAIGNS[p][campaign].drive_name,
+                            "cleanup",
+                        )
+                    },
+                )
+
+    def test_every_campaign_job_installs_pyyaml(self) -> None:
+        # canary.py imports both platform modules, and canary_gitlab needs PyYAML.
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job_name in ("campaign", "lifecycle", "hostile"):
+            steps = workflow["jobs"][job_name]["steps"]
+            install = next(s for s in steps if s["name"] == "Install validation dependency")
+            self.assertIn("pyyaml", install["run"], job_name)
+
+    def test_run_returns_the_step_status_and_collect_succeeds(self) -> None:
+        gitlab = self.cli.CAMPAIGNS["gitlab"]
+        hostile = replace(gitlab["hostile"], drive=mock.Mock(return_value=1))
+        panel = replace(gitlab["panel"], drive=mock.Mock(return_value={"state": "kept"}))
+        with mock.patch.dict(gitlab, {"hostile": hostile, "panel": panel}):
+            run = ["gitlab", "hostile", "run", "--state", "s", "--summary-out", "o"]
+            self.assertEqual(self.cli.cli(run), 1)
+            collect = ["gitlab", "panel", "collect", "--state", "s", "--destination", "d"]
+            self.assertEqual(self.cli.cli(collect), 0)
+        hostile.drive.assert_called_once()
+        panel.drive.assert_called_once()
+
+    def test_unregistered_campaigns_and_actions_are_rejected(self) -> None:
+        for argv in (
+            ["github", "hostile", "cleanup", "--state", "s"],
+            ["gitlab", "panel", "run", "--state", "s", "--summary-out", "o"],
+            ["github", "lifecycle", "collect", "--state", "s", "--destination", "d"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                mock.patch("sys.stderr", new_callable=io.StringIO),
+                self.assertRaises(SystemExit),
+            ):
+                self.cli.cli(argv)
 
 
 class CandidateCanaryValidationTests(unittest.TestCase):
@@ -468,10 +541,10 @@ class CandidateIdentityTests(unittest.TestCase):
 class CandidateCollectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.github = load_repository_script(
-            "github_candidate_canary_collection", GITHUB_ORCHESTRATOR
+            "canary_github_collection", GITHUB_ORCHESTRATOR
         )
         self.gitlab = load_repository_script(
-            "gitlab_candidate_canary_collection", GITLAB_ORCHESTRATOR
+            "canary_gitlab_collection", GITLAB_ORCHESTRATOR
         )
 
     def test_github_polls_status_with_one_end_to_end_deadline(self) -> None:
@@ -551,8 +624,8 @@ class CandidateCollectionTests(unittest.TestCase):
 
 class CandidateCanaryCleanupTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.github = load_repository_script("github_candidate_canary_cleanup", GITHUB_ORCHESTRATOR)
-        self.gitlab = load_repository_script("gitlab_candidate_canary_cleanup", GITLAB_ORCHESTRATOR)
+        self.github = load_repository_script("canary_github_cleanup", GITHUB_ORCHESTRATOR)
+        self.gitlab = load_repository_script("canary_gitlab_cleanup", GITLAB_ORCHESTRATOR)
 
     @staticmethod
     def _gitlab_args(state: Path) -> argparse.Namespace:
@@ -766,7 +839,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
 
 class GitLabCanaryTransportTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        self.gitlab = load_repository_script("canary_gitlab", GITLAB_ORCHESTRATOR)
         patch = mock.patch.dict(os.environ, {"GITLAB_CANARY_TOKEN": "fixture-only-token"})
         patch.start()
         self.addCleanup(patch.stop)
@@ -989,7 +1062,7 @@ class GitLabCanaryTransportTests(unittest.TestCase):
 
 class GitLabCanaryPollingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.gitlab = load_repository_script("gitlab_candidate_canary", GITLAB_ORCHESTRATOR)
+        self.gitlab = load_repository_script("canary_gitlab", GITLAB_ORCHESTRATOR)
         self.now = 0.0
         self.sleeps: list[float] = []
         for patch in (

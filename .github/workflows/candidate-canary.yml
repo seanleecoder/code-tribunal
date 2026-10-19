@@ -124,14 +124,13 @@ jobs:
         run: >-
           python -m pip install
           --constraint ai-review/images/python-constraints.txt
-          jsonschema
+          jsonschema pyyaml
       - name: Create isolated demo change
         env:
           CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
           PLATFORM: ${{ matrix.platform }}
           TOKEN_ENV: ${{ matrix.token_env }}
         run: |
-          script="scripts/${PLATFORM}_candidate_canary.py"
           state="$RUNNER_TEMP/${PLATFORM}-state.json"
           token_value="$CANARY_TOKEN"
           unset CANARY_TOKEN
@@ -143,11 +142,13 @@ jobs:
             --state "$state"
           )
           if [[ "$PLATFORM" == github ]]; then
-            env "$TOKEN_ENV=$token_value" python "$script" create "${common[@]}" \
+            env "$TOKEN_ENV=$token_value" python scripts/canary.py github panel create \
+              "${common[@]}" \
               --workflow .github/workflows/ai-review.yml \
               --workdir "$RUNNER_TEMP/github"
           else
-            env "$TOKEN_ENV=$token_value" python "$script" create "${common[@]}" \
+            env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab panel create \
+              "${common[@]}" \
               --template ai-review/ci/review.gitlab-ci.yml \
               --child-template ai-review/ci/review-child.gitlab-ci.yml
           fi
@@ -160,7 +161,7 @@ jobs:
           token_value="$CANARY_TOKEN"
           unset CANARY_TOKEN
           env "$TOKEN_ENV=$token_value" \
-            python "scripts/${PLATFORM}_candidate_canary.py" collect \
+            python scripts/canary.py "$PLATFORM" panel collect \
               --state "$RUNNER_TEMP/${PLATFORM}-state.json" \
               --destination "$RUNNER_TEMP/${PLATFORM}-result"
       - name: Clean up demo
@@ -174,7 +175,7 @@ jobs:
           token_value="$CANARY_TOKEN"
           unset CANARY_TOKEN
           env "$TOKEN_ENV=$token_value" \
-            python "scripts/${PLATFORM}_candidate_canary.py" cleanup \
+            python scripts/canary.py "$PLATFORM" panel cleanup \
               --state "$RUNNER_TEMP/${PLATFORM}-state.json"
       - name: Write redacted success summary
         id: summary
@@ -248,7 +249,7 @@ jobs:
         run: >-
           python -m pip install
           --constraint ai-review/images/python-constraints.txt
-          jsonschema
+          jsonschema pyyaml
       - name: Create isolated mock lifecycle change
         env:
           CANARY_TOKEN: ${{ secrets[matrix.token_secret] }}
@@ -265,12 +266,12 @@ jobs:
             --reviewer-image "${{ inputs.reviewer_image }}"
           )
           if [[ "$PLATFORM" == github ]]; then
-            env "$TOKEN_ENV=$token_value" python scripts/github_lifecycle_canary.py create \
+            env "$TOKEN_ENV=$token_value" python scripts/canary.py github lifecycle create \
               "${common[@]}" \
               --workflow .github/workflows/ai-review.yml \
               --workdir "$RUNNER_TEMP/github-lifecycle"
           else
-            env "$TOKEN_ENV=$token_value" python scripts/gitlab_lifecycle_canary.py create \
+            env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab lifecycle create \
               "${common[@]}" \
               --template ai-review/ci/review.gitlab-ci.yml \
               --child-template ai-review/ci/review-child.gitlab-ci.yml
@@ -285,7 +286,7 @@ jobs:
           unset CANARY_TOKEN
           extra=()
           [[ "$PLATFORM" == github ]] && extra=(--workdir "$RUNNER_TEMP/github-lifecycle")
-          env "$TOKEN_ENV=$token_value" python "scripts/${PLATFORM}_lifecycle_canary.py" run \
+          env "$TOKEN_ENV=$token_value" python scripts/canary.py "$PLATFORM" lifecycle run \
             --state "$RUNNER_TEMP/${PLATFORM}-lifecycle-state.json" \
             --summary-out "${PLATFORM}-lifecycle-summary.json" \
             "${extra[@]}"
@@ -298,7 +299,7 @@ jobs:
         run: |
           token_value="$CANARY_TOKEN"
           unset CANARY_TOKEN
-          env "$TOKEN_ENV=$token_value" python "scripts/${PLATFORM}_lifecycle_canary.py" cleanup \
+          env "$TOKEN_ENV=$token_value" python scripts/canary.py "$PLATFORM" lifecycle cleanup \
             --state "$RUNNER_TEMP/${PLATFORM}-lifecycle-state.json"
       - name: Upload redacted lifecycle summary
         if: always()
@@ -335,7 +336,7 @@ jobs:
         env:
           GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
         run: |
-          python scripts/gitlab_hostile_canary.py create \
+          python scripts/canary.py gitlab hostile create \
             --branch "${{ needs.verify-candidate.outputs.branch }}-gitlab-hostile" \
             --state "$RUNNER_TEMP/gitlab-hostile-state.json" \
             --runtime-source "${{ inputs.runtime_source }}" \
@@ -347,7 +348,7 @@ jobs:
         env:
           GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
         run: |
-          python scripts/gitlab_hostile_canary.py run \
+          python scripts/canary.py gitlab hostile run \
             --state "$RUNNER_TEMP/gitlab-hostile-state.json" \
             --summary-out gitlab-hostile-summary.json
       - name: Clean up demo
@@ -355,7 +356,7 @@ jobs:
         env:
           GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}
         run: |
-          python scripts/gitlab_hostile_canary.py cleanup \
+          python scripts/canary.py gitlab hostile cleanup \
             --state "$RUNNER_TEMP/gitlab-hostile-state.json"
       - name: Upload redacted hostile-MR summary
         if: always()
