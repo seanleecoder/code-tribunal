@@ -284,7 +284,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             self.assertEqual(self._source_ids(b1[0]), self._source_ids(b2[0]))
 
             # Both revisions satisfy the real prepare→consensus integrity contract
-            # (effective_config, run_id, per-seat model) before we build consensus.
+            # (effective_config, run_id) before we build consensus.
             validate_consensus_inputs(
                 config=config, manifest=manifest1, finding_batches=b1, critique_batches=[]
             )

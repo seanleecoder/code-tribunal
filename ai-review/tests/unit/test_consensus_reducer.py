@@ -289,12 +289,14 @@ class DecisionTableTests(unittest.TestCase):
             evidence_fingerprint="6" * 64,
             symbol="second",
         )
+        # An unknown duplicate_of counts as a dispute, like any unusable link; a
+        # direct contributor's critique and a failed batch count for nothing.
         cases = (
-            ("missing target", "opencode", "f" * 64, "success"),
-            ("self critique", "claude", _SOURCE_IDS["codex"], "success"),
-            ("failed batch", "opencode", _SOURCE_IDS["codex"], "schema_error"),
+            ("missing target", "opencode", "f" * 64, "success", {"dispute": 1}),
+            ("self critique", "claude", _SOURCE_IDS["codex"], "success", {}),
+            ("failed batch", "opencode", _SOURCE_IDS["codex"], "schema_error", {}),
         )
-        for label, critic, duplicate_of, status in cases:
+        for label, critic, duplicate_of, status, summary in cases:
             with self.subTest(label):
                 consensus = build_consensus(
                     _manifest(),
@@ -316,8 +318,13 @@ class DecisionTableTests(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(len(consensus["groups"]), 2)
+                target = next(
+                    group
+                    for group in consensus["groups"]
+                    if group["contributing_reviewers"] == ["claude"]
+                )
+                self.assertEqual(target["critique_summary"], {**_EMPTY_SUMMARY, **summary})
                 validate_instance(consensus, "consensus.schema.json")
-        validate_instance(consensus, "consensus.schema.json")
 
     def test_direct_contributor_critique_is_excluded_even_when_successful(self) -> None:
         consensus = _run(

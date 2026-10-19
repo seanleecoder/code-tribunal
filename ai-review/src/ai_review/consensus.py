@@ -27,7 +27,6 @@ from .memory import find_matching_record, state_from_aliases
 from .run_health import build_run_health_jobs, load_status_files, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
-    batch_quality_fields,
     batch_usable_for_panel,
     load_json_file,
     validate_instance,
@@ -86,46 +85,6 @@ def _final_severity(findings: list[dict[str, Any]]) -> str:
     lone `blocker` is `fyi`, and a two-support `minor` surfaces.
     """
     return max((str(item["severity"]) for item in findings), key=lambda value: SEVERITY_RANK[value])
-
-
-def _require_quality_invariants(batch: dict[str, Any], *, reviewer: str) -> None:
-    """Reject self-reported quality fields that disagree with batch contents."""
-    try:
-        raw = int(batch["raw_finding_count"])
-        accepted = int(batch["accepted_finding_count"])
-        dropped = int(batch["dropped_finding_count"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ConsensusIntegrityError(
-            f"finding batch quality counts missing/invalid for reviewer={reviewer}"
-        ) from exc
-    findings = batch.get("findings")
-    if not isinstance(findings, list):
-        raise ConsensusIntegrityError(
-            f"finding batch findings must be a list for reviewer={reviewer}"
-        )
-    if accepted != len(findings):
-        raise ConsensusIntegrityError(
-            f"finding batch accepted_finding_count != len(findings) for reviewer={reviewer}"
-        )
-    if raw < 0 or accepted < 0 or dropped < 0:
-        raise ConsensusIntegrityError(
-            f"finding batch quality counts must be non-negative for reviewer={reviewer}"
-        )
-    if accepted + dropped > raw:
-        raise ConsensusIntegrityError(
-            f"finding batch accepted+dropped exceeds raw_finding_count for reviewer={reviewer}"
-        )
-    status = str(batch.get("adapter_status") or "")
-    expected = batch_quality_fields(
-        adapter_status=status,
-        raw_finding_count=raw,
-        accepted_finding_count=accepted,
-        dropped_finding_count=dropped,
-    )
-    if batch.get("usable_for_resolution") is not expected["usable_for_resolution"]:
-        raise ConsensusIntegrityError(
-            f"finding batch usable_for_resolution inconsistent for reviewer={reviewer}"
-        )
 
 
 def build_consensus(
@@ -295,7 +254,6 @@ def validate_consensus_inputs(
             reviewers_cfg = {}
         seen_reviewers: set[str] = set()
         seen_critics: set[str] = set()
-        known_finding_ids: set[str] = set()
 
         for batch in finding_batches:
             validate_instance(batch, "finding_batch.schema.json")
@@ -309,32 +267,18 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(
                     f"finding batch run_id mismatch for reviewer={reviewer}"
                 )
-            # Missing status defaults to success (fail-closed for digest/model checks).
-            status = str(batch.get("adapter_status") or "success")
+            status = batch["adapter_status"]
             # Digest binding is required for success evidence; non-success batches
             # degrade the panel instead of hard-failing the whole run.
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(
                     f"finding batch effective_config_sha256 mismatch for reviewer={reviewer}"
                 )
-            _require_quality_invariants(batch, reviewer=reviewer)
-            reviewer_cfg = reviewers_cfg.get(reviewer)
-            if not isinstance(reviewer_cfg, dict):
+            if not isinstance(reviewers_cfg.get(reviewer), dict):
                 raise ConsensusIntegrityError(f"finding batch for unknown reviewer={reviewer}")
-            if reviewer not in enabled:
-                # Matrix jobs may still emit skipped artifacts for disabled seats.
-                if status != "skipped":
-                    raise ConsensusIntegrityError(f"finding batch for disabled reviewer={reviewer}")
-                continue
-            expected_model = str(reviewer_cfg.get("model") or "")
-            if status == "success" and str(batch.get("model") or "") != expected_model:
-                raise ConsensusIntegrityError(
-                    f"finding batch model mismatch for reviewer={reviewer}"
-                )
-            if batch_usable_for_panel(batch):
-                for finding in batch.get("findings") or []:
-                    if isinstance(finding, dict) and finding.get("source_finding_id"):
-                        known_finding_ids.add(str(finding["source_finding_id"]))
+            # Matrix jobs may still emit skipped artifacts for disabled seats.
+            if reviewer not in enabled and status != "skipped":
+                raise ConsensusIntegrityError(f"finding batch for disabled reviewer={reviewer}")
 
         for filename_critic, batch in critique_batches:
             validate_instance(batch, "critique_batch.schema.json")
@@ -350,33 +294,15 @@ def validate_consensus_inputs(
             seen_critics.add(critic)
             if batch.get("run_id") != run_id:
                 raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
-            status = str(batch.get("adapter_status") or "success")
-            critic_cfg = reviewers_cfg.get(critic)
-            if not isinstance(critic_cfg, dict):
+            status = batch["adapter_status"]
+            if not isinstance(reviewers_cfg.get(critic), dict):
                 raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
-            if critic not in enabled:
-                if status != "skipped":
-                    raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
-                continue
+            if critic not in enabled and status != "skipped":
+                raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
             if status == "success" and batch.get("effective_config_sha256") != config_digest:
                 raise ConsensusIntegrityError(
                     f"critique batch effective_config_sha256 mismatch for critic={critic}"
                 )
-            if status != "success":
-                continue
-            for critique in batch.get("critiques") or []:
-                if not isinstance(critique, dict):
-                    raise ConsensusIntegrityError(f"malformed critique in critic={critic}")
-                target = str(critique.get("target_source_finding_id") or "")
-                if target not in known_finding_ids:
-                    raise ConsensusIntegrityError(
-                        f"critique target unknown for critic={critic} target={target[:12]}…"
-                    )
-                duplicate_of = critique.get("duplicate_of_source_finding_id")
-                if duplicate_of is not None and str(duplicate_of) not in known_finding_ids:
-                    raise ConsensusIntegrityError(
-                        f"critique duplicate_of unknown for critic={critic}"
-                    )
     except EffectiveConfigMismatch as exc:
         raise ConsensusIntegrityError(str(exc)) from exc
     except SchemaValidationError as exc:

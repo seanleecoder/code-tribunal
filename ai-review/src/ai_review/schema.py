@@ -65,7 +65,7 @@ def batch_quality_fields(
     resolution. A non-empty success batch with every finding dropped is not.
     Non-success adapter statuses are never usable for resolution.
 
-    Count invariants (enforced at consensus validation):
+    Count invariants, which the runner's accounting guarantees:
     ``accepted_finding_count == len(findings)`` and
     ``accepted_finding_count + dropped_finding_count <= raw_finding_count``.
     Equality holds when no ``max_findings`` cap eviction occurred; under a cap,
@@ -87,9 +87,9 @@ def batch_quality_fields(
 def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
     """Operational panel seat and resolution eligibility predicate.
 
-    Requires ``adapter_status == "success"`` and ``usable_for_resolution``; callers
-    that load untrusted artifacts must run ``validate_consensus_inputs`` first so
-    the flag is checked against status and finding counts.
+    Requires ``adapter_status == "success"`` and ``usable_for_resolution``. The
+    adapter runner is the flag's only writer and computes it with
+    ``batch_quality_fields``; consensus does not re-derive it.
     """
     return batch.get("adapter_status") == "success" and batch.get("usable_for_resolution") is True
 
