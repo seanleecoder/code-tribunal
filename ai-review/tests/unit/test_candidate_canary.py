@@ -199,7 +199,7 @@ class CanaryCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cli = load_repository_script("canary", CANARY_CLI)
 
-    def test_every_workflow_invocation_names_a_registered_campaign_action(self) -> None:
+    def test_every_campaign_job_calls_create_drive_and_cleanup(self) -> None:
         workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         for job_name, campaign in (
             ("campaign", "panel"),
@@ -209,38 +209,47 @@ class CanaryCliTests(unittest.TestCase):
             job = workflow["jobs"][job_name]
             matrix = (job.get("strategy") or {}).get("matrix", {}).get("include", [])
             platforms = [entry["platform"] for entry in matrix] or ["gitlab"]
-            # canary.py imports both platform modules, and canary_gitlab needs PyYAML.
-            install = next(s for s in job["steps"] if s["name"] == "Install validation dependency")
-            self.assertIn("pyyaml", install["run"])
             seen: set[tuple[str, str]] = set()
             for step in job["steps"]:
                 for platform, name, action in re.findall(
                     r"python scripts/canary\.py (\S+) (\S+) (\S+)", step.get("run", "")
                 ):
-                    with self.subTest(job=job_name, step=step["name"]):
-                        self.assertEqual(name, campaign)
-                        for resolved in platforms if platform == '"$PLATFORM"' else [platform]:
-                            registered = self.cli.CAMPAIGNS[resolved][name]
-                            drive = "collect" if registered.collect else "run"
-                            self.assertIn(action, {"create", drive, "cleanup"})
-                            seen.add((resolved, action))
-            drive = "collect" if campaign == "panel" else "run"
-            self.assertEqual(
-                seen,
-                {(p, a) for p in platforms for a in ("create", drive, "cleanup")},
-            )
+                    self.assertEqual(name, campaign, step["name"])
+                    resolved = platforms if platform == '"$PLATFORM"' else [platform]
+                    seen.update((p, action) for p in resolved)
+            with self.subTest(job=job_name):
+                self.assertEqual(
+                    seen,
+                    {
+                        (p, action)
+                        for p in platforms
+                        for action in (
+                            "create",
+                            self.cli.CAMPAIGNS[p][campaign].drive_name,
+                            "cleanup",
+                        )
+                    },
+                )
+
+    def test_every_campaign_job_installs_pyyaml(self) -> None:
+        # canary.py imports both platform modules, and canary_gitlab needs PyYAML.
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job_name in ("campaign", "lifecycle", "hostile"):
+            steps = workflow["jobs"][job_name]["steps"]
+            install = next(s for s in steps if s["name"] == "Install validation dependency")
+            self.assertIn("pyyaml", install["run"], job_name)
 
     def test_run_returns_the_step_status_and_collect_succeeds(self) -> None:
         gitlab = self.cli.CAMPAIGNS["gitlab"]
-        hostile = replace(gitlab["hostile"], run=mock.Mock(return_value=1))
-        panel = replace(gitlab["panel"], collect=mock.Mock(return_value={"state": "kept"}))
+        hostile = replace(gitlab["hostile"], drive=mock.Mock(return_value=1))
+        panel = replace(gitlab["panel"], drive=mock.Mock(return_value={"state": "kept"}))
         with mock.patch.dict(gitlab, {"hostile": hostile, "panel": panel}):
             run = ["gitlab", "hostile", "run", "--state", "s", "--summary-out", "o"]
             self.assertEqual(self.cli.cli(run), 1)
             collect = ["gitlab", "panel", "collect", "--state", "s", "--destination", "d"]
             self.assertEqual(self.cli.cli(collect), 0)
-        hostile.run.assert_called_once()
-        panel.collect.assert_called_once()
+        hostile.drive.assert_called_once()
+        panel.drive.assert_called_once()
 
     def test_unregistered_campaigns_and_actions_are_rejected(self) -> None:
         for argv in (

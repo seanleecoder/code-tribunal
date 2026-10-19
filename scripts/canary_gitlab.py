@@ -33,6 +33,7 @@ from typing import Any
 import yaml
 from ai_review.notes import parse_marker
 from candidate_canary_common import (
+    DEMO_PROJECT,
     GITLAB_SECRETS,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
@@ -52,7 +53,6 @@ from candidate_canary_common import (
 from pipeline_trust import find_trust_issues
 
 API = "https://gitlab.com/api/v4"
-DEMO_PROJECT = "84667714"
 TEMPLATE_PROJECT = "84667707"
 TEMPLATE_PROJECT_PATH = "seanleecoder/code-tribunal-ci-template"
 SETTLED_STATUSES = frozenset({"success", "failed", "canceled", "skipped", "manual"})

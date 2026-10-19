@@ -16,6 +16,8 @@ from ai_review.schema import validate_instance, write_canonical_json
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
+DEMO_REPOSITORY = "seanleecoder/code-tribunal-demo"
+DEMO_PROJECT = "84667714"
 REVIEWER_CREDENTIALS = tuple(sorted(
     {name for definition in REVIEWERS.values() for name in definition.credential_variables}
 ))
@@ -113,8 +115,7 @@ def configure_collect(parser: argparse.ArgumentParser) -> None:
 def add_campaign_actions(
     parser: argparse.ArgumentParser,
     configure_create: CreateParser,
-    *,
-    drive: tuple[str, CreateParser] = ("collect", configure_collect),
+    drive: tuple[str, CreateParser],
 ) -> None:
     """Give one campaign's parser its create, drive (collect or run), and cleanup actions."""
     subparsers = parser.add_subparsers(dest="action", required=True)

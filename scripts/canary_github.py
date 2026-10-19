@@ -25,6 +25,7 @@ from typing import Any
 from ai_review.notes import parse_marker
 from ai_review.schema import load_json_file
 from candidate_canary_common import (
+    DEMO_REPOSITORY,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
     LifecycleFailure,
@@ -43,7 +44,6 @@ from candidate_canary_common import (
     write_state,
 )
 
-DEMO_REPOSITORY = "seanleecoder/code-tribunal-demo"
 # gh authenticates only the git commands it runs itself, and the protected
 # checkout persists no credentials, so the push must borrow gh's GH_TOKEN helper.
 GH_CREDENTIAL_HELPER = (
