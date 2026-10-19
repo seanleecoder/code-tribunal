@@ -33,6 +33,12 @@ versioning.
   its visible text is unchanged. `group.body_hash` in `consensus.json` is now
   always 64 zeros: posting computes the hash from the body it publishes, and the
   field is removed in `consensus.v3`.
+- Consensus no longer re-checks values the adapter runner computes: a finding
+  batch's counts, its `usable_for_resolution` flag, and its `model` (N15). The
+  schema still bounds the counts, and the config-digest binding covers the
+  model. A critique whose `duplicate_of_source_finding_id` names no finding in
+  the run now counts as a `dispute`, like any other unusable duplicate link,
+  instead of failing consensus.
 - Contributor tooling: Renovate keeps the npm, Python, image-digest and action
   pins current, and `make quality` runs zizmor's pinning audits over the GitHub
   Actions workflows. The in-repo pin checker keeps only the checks neither tool

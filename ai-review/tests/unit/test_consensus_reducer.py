@@ -316,6 +316,16 @@ class DecisionTableTests(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(len(consensus["groups"]), 2)
+                if label == "missing target":
+                    # An unknown duplicate_of counts as a dispute, like any unusable link.
+                    target = next(
+                        group
+                        for group in consensus["groups"]
+                        if group["contributing_reviewers"] == ["claude"]
+                    )
+                    self.assertEqual(
+                        target["critique_summary"], {**_EMPTY_SUMMARY, "dispute": 1}
+                    )
                 validate_instance(consensus, "consensus.schema.json")
         validate_instance(consensus, "consensus.schema.json")
 
