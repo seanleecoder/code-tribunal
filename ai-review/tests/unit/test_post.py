@@ -24,9 +24,6 @@ from ai_review.config import (
 )
 from ai_review.consensus import build_consensus
 from ai_review.memory import decode_state_note_body
-from ai_review.notes import (
-    parse_marker,
-)
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import (
     MergeRequestVersion,
@@ -37,7 +34,7 @@ from ai_review.posting import (
     post_consensus,
     post_inline,
 )
-from ai_review.render import render_body, source_hash
+from ai_review.render import render_body
 from ai_review.schema import load_json_file, validate_instance, write_canonical_json
 from ai_review.state_plan import plan_state
 
@@ -551,8 +548,7 @@ class PostTests(PostCase):
                         "body": (
                             "existing\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=run "
-                            f"body_hash={body_hash} "
-                            f"source={source_hash(group['source_finding_ids'])} -->"
+                            f"body_hash={body_hash} source={'0' * 64} -->"
                         ),
                     }
                 ],
@@ -572,42 +568,6 @@ class PostTests(PostCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_existing_marker_updates_when_only_source_identity_changes(self) -> None:
-        client = FakePostClient("head")
-        old_consensus = self._consensus()
-        old_group = old_consensus["groups"][0]
-        old_body, old_hash = render_body(
-            old_group, "run", posting_mode="gitlab_discussions"
-        )
-        client.discussions = [
-            {
-                "id": "existing-discussion",
-                "notes": [
-                    {
-                        "id": 123,
-                        "author": {"id": 10},
-                        "body": old_body,
-                    }
-                ],
-            }
-        ]
-        new_consensus = copy.deepcopy(old_consensus)
-        new_consensus["groups"][0]["source_finding_ids"] = ["c" * 64]
-
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            new_consensus,
-        )
-
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 1)
-        self.assertEqual(result["skipped_unchanged"], 0)
-        self.assertEqual(client.updated, 1)
-        self.assertNotEqual(old_hash, parse_marker(client.updated_notes[0]["body"])["body_hash"])
-        validate_instance(result, "post_result.schema.json")
-
     def test_post_existing_marker_updates_changed_body(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
@@ -619,11 +579,12 @@ class PostTests(PostCase):
                     {
                         "id": 123,
                         "author": {"id": 10},
+                        # A pre-2.1.0 marker still carries `source=`; the thread is
+                        # refreshed in place, not duplicated.
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
-                            f"body_hash={'0' * 64} "
-                            f"source={source_hash(group['source_finding_ids'])} -->"
+                            f"body_hash={'0' * 64} source={'c' * 64} -->"
                         ),
                     }
                 ],
@@ -1244,8 +1205,7 @@ class PostTests(PostCase):
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
-                            f"body_hash={'0' * 64} "
-                            f"source={source_hash(group['source_finding_ids'])} -->"
+                            f"body_hash={'0' * 64} source={'0' * 64} -->"
                         ),
                     }
                 ],
@@ -1310,8 +1270,7 @@ class PostTests(PostCase):
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
-                            f"body_hash={'0' * 64} "
-                            f"source={source_hash(group['source_finding_ids'])} -->"
+                            f"body_hash={'0' * 64} source={'0' * 64} -->"
                         ),
                     }
                 ],

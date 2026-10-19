@@ -151,9 +151,10 @@ applied, and the review checks the evidence it cites.
   prepare obtains credentials (`ai-review/src/ai_review/input_bundle.py` prepare,
   `ai-review/src/ai_review/platform/runtime.py`). Confirm the cited run includes
   `hostile`, or state why it does not apply.
-- [ ] **Body-format refresh:** when the posted-body format version (`render-body.vN`)
-  changes, one [refresh run](../evidence/RUNBOOK.md#body-format-refresh) against a
-  bot thread in the previous format, authored by a released image.
+- [ ] **Body-format refresh:** when the rendered inline body or its marker changes
+  for an unchanged finding (the `render_body_hostile.json` golden changes), one
+  [refresh run](../evidence/RUNBOOK.md#body-format-refresh) against a bot thread
+  in the previous format, authored by a released image.
 - [ ] **Effort routes:** when effort profiles change, the effort-route check from
   the [evidence runbook](../evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke).
 - [ ] **Three-seat default smoke:** when the default roster or a default model

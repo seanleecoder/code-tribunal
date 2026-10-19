@@ -13,6 +13,7 @@ from ai_review.config import load_config
 from ai_review.consensus import build_consensus, validate_consensus_inputs
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
+from ai_review.notes import parse_marker
 from ai_review.posting import post_consensus
 from ai_review.schema import (
     finalize_critique_batch,
@@ -367,11 +368,11 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
         self.assertEqual(c_noise["groups"][0]["decision"], "fyi")
         self.assertEqual(body_after_noise, body_a)
-        self.assertEqual(hash_after_noise, c_a["groups"][0]["body_hash"])
+        self.assertEqual(hash_after_noise, parse_marker(body_a)["body_hash"])
         self.assertEqual(p_b["updated_discussions"], 1)
         self.assertEqual(p_b["skipped_unchanged"], 0)
         self.assertNotEqual(body_b, body_a)
-        self.assertEqual(record["last_posted_body_hash"], c_b["groups"][0]["body_hash"])
+        self.assertEqual(record["last_posted_body_hash"], parse_marker(body_b)["body_hash"])
 
     @staticmethod
     def _inline_body(client: FakeGitHubClient) -> str:

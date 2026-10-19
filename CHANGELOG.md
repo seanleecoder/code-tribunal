@@ -25,6 +25,14 @@ versioning.
 
 ### Changed
 
+- Inline threads hash only their rendered text (N12), as the summary comment
+  already did. The marker's `source=` is no longer read and is written as 64
+  zeros, so 2.0.3 can still read 2.1.0 markers after a rollback; markers with
+  or without it remain valid. Each existing bot-authored inline thread surfaced on
+  its next run is edited once in place, with the same issue ID and state record;
+  its visible text is unchanged. `group.body_hash` in `consensus.json` is now
+  always 64 zeros: posting computes the hash from the body it publishes, and the
+  field is removed in `consensus.v3`.
 - Contributor tooling: Renovate keeps the npm, Python, image-digest and action
   pins current, and `make quality` runs zizmor's pinning audits over the GitHub
   Actions workflows. The in-repo pin checker keeps only the checks neither tool

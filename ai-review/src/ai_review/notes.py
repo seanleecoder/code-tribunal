@@ -8,8 +8,11 @@ from typing import Any
 
 MARKER_RE = re.compile(
     r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
-    r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})\s+"
-    r"source=(?P<source_hash>[a-f0-9]{64})\s*-->"
+    r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})"
+    # `source=` is ignored. Releases before 2.1.0 wrote a real value and 2.1.x
+    # writes zeros (COMPAT-008); threads that are never refreshed keep either,
+    # so the grammar accepts it, or its absence, for good.
+    r"(?:\s+source=[a-f0-9]{64})?\s*-->"
 )
 SUMMARY_MARKER_RE = re.compile(
     r"<!--\s*ai-review-summary:v1\s+run_id=(?P<run_id>[^\s]+)\s+"

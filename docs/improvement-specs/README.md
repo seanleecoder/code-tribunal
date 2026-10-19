@@ -47,7 +47,7 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17, N01, N09, N13, N16, N19, N20.
+- **Done:** S02, S10, S17, N01, N09, N12, N13, N16, N19, N20.
 - **Partial:** S01 (the ADR-0004 cutover and evidence-doc pruning, on 2026-10-18), S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
@@ -103,7 +103,7 @@ recommendation's disposition.
 | Canary citation (2026-10-18) | A `Canary-run: <run id>` trailer in the signed tag | Publication verifies exactly the cited run against P's pins, so retries are deterministic and the signature covers the choice. It takes the place of `Release-manifest-sha256`. |
 | N12 consensus `group.body_hash` (2026-10-19) | A zero placeholder until `consensus.v3` | Posting re-renders and hashes every body itself, and nothing reads the consensus field. Consensus stops rendering, so render changes stop touching the consensus goldens. Registered as a compatibility row. |
 | N12 thread refresh (2026-10-19) | Accept one in-place edit per surfaced thread | The stored hashes change once, so each existing bot thread is updated on its next surfaced run. Noted in the changelog; no old-formula dual path. |
-| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar | Threads that are never refreshed keep `source=` indefinitely. The parser ignores it for good, so it is grammar, not a temporary decoder. |
+| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until the next major | Threads that are never refreshed keep `source=` indefinitely. 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so dropping it would break their commands after a rollback. |
 
 ## Recommended order
 
@@ -123,7 +123,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
    migration step 4).
 3. Done: SPEC-66 — `run_health`, the job-log rendering, and the summary on every
    published run with space reserved for state (N04).
-4. The hash-only body (N12).
+4. Done: the hash-only body (N12).
 5. Delete the over-built integrity checks (N15).
 
 **Step 3 — 2.1.x minor releases.**

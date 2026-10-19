@@ -105,6 +105,7 @@ class FindingGroup(TypedDict):
     category: Category
     title: str
     body: str
+    # COMPAT-007: always 64 zeros; posting hashes the body it publishes.
     body_hash: str
     support_count: int
     agreeing_critics: list[ReviewerId]

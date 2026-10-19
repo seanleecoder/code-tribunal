@@ -5,12 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, overload
 
-from .canonical import canonical_json, normalize_text, sha256_hex
+from .canonical import normalize_text, sha256_hex
 from .redact import redact_text
 from .types import FindingGroup
 
-# The version is a body-hash input; bumping it refreshes every existing thread once.
-RENDER_BODY_VERSION = "render-body.v4"
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
     "gitlab_discussions": 1_000_000,
@@ -332,29 +330,6 @@ def limit_body_before_marker(
     return limited_body + _FRAGMENT_SEPARATOR + reserved_suffix
 
 
-def source_hash(source_finding_ids: list[str]) -> str:
-    return sha256_hex(canonical_json(sorted(source_finding_ids)))
-
-
-def compute_body_hash(group: FindingGroup, body_without_marker: str) -> str:
-    """Hash rendered content plus the canonical source identity.
-
-    The source hash is a renderer/marker identity input, not raw model text. It
-    ensures a same-looking finding from a different source set still refreshes
-    an existing bot-owned discussion.
-    """
-
-    return sha256_hex(
-        canonical_json(
-            {
-                "render_body_version": RENDER_BODY_VERSION,
-                "body_without_marker": body_without_marker,
-                "source_hash": source_hash(group.get("source_finding_ids", [])),
-            }
-        )
-    )
-
-
 def encode_marker_token(value: object) -> str:
     """Encode a marker attribute without changing the marker grammar."""
 
@@ -366,12 +341,14 @@ def _inline_marker(
     issue_id: object,
     run_id: object,
     body_hash: str,
-    source: str,
 ) -> str:
+    # COMPAT-008: 2.0.3 requires `source=` to read a marker, and it ignores the
+    # value. Without it, a rollback silently drops commands on wontfix and
+    # resolved threads, which it never re-renders.
     return (
         f"<!-- ai-review:v1 issue_id={encode_marker_token(issue_id)} "
         f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} "
-        f"source={encode_marker_token(source)} -->"
+        f"source={'0' * 64} -->"
     )
 
 
@@ -489,23 +466,15 @@ def render_body(
             "- Merge decision: left to maintainers and downstream automation",
         ]
     )
-    placeholder_marker = _inline_marker(
-        group["issue_id"],
-        run_id,
-        "0" * 64,
-        source_hash(group.get("source_finding_ids", [])),
-    )
+    placeholder_marker = _inline_marker(group["issue_id"], run_id, "0" * 64)
     body_without_marker = limit_body_before_marker(
         variable_fragments,
         placeholder_marker,
         platform_comment_limit(posting_mode),
         reserved_suffix=support_footer,
     )
-    body_hash = compute_body_hash(group, body_without_marker)
-    marker = _inline_marker(
-        group["issue_id"],
-        run_id,
-        body_hash,
-        source_hash(group.get("source_finding_ids", [])),
-    )
+    # Only the posted text decides whether a thread needs an update, as for the
+    # summary comment.
+    body_hash = sha256_hex(body_without_marker)
+    marker = _inline_marker(group["issue_id"], run_id, body_hash)
     return body_without_marker + _FRAGMENT_SEPARATOR + marker, body_hash

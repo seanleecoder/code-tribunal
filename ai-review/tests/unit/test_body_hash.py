@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 import unittest
 from unittest.mock import patch
 
+from ai_review.canonical import sha256_hex
 from ai_review.notes import _unwrap_span, parse_marker, parse_review_note
 from ai_review.render import (
     PLATFORM_COMMENT_LIMITS,
@@ -41,23 +43,19 @@ class BodyHashTests(unittest.TestCase):
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
 
-    def test_body_hash_includes_canonical_source_identity(self) -> None:
+    def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()
         second_group = self._group()
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
 
-        first, first_hash = render_body(
+        first, _first_hash = render_body(
             first_group, "run", posting_mode="gitlab_discussions"
         )
-        second, second_hash = render_body(
+        second, _second_hash = render_body(
             second_group, "run", posting_mode="gitlab_discussions"
         )
 
-        self.assertEqual(
-            first.rsplit("\n\n<!--", 1)[0], second.rsplit("\n\n<!--", 1)[0]
-        )
-        self.assertNotEqual(first_hash, second_hash)
-        self.assertNotEqual(parse_marker(first), parse_marker(second))
+        self.assertEqual(first, second)
 
     def test_boundary_backticks_get_standard_code_span_padding(self) -> None:
         self.assertEqual(literal_span("`leading", required=True), "`` `leading ``")
@@ -74,22 +72,31 @@ class BodyHashTests(unittest.TestCase):
             "`` `xx ``",
         )
 
-    def test_v2_and_v3_markers_remain_parseable(self) -> None:
-        body, _body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
-        self.assertIsNotNone(parse_marker(body))
-        old_marker = (
-            "<!-- ai-review:v1 issue_id="
-            f"{'a' * 64} run_id=old body_hash={'b' * 64} source={'c' * 64} -->"
+    def test_markers_with_and_without_source_remain_parseable(self) -> None:
+        prefix = f"<!-- ai-review:v1 issue_id={'a' * 64} run_id=old body_hash={'b' * 64}"
+        for suffix in (f" source={'c' * 64} -->", " -->"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    parse_marker("legacy body\n\n" + prefix + suffix),
+                    {"issue_id": "a" * 64, "run_id": "old", "body_hash": "b" * 64},
+                )
+
+    def test_marker_stays_readable_by_the_previous_release(self) -> None:
+        # COMPAT-008: the v2.0.3 grammar, verbatim. A rollback that cannot read
+        # the marker drops commands on threads it never re-renders.
+        previous_release_marker_re = re.compile(
+            r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
+            r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})\s+"
+            r"source=(?P<source_hash>[a-f0-9]{64})\s*-->"
         )
-        self.assertEqual(
-            parse_marker("legacy body\n\n" + old_marker),
-            {
-                "issue_id": "a" * 64,
-                "run_id": "old",
-                "body_hash": "b" * 64,
-                "source_hash": "c" * 64,
-            },
-        )
+        body, body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
+
+        match = previous_release_marker_re.search(body)
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["issue_id"], "a" * 64)
+        self.assertEqual(match["body_hash"], body_hash)
 
     def test_required_scalar_that_redacts_to_empty_renders_owned_placeholder(self) -> None:
         group = self._group()
@@ -123,10 +130,7 @@ class BodyHashTests(unittest.TestCase):
                 ]
             ),
         )
-        self.assertEqual(
-            body_hash,
-            "3499f3002412134ca1601885f35d1161b8c32ad59444164e0c50f841a09f986d",
-        )
+        self.assertEqual(body_hash, sha256_hex(body_without_marker))
 
     def test_renders_only_materially_distinct_evidence(self) -> None:
         group = self._group()
