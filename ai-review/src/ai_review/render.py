@@ -342,9 +342,13 @@ def _inline_marker(
     run_id: object,
     body_hash: str,
 ) -> str:
+    # COMPAT-008: 2.0.3 requires `source=` to read a marker, and it ignores the
+    # value. Without it, a rollback silently drops commands on wontfix and
+    # resolved threads, which it never re-renders.
     return (
         f"<!-- ai-review:v1 issue_id={encode_marker_token(issue_id)} "
-        f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} -->"
+        f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} "
+        f"source={'0' * 64} -->"
     )
 
 

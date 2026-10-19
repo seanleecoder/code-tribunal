@@ -103,7 +103,7 @@ recommendation's disposition.
 | Canary citation (2026-10-18) | A `Canary-run: <run id>` trailer in the signed tag | Publication verifies exactly the cited run against P's pins, so retries are deterministic and the signature covers the choice. It takes the place of `Release-manifest-sha256`. |
 | N12 consensus `group.body_hash` (2026-10-19) | A zero placeholder until `consensus.v3` | Posting re-renders and hashes every body itself, and nothing reads the consensus field. Consensus stops rendering, so render changes stop touching the consensus goldens. Registered as a compatibility row. |
 | N12 thread refresh (2026-10-19) | Accept one in-place edit per surfaced thread | The stored hashes change once, so each existing bot thread is updated on its next surfaced run. Noted in the changelog; no old-formula dual path. |
-| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar | Threads that are never refreshed keep `source=` indefinitely. The parser ignores it for good, so it is grammar, not a temporary decoder. |
+| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until the next major | Threads that are never refreshed keep `source=` indefinitely, so the parser ignores it for good. Amended the same day after review: 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so a rollback would silently drop their commands. 2.1.x writes 64 zeros (COMPAT-008). |
 
 ## Recommended order
 

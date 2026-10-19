@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from unittest.mock import patch
 
@@ -56,7 +57,7 @@ class BodyHashTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first_hash, second_hash)
-        self.assertNotIn("source=", first)
+        self.assertIn(f"source={'0' * 64} -->", first)
 
     def test_boundary_backticks_get_standard_code_span_padding(self) -> None:
         self.assertEqual(literal_span("`leading", required=True), "`` `leading ``")
@@ -88,6 +89,23 @@ class BodyHashTests(unittest.TestCase):
                 "body_hash": "b" * 64,
             },
         )
+
+    def test_marker_stays_readable_by_the_previous_release(self) -> None:
+        # COMPAT-008: the v2.0.3 grammar, verbatim. A rollback that cannot read
+        # the marker drops commands on threads it never re-renders.
+        previous_release_marker_re = re.compile(
+            r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
+            r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})\s+"
+            r"source=(?P<source_hash>[a-f0-9]{64})\s*-->"
+        )
+        body, body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
+
+        match = previous_release_marker_re.search(body)
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["issue_id"], "a" * 64)
+        self.assertEqual(match["body_hash"], body_hash)
 
     def test_required_scalar_that_redacts_to_empty_renders_owned_placeholder(self) -> None:
         group = self._group()

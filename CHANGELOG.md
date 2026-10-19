@@ -26,8 +26,9 @@ versioning.
 ### Changed
 
 - Inline threads hash only their rendered text (N12), as the summary comment
-  already did, and new markers no longer carry `source=`. Markers that still
-  carry it remain valid. Each existing bot-authored inline thread surfaced on
+  already did. The marker's `source=` is no longer read and is written as 64
+  zeros, so 2.0.3 can still read 2.1.0 markers after a rollback; markers with
+  or without it remain valid. Each existing bot-authored inline thread surfaced on
   its next run is edited once in place, with the same issue ID and state record;
   its visible text is unchanged. `group.body_hash` in `consensus.json` is now
   always 64 zeros: posting computes the hash from the body it publishes, and the
