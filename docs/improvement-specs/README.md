@@ -104,6 +104,8 @@ recommendation's disposition.
 | N12 consensus `group.body_hash` (2026-10-19) | A zero placeholder until `consensus.v3` | Posting re-renders and hashes every body itself, and nothing reads the consensus field. Consensus stops rendering, so render changes stop touching the consensus goldens. Registered as a compatibility row. |
 | N12 thread refresh (2026-10-19) | Accept one in-place edit per surfaced thread | The stored hashes change once, so each existing bot thread is updated on its next surfaced run. Noted in the changelog; no old-formula dual path. |
 | N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until the next major | Threads that are never refreshed keep `source=` indefinitely. 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so dropping it would break their commands after a rollback. |
+| N15 seat usability (2026-10-19) | Trust the runner's `usable_for_resolution` | Consensus deletes the quality-count and usability re-check and the model check. The adapter runner is the only writer and computes the flag with `batch_quality_fields`; the schema still bounds the counts, which feed only `run_health`. The config-digest binding covers the model. |
+| N15 unknown `duplicate_of` (2026-10-19) | A dispute, not a fatal error | Validation stops checking critique targets and links. `critique.py` keeps the unknown-target error and already turns every unusable duplicate link into `dispute`. One `Changed` changelog line covers N15. |
 
 ## Recommended order
 
