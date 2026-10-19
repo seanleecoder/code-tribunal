@@ -159,7 +159,7 @@ retain the generic effort support described below.
 
 For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
 `xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, confirmed by
-`cursor-agent --list-models` on pinned CLI `2026.10.01-e373342`. That CLI exposes
+`cursor-agent --list-models` on CLI `2026.10.01-e373342`. That CLI exposes
 `grok-4.7-{low,medium,high,xhigh}` and corresponding `-fast` variants; it does
 not list a bare `grok-4.7` selector. Recheck the list when refreshing the CLI.
 Cursor has no separate Code Tribunal effort variable;
