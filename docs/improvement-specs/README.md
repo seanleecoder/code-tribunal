@@ -16,7 +16,7 @@ Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
 
 ## Open specifications
 
-None. SPEC-66 (run health in the summary comment) is implemented for 2.1.0; see
+None. SPEC-66 (run health in the summary comment) shipped in 2.1.0; see
 [`CHANGELOG.md`](../../CHANGELOG.md).
 
 Retired on 2026-10-16:
@@ -47,8 +47,8 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S02, S10, S17, N01, N09, N12, N13, N15, N16, N19, N20.
-- **Partial:** S01 (the ADR-0004 cutover and evidence-doc pruning, on 2026-10-18), S11 (the noise half, through SPEC-67), S12 (the test-only
+- **Done:** S01, S02, S10, S17, N01, N09, N12, N13, N15, N16, N19, N20.
+- **Partial:** S11 (the noise half, through SPEC-67), S12 (the test-only
   TypedDicts, through N16), S14 (the legacy state decoder, deleted on
   2026-10-18), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
@@ -121,16 +121,9 @@ same code, and before any feature that would otherwise build on top of it.
 **Step 1 — 2.0.3, compatible fixes and quick wins.** Done: released on 2026-10-18;
 see [`release/2.0.3.md`](../../release/2.0.3.md).
 
-**Step 2 — 2.1.0, the first release on the new process.**
-
-2. Done: [ADR-0004](../decisions/0004-simplified-release-process.md) is accepted;
-   Renovate and zizmor have replaced most of the pin checker (N01); the release
-   tooling is migrated (S01 cutover) and the evidence docs pruned (ADR-0004
-   migration step 4).
-3. Done: SPEC-66 — `run_health`, the job-log rendering, and the summary on every
-   published run with space reserved for state (N04).
-4. Done: the hash-only body (N12).
-5. Done: the over-built integrity checks are deleted (N15).
+**Step 2 — 2.1.0, the first release on the new process.** Done: released on
+2026-10-19 with ADR-0004, N01, the S01 cutover, SPEC-66, N12 and N15; see the
+[2.1.0 release](https://github.com/seanleecoder/code-tribunal/releases/tag/v2.1.0).
 
 **Step 3 — 2.1.x minor releases.**
 
