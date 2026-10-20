@@ -43,6 +43,7 @@ from candidate_canary_common import (
     expect,
     inject_demo_defect,
     lifecycle_reviewer_results,
+    poll,
     read_state,
     run_lifecycle_steps,
     saved_wontfix,
@@ -277,28 +278,6 @@ def push_candidate_change(
     return result
 
 
-def _poll[T](
-    step: Callable[[], T | None],
-    *,
-    deadline: float,
-    interval: float,
-    timeout_message: str,
-) -> T:
-    last_error: GitLabCanaryError | None = None
-    while time.monotonic() < deadline:
-        try:
-            result = step()
-            if result is not None:
-                return result
-        except GitLabCanaryError as exc:
-            if not exc.transient:
-                raise
-            last_error = exc
-        time.sleep(max(0, min(interval, deadline - time.monotonic())))
-    detail = f"; last transient error: {last_error}" if last_error else ""
-    raise GitLabCanaryError(f"{timeout_message}{detail}")
-
-
 def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
     """Wait until GitLab reports ``branch`` protected before any pipeline can start."""
     encoded = urllib.parse.quote(branch, safe="")
@@ -308,7 +287,7 @@ def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
         status = _request("GET", f"projects/{DEMO_PROJECT}/repository/branches/{encoded}")
         return True if status.get("protected") is True else None
 
-    _poll(step, deadline=deadline, interval=2,
+    poll(step, error=GitLabCanaryError, deadline=deadline, interval=2,
           timeout_message=f"demo branch {branch} never reported as protected")
 
 
@@ -319,7 +298,7 @@ def _first_pipeline(mr: str, deadline: float) -> int:
         pipelines = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr}/pipelines")
         return int(pipelines[-1]["id"]) if pipelines else None
 
-    return _poll(step, deadline=deadline, interval=5,
+    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=5,
                  timeout_message=f"merge request {mr} started no pipeline")
 
 
@@ -353,7 +332,7 @@ def _child(parent: int, deadline: float) -> int:
             )
         return None
 
-    return _poll(step, deadline=deadline, interval=10,
+    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=10,
                  timeout_message=f"parent pipeline {parent} started no child pipeline")
 
 
@@ -362,8 +341,15 @@ def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
         current = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")
         return current if current.get("status") in SETTLED_STATUSES else None
 
-    return _poll(step, deadline=deadline, interval=15,
+    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=15,
                  timeout_message=f"timed out waiting for GitLab pipeline {pipeline}")
+
+
+def _succeeded(pipeline: int, deadline: float, label: str) -> dict[str, Any]:
+    settled = _settled(pipeline, deadline)
+    if settled["status"] != "success":
+        raise GitLabCanaryError(f"{label} pipeline {pipeline} ended {settled['status']}")
+    return settled
 
 
 def _jobs(pipeline: int) -> list[dict[str, Any]]:
@@ -394,9 +380,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
-    child = _settled(_child(_first_pipeline(state["mr_iid"], deadline), deadline), deadline)
-    if child["status"] != "success":
-        raise GitLabCanaryError(f"GitLab child pipeline ended with {child['status']}")
+    parent = _first_pipeline(state["mr_iid"], deadline)
+    child = _succeeded(_child(parent, deadline), deadline, "GitLab child")
 
     destination = Path(args.destination)
     inputs = destination / "inputs"
@@ -524,6 +509,8 @@ class GitLabLifecycle(Lifecycle):
     def __init__(self, state: dict[str, Any], deadline: float) -> None:
         super().__init__(deadline)
         self.mr = str(state["mr_iid"])
+        # create_lifecycle sets the first scenario before opening the MR.
+        self.scenario = "blocking"
 
     def _archives(self, child: int, name_prefix: str) -> Iterator[zipfile.ZipFile]:
         for job in _jobs(child):
@@ -540,17 +527,17 @@ class GitLabLifecycle(Lifecycle):
         return _first_pipeline(self.mr, self.deadline)
 
     def rerun(self, scenario: str) -> int:
-        set_scenario(scenario)
+        if scenario != self.scenario:
+            set_scenario(scenario)
+            self.scenario = scenario
         pipeline = _request("POST", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines")
         return int(pipeline["id"])
 
     def complete(self, run: int) -> tuple[int, dict[str, Any]]:
         child = _child(run, self.deadline)
-        status = _settled(child, self.deadline)["status"]
-        expect(status == "success", f"child pipeline {child} ended {status}")
+        _succeeded(child, self.deadline, "child")
         # GitLab can finish the child before updating its mirrored parent.
-        status = _settled(run, self.deadline)["status"]
-        expect(status == "success", f"parent pipeline {run} ended {status}")
+        _succeeded(run, self.deadline, "parent")
         return child, self._post_result(child)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
@@ -615,9 +602,8 @@ class GitLabLifecycle(Lifecycle):
     def merge_state(self) -> tuple[dict[str, str], bool | None]:
         mr = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}")
         status = str(mr["detailed_merge_status"])
-        if status in {"checking", "unchecked", "preparing", "ci_still_running"}:
-            return {"detailed_merge_status": status}, None
-        return {"detailed_merge_status": status}, status == "mergeable"
+        pending = status in {"checking", "unchecked", "preparing", "ci_still_running"}
+        return {"detailed_merge_status": status}, None if pending else status == "mergeable"
 
 
 def run_lifecycle(args: argparse.Namespace) -> int:

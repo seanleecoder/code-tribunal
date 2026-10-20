@@ -29,11 +29,13 @@ from candidate_canary_common import (
     LIFECYCLE_FIXTURE_PATH,
     Lifecycle,
     LifecycleFailure,
+    LifecycleStep,
     candidate_identity,
     effort_variables,
     expect,
     inject_demo_defect,
     lifecycle_reviewer_results,
+    poll,
     post_counts,
     post_mutated,
     read_state,
@@ -226,12 +228,6 @@ def _view(run_id: int | str, fields: str) -> dict[str, Any]:
     return _json("gh", "run", "view", str(run_id), "--repo", DEMO_REPOSITORY, "--json", fields)
 
 
-def _wait(deadline: float, seconds: int, message: str) -> None:
-    if time.monotonic() >= deadline:
-        raise GitHubCanaryError(message)
-    time.sleep(seconds)
-
-
 def await_new_run(
     branch: str,
     event: str,
@@ -241,16 +237,26 @@ def await_new_run(
     head_sha: str | None = None,
 ) -> int:
     """Wait for a ``event`` run on ``branch`` that is not ``known``, optionally at ``head_sha``."""
-    while True:
+
+    def step() -> int | None:
         for run in _runs(branch, event):
             if run["databaseId"] not in known and (head_sha is None or run["headSha"] == head_sha):
                 return int(run["databaseId"])
-        _wait(deadline, 5, f"no new {event} run appeared on the canary branch")
+        return None
+
+    return poll(step, deadline=deadline, interval=5, error=GitHubCanaryError,
+                timeout_message=f"no new {event} run appeared on the canary branch")
 
 
-def await_completion(run_id: int | str, deadline: float) -> dict[str, Any]:
-    while (run := _view(run_id, "url,status,conclusion")).get("status") != "completed":
-        _wait(deadline, 15, f"timed out waiting for GitHub run {run_id}")
+def await_success(run_id: int | str, deadline: float) -> dict[str, Any]:
+    def step() -> dict[str, Any] | None:
+        run = _view(run_id, "url,status,conclusion")
+        return run if run.get("status") == "completed" else None
+
+    run = poll(step, deadline=deadline, interval=15, error=GitHubCanaryError,
+               timeout_message=f"timed out waiting for GitHub run {run_id}")
+    if run.get("conclusion") != "success":
+        raise GitHubCanaryError(f"GitHub run {run_id} ended with {run.get('conclusion')}")
     return run
 
 
@@ -258,10 +264,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
     run_id = await_new_run(state["branch"], "pull_request", deadline)
-    run = await_completion(run_id, deadline)
-    conclusion = str(run.get("conclusion") or "unknown")
-    if conclusion != "success":
-        raise GitHubCanaryError(f"GitHub candidate run ended with {conclusion}")
+    run = await_success(run_id, deadline)
 
     destination = Path(args.destination)
     artifacts = download_run(run_id, destination / "artifacts")
@@ -412,8 +415,7 @@ class GitHubLifecycle(Lifecycle):
         return await_new_run(self.branch, "workflow_dispatch", self.deadline, known=known)
 
     def complete(self, run: int) -> tuple[int, dict[str, Any]]:
-        conclusion = str(await_completion(run, self.deadline).get("conclusion") or "unknown")
-        expect(conclusion == "success", f"run {run} concluded {conclusion}")
+        await_success(run, self.deadline)
         return run, self._post_result(run)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
@@ -517,11 +519,15 @@ class GitHubLifecycle(Lifecycle):
     # -- GitHub-only steps -------------------------------------------------
     def step_stale_head(self) -> dict[str, Any]:
         run_id = self.rerun("blocking")
-        while not any(
-            job["name"].startswith("review") and job.get("status") != "queued"
-            for job in _view(run_id, "jobs").get("jobs") or []
-        ):
-            self._sleep(5)
+        poll(
+            lambda: any(
+                job["name"].startswith("review") and job.get("status") != "queued"
+                for job in _view(run_id, "jobs").get("jobs") or []
+            ) or None,
+            deadline=self.deadline,
+            interval=5,
+            timeout_message="the stale-head run's review job never started",
+        )
         known = self._known("pull_request")
         (self.demo / "docs").mkdir(exist_ok=True)
         (self.demo / "docs/canary-stale-head.txt").write_text(
@@ -534,12 +540,12 @@ class GitHubLifecycle(Lifecycle):
             self.branch,
         )
         head = _run("git", "rev-parse", "HEAD", cwd=self.demo)
-        run, post = self.review(run_id, expect_status="stale_head")
+        _, post = self.review(run_id, expect_status="stale_head")
         expect(not post_mutated(post), "stale-head run mutated the review")
         self._next_head_run = await_new_run(
             self.branch, "pull_request", self.deadline, known=known, head_sha=head
         )
-        return {"run_id": run, **post_counts(post)}
+        return {"run_id": run_id, **post_counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
         if self._next_head_run is None:
@@ -548,9 +554,16 @@ class GitHubLifecycle(Lifecycle):
         expect(post.get("created_discussions") == 0, "new head created a new thread")
         return {"run_id": run, **super().step_blocker_does_not_block(), **post_counts(post)}
 
-    def steps(self) -> tuple[tuple[str, Any], ...]:
-        *steps, blocker = super().steps()
-        return (*steps, ("stale_head", self.step_stale_head), blocker)
+    def steps(self) -> tuple[tuple[str, LifecycleStep], ...]:
+        return (
+            ("create", self.step_create),
+            ("unchanged_rerun", self.step_unchanged),
+            ("changed_body", self.step_changed_body),
+            ("wontfix", self.step_wontfix),
+            ("reopen", self.step_reopen),
+            ("stale_head", self.step_stale_head),
+            ("blocker_does_not_block", self.step_blocker_does_not_block),
+        )
 
 
 def run_lifecycle(args: argparse.Namespace) -> int:

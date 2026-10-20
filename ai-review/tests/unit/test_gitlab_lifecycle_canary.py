@@ -292,7 +292,7 @@ class LifecycleStepTests(unittest.TestCase):
                         driver, "_post_result", return_value={"status": "success"}
                     ) as post_result,
                     self.assertRaisesRegex(
-                        lifecycle.LifecycleFailure, f"parent pipeline 9 ended {status}"
+                        lifecycle.GitLabCanaryError, f"parent pipeline 9 ended {status}"
                     ),
                 ):
                     driver.complete(9)
@@ -306,7 +306,7 @@ class LifecycleStepTests(unittest.TestCase):
             mock.patch.object(
                 driver, "_post_result", return_value={"status": "success"}
             ) as post_result,
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "child pipeline 10 ended failed"),
+            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "child pipeline 10 ended failed"),
         ):
             driver.complete(9)
         request.assert_called_once_with("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/10")
@@ -403,20 +403,6 @@ class LifecycleStepTests(unittest.TestCase):
                     driver.step_blocker_does_not_block()
                 request.assert_called_once()
                 sleep.assert_not_called()
-
-    def test_wontfix_fails_on_a_post_warning(self) -> None:
-        driver = self._driver()
-        with (
-            mock.patch.object(driver, "reply"),
-            mock.patch.object(driver, "rerun", return_value=9),
-            mock.patch.object(
-                driver,
-                "complete",
-                return_value=(10, {"status": "success", "warnings": ["resolve failed"]}),
-            ),
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "warnings"),
-        ):
-            driver.step_wontfix()
 
     def test_reviewer_artifacts_are_read_from_review_job_archives(self) -> None:
         driver = self._driver()

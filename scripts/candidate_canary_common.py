@@ -60,6 +60,34 @@ class LifecycleFailure(RuntimeError):
     """A lifecycle step observed something other than the expected outcome."""
 
 
+def poll[T](
+    step: Callable[[], T | None],
+    *,
+    deadline: float,
+    interval: float,
+    timeout_message: str,
+    error: type[Exception] = LifecycleFailure,
+) -> T:
+    """Call ``step`` until it returns a value, sleeping ``interval`` between calls.
+
+    An ``error`` marked ``transient`` is retried until ``deadline``; any other
+    exception propagates. The timeout raises ``error`` naming the last transient one.
+    """
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            result = step()
+            if result is not None:
+                return result
+        except error as exc:
+            if not getattr(exc, "transient", False):
+                raise
+            last_error = exc
+        time.sleep(max(0, min(interval, deadline - time.monotonic())))
+    detail = f"; last transient error: {last_error}" if last_error else ""
+    raise error(f"{timeout_message}{detail}")
+
+
 def read_state(path: str | Path) -> dict[str, Any]:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -281,8 +309,10 @@ class Lifecycle:
     """The zero-token mock lifecycle (Chain B) steps shared by both platforms.
 
     A platform subclass starts and completes review runs, reads the bot's finding
-    threads as ``{"id", "path", "body"}`` dicts, and reports mergeability.
-    ``run_key`` names the run identity in each step's observation.
+    threads as dicts with at least ``id``, ``path`` and ``body`` (the created one
+    is kept as ``self.root`` for the other hooks), and reports mergeability.
+    ``run_key`` names the run identity in each step's observation: ``run_id`` and
+    ``persist_run_id`` on GitHub, ``pipeline`` and ``persist_pipeline`` on GitLab.
     """
 
     run_key = "run_id"
