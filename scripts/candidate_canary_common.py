@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from ai_review.consensus import batch_usable_for_panel
 from ai_review.memory import decode_state_note_body, state_note_candidates
+from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import validate_instance, write_canonical_json
 from release_common import canonical_json_bytes
@@ -273,3 +275,164 @@ def saved_wontfix(
         )
     keys = ("issue_id", "discussion_id", "root_note_id", "status", "human_disposition")
     return {"state_note_id": note["id"], **{key: record[key] for key in keys}}
+
+
+class Lifecycle:
+    """The zero-token mock lifecycle (Chain B) steps shared by both platforms.
+
+    A platform subclass starts and completes review runs, reads the bot's finding
+    threads as ``{"id", "path", "body"}`` dicts, and reports mergeability.
+    ``run_key`` names the run identity in each step's observation.
+    """
+
+    run_key = "run_id"
+
+    def __init__(self, deadline: float) -> None:
+        self.deadline = deadline
+        self.root: dict[str, Any] = {}
+
+    def _sleep(self, seconds: int) -> None:
+        if time.monotonic() >= self.deadline:
+            raise LifecycleFailure("timed out")
+        time.sleep(seconds)
+
+    # -- platform hooks ----------------------------------------------------
+    def first_run(self) -> int:
+        """The review run that opening the change started."""
+        raise NotImplementedError
+
+    def rerun(self, scenario: str) -> int:
+        """Start a review of the same head under the mock ``scenario``."""
+        raise NotImplementedError
+
+    def complete(self, run: int) -> tuple[int, dict[str, Any]]:
+        """Wait for a successful ``run``; return its artifact run and post result."""
+        raise NotImplementedError
+
+    def reviewer_results(self, run: int) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def threads(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def resolved(self) -> bool:
+        raise NotImplementedError
+
+    def reply(self, text: str) -> None:
+        raise NotImplementedError
+
+    def saved_wontfix(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def merge_state(self) -> tuple[dict[str, str], bool | None]:
+        """The change's merge status and whether it is mergeable; None while pending."""
+        raise NotImplementedError
+
+    # -- assertions --------------------------------------------------------
+    def thread(self, threads: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        for thread in self.threads() if threads is None else threads:
+            if thread["id"] == self.root["id"]:
+                return thread
+        raise LifecycleFailure("the finding thread is missing")
+
+    def review(self, run: int, *, expect_status: str = "success") -> tuple[int, dict[str, Any]]:
+        run, post = self.complete(run)
+        expect(
+            post.get("status") == expect_status,
+            f"post status {post.get('status')!r}, expected {expect_status!r}",
+        )
+        return run, post
+
+    # -- steps -------------------------------------------------------------
+    def step_create(self) -> dict[str, Any]:
+        run, post = self.review(self.first_run())
+        expect(post.get("created_discussions") == 1, "expected one created discussion")
+        threads = self.threads()
+        expect(len(threads) == 1, f"expected one finding thread, found {len(threads)}")
+        expect(threads[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
+        self.root = threads[0]
+        return {
+            self.run_key: run,
+            "thread": self.root["id"],
+            "reviewers": self.reviewer_results(run),
+            **post_counts(post),
+        }
+
+    def step_unchanged(self) -> dict[str, Any]:
+        run, post = self.review(self.rerun("blocking"))
+        expect(post.get("created_discussions") == 0, "unchanged rerun created a discussion")
+        expect((post.get("skipped_unchanged") or 0) >= 1, "unchanged rerun skipped nothing")
+        return {self.run_key: run, **post_counts(post)}
+
+    def step_changed_body(self) -> dict[str, Any]:
+        before = parse_marker(str(self.thread()["body"]))
+        run, post = self.review(self.rerun("blocking_alt"))
+        threads = self.threads()
+        body = str(self.thread(threads)["body"])
+        after = parse_marker(body)
+        expect(post.get("updated_discussions") == 1, "changed body did not update in place")
+        expect(len(threads) == 1, "changed body duplicated the thread")
+        expect(
+            bool(before and after and before["body_hash"] != after["body_hash"]),
+            "body_hash did not change",
+        )
+        expect("\nSupport:" in body, "updated body lacks the Support: footer")
+        return {self.run_key: run, **post_counts(post)}
+
+    def step_wontfix(self) -> dict[str, Any]:
+        self.reply("/ai-review wontfix")
+        run, post = self.review(self.rerun("blocking"))
+        # A failed resolution is only a post_result warning, so an expired resolve
+        # token must be caught here rather than by a green run.
+        expect(not post.get("warnings"), "post reported warnings; check the resolve token")
+        expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
+        expect(self.resolved(), "thread is not resolved after wontfix")
+        saved = self.saved_wontfix()
+        persist, persisted = self.review(self.rerun("blocking"))
+        expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
+        expect(
+            not post_mutated(persisted),
+            "wontfix rerun mutated the review instead of preserving the disposition",
+        )
+        saved_after = self.saved_wontfix()
+        expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
+        expect(self.resolved(), "wontfix did not persist")
+        return {
+            self.run_key: run,
+            f"persist_{self.run_key}": persist,
+            "state": saved,
+            **post_counts(post),
+            "persisted": post_counts(persisted),
+            "persisted_state": saved_after,
+        }
+
+    def step_reopen(self) -> dict[str, Any]:
+        self.reply("/ai-review reopen")
+        run, post = self.review(self.rerun("blocking"))
+        expect(not self.resolved(), "thread is still resolved after reopen")
+        expect(len(self.threads()) == 1, "reopen created a new thread")
+        return {self.run_key: run, **post_counts(post)}
+
+    def step_blocker_does_not_block(self) -> dict[str, Any]:
+        expect("BLOCKER" in str(self.thread()["body"]), "the thread is not blocker severity")
+        for attempt in range(12):
+            if attempt:
+                self._sleep(5)
+            observed, mergeable = self.merge_state()
+            if mergeable is not None:
+                break
+        expect(
+            mergeable is True,
+            f"the change is {' / '.join(observed.values())}, expected it to be mergeable",
+        )
+        return observed
+
+    def steps(self) -> tuple[tuple[str, LifecycleStep], ...]:
+        return (
+            ("create", self.step_create),
+            ("unchanged_rerun", self.step_unchanged),
+            ("changed_body", self.step_changed_body),
+            ("wontfix", self.step_wontfix),
+            ("reopen", self.step_reopen),
+            ("blocker_does_not_block", self.step_blocker_does_not_block),
+        )

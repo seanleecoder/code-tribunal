@@ -31,20 +31,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from ai_review.notes import parse_marker
 from candidate_canary_common import (
     DEMO_PROJECT,
     GITLAB_SECRETS,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    Lifecycle,
     LifecycleFailure,
     canary_stage_environment,
     candidate_identity,
     expect,
     inject_demo_defect,
     lifecycle_reviewer_results,
-    post_counts,
-    post_mutated,
     read_state,
     run_lifecycle_steps,
     saved_wontfix,
@@ -314,6 +312,73 @@ def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
           timeout_message=f"demo branch {branch} never reported as protected")
 
 
+def _first_pipeline(mr: str, deadline: float) -> int:
+    """The merge request's first pipeline, which opening it started."""
+
+    def step() -> int | None:
+        pipelines = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr}/pipelines")
+        return int(pipelines[-1]["id"]) if pipelines else None
+
+    return _poll(step, deadline=deadline, interval=5,
+                 timeout_message=f"merge request {mr} started no pipeline")
+
+
+def _child(parent: int, deadline: float) -> int:
+    """The child pipeline that ``parent``'s trigger bridge started."""
+    path = f"projects/{DEMO_PROJECT}/pipelines/{parent}"
+
+    def downstream(bridges: list[dict[str, Any]]) -> int | None:
+        for bridge in bridges:
+            if bridge.get("downstream_pipeline"):
+                return int(bridge["downstream_pipeline"]["id"])
+        return None
+
+    def step() -> int | None:
+        bridges = _request("GET", f"{path}/bridges")
+        if (child := downstream(bridges)) is not None:
+            return child
+        for bridge in bridges:
+            if bridge.get("status") in SETTLED_STATUSES:
+                raise GitLabCanaryError(
+                    f"parent pipeline {parent} bridge {bridge['id']} ended "
+                    f"{bridge['status']} without a child pipeline"
+                )
+        status = str(_request("GET", path)["status"])
+        if status in SETTLED_STATUSES:
+            # A child may have appeared between reading the bridges and the parent.
+            if (child := downstream(_request("GET", f"{path}/bridges"))) is not None:
+                return child
+            raise GitLabCanaryError(
+                f"parent pipeline {parent} ended {status} without a child pipeline"
+            )
+        return None
+
+    return _poll(step, deadline=deadline, interval=10,
+                 timeout_message=f"parent pipeline {parent} started no child pipeline")
+
+
+def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
+    def step() -> dict[str, Any] | None:
+        current = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")
+        return current if current.get("status") in SETTLED_STATUSES else None
+
+    return _poll(step, deadline=deadline, interval=15,
+                 timeout_message=f"timed out waiting for GitLab pipeline {pipeline}")
+
+
+def _jobs(pipeline: int) -> list[dict[str, Any]]:
+    return _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}/jobs?per_page=100")
+
+
+def _artifacts(job: dict[str, Any], *, allow_missing: bool = False) -> bytes | None:
+    return _request(
+        "GET",
+        f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts",
+        raw=True,
+        allow_missing=allow_missing,
+    )
+
+
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
     access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
@@ -328,50 +393,21 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
-    mr_iid = state["mr_iid"]
     deadline = time.monotonic() + args.timeout_seconds
-    child: dict[str, Any] | None = None
-
-    def step() -> dict[str, Any] | None:
-        nonlocal child
-        if child is None:
-            pipelines = _request(
-                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr_iid}/pipelines"
-            )
-            if pipelines:
-                parent_id = pipelines[0]["id"]
-                bridges = _request(
-                    "GET", f"projects/{DEMO_PROJECT}/pipelines/{parent_id}/bridges"
-                )
-                for bridge in bridges:
-                    if bridge.get("downstream_pipeline"):
-                        child = bridge["downstream_pipeline"]
-                        break
-        if child is not None:
-            pipeline = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}")
-            status = pipeline.get("status")
-            if status == "success":
-                return pipeline
-            if status in SETTLED_STATUSES:
-                raise GitLabCanaryError(f"GitLab child pipeline ended with {status}")
-        return None
-
-    child = _poll(step, deadline=deadline, interval=15,
-                  timeout_message="timed out waiting for GitLab candidate pipeline")
+    child = _settled(_child(_first_pipeline(state["mr_iid"], deadline), deadline), deadline)
+    if child["status"] != "success":
+        raise GitLabCanaryError(f"GitLab child pipeline ended with {child['status']}")
 
     destination = Path(args.destination)
     inputs = destination / "inputs"
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    jobs = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child['id']}/jobs?per_page=100")
-    for job in jobs:
+    for job in _jobs(child["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
         archive = destination / f"job-{job['id']}.zip"
-        archive.write_bytes(
-            _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts", raw=True)
-        )
+        archive.write_bytes(_artifacts(job))
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
@@ -482,81 +518,44 @@ def cleanup_lifecycle(args: argparse.Namespace) -> None:
         raise GitLabCanaryError("GitLab lifecycle cleanup failures: " + "; ".join(failures))
 
 
-class GitLabLifecycle:
+class GitLabLifecycle(Lifecycle):
+    run_key = "pipeline"
+
     def __init__(self, state: dict[str, Any], deadline: float) -> None:
+        super().__init__(deadline)
         self.mr = str(state["mr_iid"])
-        self.deadline = deadline
-        self.discussion_id: str | None = None
-        self.root_note_id: int | None = None
-        self.bot_id: int | None = None
-
-    def _sleep(self, seconds: int) -> None:
-        if time.monotonic() >= self.deadline:
-            raise LifecycleFailure("timed out")
-        time.sleep(seconds)
-
-    # -- pipelines ---------------------------------------------------------
-    def _first_pipeline(self) -> int:
-        while not (
-            pipelines := _request(
-                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines"
-            )
-        ):
-            self._sleep(5)
-        return int(pipelines[-1]["id"])
-
-    def _new_pipeline(self) -> int:
-        pipeline = _request("POST", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines")
-        return int(pipeline["id"])
-
-    def _child(self, parent: int) -> int:
-        path = f"projects/{DEMO_PROJECT}/pipelines/{parent}"
-        while True:
-            bridges = _request("GET", f"{path}/bridges")
-            for bridge in bridges:
-                if bridge.get("downstream_pipeline"):
-                    return int(bridge["downstream_pipeline"]["id"])
-            for bridge in bridges:
-                if bridge.get("status") in SETTLED_STATUSES:
-                    raise LifecycleFailure(
-                        f"parent pipeline {parent} bridge {bridge['id']} ended "
-                        f"{bridge['status']} without a child pipeline"
-                    )
-            status = str(_request("GET", path)["status"])
-            if status in SETTLED_STATUSES:
-                # A child may have appeared between reading the bridges and the parent.
-                for bridge in _request("GET", f"{path}/bridges"):
-                    if bridge.get("downstream_pipeline"):
-                        return int(bridge["downstream_pipeline"]["id"])
-                raise LifecycleFailure(
-                    f"parent pipeline {parent} ended {status} without a child pipeline"
-                )
-            self._sleep(10)
-
-    def _complete(self, pipeline: int) -> str:
-        while (
-            status := str(
-                _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")["status"]
-            )
-        ) not in SETTLED_STATUSES:
-            self._sleep(15)
-        return status
 
     def _archives(self, child: int, name_prefix: str) -> Iterator[zipfile.ZipFile]:
-        jobs = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{child}/jobs?per_page=100")
-        for job in jobs:
+        for job in _jobs(child):
             if job["name"].startswith(name_prefix) and job.get("artifacts_file"):
-                path = f"projects/{DEMO_PROJECT}/jobs/{job['id']}/artifacts"
-                yield zipfile.ZipFile(io.BytesIO(_request("GET", path, raw=True)))
+                yield zipfile.ZipFile(io.BytesIO(_artifacts(job)))
 
     def _post_result(self, child: int) -> dict[str, Any]:
         for archive in self._archives(child, "post_ai_review"):
             return json.loads(archive.read("out/post/post_result.json"))
         raise LifecycleFailure("post_ai_review uploaded no post_result.json")
 
-    def _reviewer_results(self, child: int) -> dict[str, Any]:
+    # -- platform hooks ----------------------------------------------------
+    def first_run(self) -> int:
+        return _first_pipeline(self.mr, self.deadline)
+
+    def rerun(self, scenario: str) -> int:
+        set_scenario(scenario)
+        pipeline = _request("POST", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines")
+        return int(pipeline["id"])
+
+    def complete(self, run: int) -> tuple[int, dict[str, Any]]:
+        child = _child(run, self.deadline)
+        status = _settled(child, self.deadline)["status"]
+        expect(status == "success", f"child pipeline {child} ended {status}")
+        # GitLab can finish the child before updating its mirrored parent.
+        status = _settled(run, self.deadline)["status"]
+        expect(status == "success", f"parent pipeline {run} ended {status}")
+        return child, self._post_result(child)
+
+    def reviewer_results(self, run: int) -> dict[str, Any]:
         loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
-        for archive in self._archives(child, "AI review"):
+        for archive in self._archives(run, "AI review"):
             for name in archive.namelist():
                 parts = name.split("/")
                 if len(parts) != 3 or parts[0] != "out" or not name.endswith(".json"):
@@ -572,162 +571,53 @@ class GitLabLifecycle:
                     raise LifecycleFailure(f"unreadable {directory} review artifact") from None
         return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
 
-    # -- discussions -------------------------------------------------------
-    def _discussions(self) -> list[dict[str, Any]]:
-        return [
-            d
-            for d in _request(
-                "GET",
-                f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/discussions?per_page=100",
-            )
-            if d["notes"][0].get("position")
-        ]
+    def threads(self) -> list[dict[str, Any]]:
+        discussions = _request(
+            "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/discussions?per_page=100"
+        )
+        threads = []
+        for discussion in discussions:
+            root = discussion["notes"][0]
+            if root.get("position"):
+                threads.append({
+                    "id": int(root["id"]),
+                    "path": root["position"].get("new_path"),
+                    "body": root.get("body", ""),
+                    "resolved": bool(root.get("resolved")),
+                    "discussion_id": str(discussion["id"]),
+                    "author_id": int(root["author"]["id"]),
+                })
+        return threads
 
-    def _thread(self, discussions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        for discussion in self._discussions() if discussions is None else discussions:
-            if discussion["id"] == self.discussion_id:
-                return dict(discussion["notes"][0])
-        raise LifecycleFailure("the finding discussion is missing")
+    def resolved(self) -> bool:
+        return bool(self.thread()["resolved"])
 
-    def _reply(self, text: str) -> None:
+    def reply(self, text: str) -> None:
         _request(
             "POST",
             f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/discussions/"
-            f"{self.discussion_id}/notes",
+            f"{self.root['discussion_id']}/notes",
             payload={"body": text},
         )
 
-    def _saved_wontfix(self) -> dict[str, Any]:
+    def saved_wontfix(self) -> dict[str, Any]:
         notes = [
             note
             for note in _request(
                 "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/notes?per_page=100"
             )
-            if note.get("author", {}).get("id") == self.bot_id
+            if note.get("author", {}).get("id") == self.root["author_id"]
         ]
         return saved_wontfix(
-            notes,
-            project_id=DEMO_PROJECT,
-            change_id=self.mr,
-            root_note_id=int(self.root_note_id or 0),
+            notes, project_id=DEMO_PROJECT, change_id=self.mr, root_note_id=self.root["id"]
         )
 
-    # -- assertions --------------------------------------------------------
-    def _run_step(self, parent: int) -> tuple[int, dict[str, Any]]:
-        child = self._child(parent)
-        status = self._complete(child)
-        expect(status == "success", f"child pipeline {child} ended {status}")
-        # GitLab can finish the child before updating its mirrored parent.
-        status = self._complete(parent)
-        expect(status == "success", f"parent pipeline {parent} ended {status}")
-        post = self._post_result(child)
-        expect(post.get("status") == "success", f"post status {post.get('status')!r}")
-        return child, post
-
-    # -- steps -------------------------------------------------------------
-    def step_create(self) -> dict[str, Any]:
-        child, post = self._run_step(self._first_pipeline())
-        expect(post.get("created_discussions") == 1, "expected one created discussion")
-        discussions = self._discussions()
-        expect(len(discussions) == 1, f"expected one discussion, found {len(discussions)}")
-        root = discussions[0]["notes"][0]
-        expect(
-            root["position"].get("new_path") == LIFECYCLE_FIXTURE_PATH,
-            "discussion is not on the added file",
-        )
-        self.discussion_id = str(discussions[0]["id"])
-        self.root_note_id = int(root["id"])
-        self.bot_id = int(root["author"]["id"])
-        return {
-            "pipeline": child,
-            "thread": self.root_note_id,
-            "reviewers": self._reviewer_results(child),
-            **post_counts(post),
-        }
-
-    def step_unchanged(self) -> dict[str, Any]:
-        child, post = self._run_step(self._new_pipeline())
-        expect(post.get("created_discussions") == 0, "unchanged rerun created a discussion")
-        expect((post.get("skipped_unchanged") or 0) >= 1, "unchanged rerun skipped nothing")
-        return {"pipeline": child, **post_counts(post)}
-
-    def step_changed_body(self) -> dict[str, Any]:
-        before = parse_marker(str(self._thread()["body"]))
-        set_scenario("blocking_alt")
-        child, post = self._run_step(self._new_pipeline())
-        discussions = self._discussions()
-        body = str(self._thread(discussions)["body"])
-        after = parse_marker(body)
-        expect(post.get("updated_discussions") == 1, "changed body did not update in place")
-        expect(len(discussions) == 1, "changed body duplicated the discussion")
-        expect(
-            bool(before and after and before["body_hash"] != after["body_hash"]),
-            "body_hash did not change",
-        )
-        expect("\nSupport:" in body, "updated body lacks the Support: footer")
-        return {"pipeline": child, **post_counts(post)}
-
-    def step_wontfix(self) -> dict[str, Any]:
-        set_scenario("blocking")
-        self._reply("/ai-review wontfix")
-        child, post = self._run_step(self._new_pipeline())
-        expect(not post.get("warnings"), "post reported warnings")
-        expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
-        expect(bool(self._thread().get("resolved")), "discussion not resolved after wontfix")
-        saved = self._saved_wontfix()
-        persist, persisted = self._run_step(self._new_pipeline())
-        expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
-        expect(
-            not post_mutated(persisted),
-            "wontfix rerun mutated the review instead of preserving the disposition",
-        )
-        saved_after = self._saved_wontfix()
-        expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
-        expect(bool(self._thread().get("resolved")), "wontfix did not persist")
-        return {
-            "pipeline": child,
-            "persist_pipeline": persist,
-            "state": saved,
-            **post_counts(post),
-            "persisted": post_counts(persisted),
-            "persisted_state": saved_after,
-        }
-
-    def step_reopen(self) -> dict[str, Any]:
-        self._reply("/ai-review reopen")
-        child, post = self._run_step(self._new_pipeline())
-        discussions = self._discussions()
-        expect(
-            not self._thread(discussions).get("resolved"), "discussion still resolved after reopen"
-        )
-        expect(len(discussions) == 1, "reopen created a new discussion")
-        return {"pipeline": child, **post_counts(post)}
-
-    def step_blocker_does_not_block(self) -> dict[str, Any]:
-        expect("BLOCKER" in str(self._thread()["body"]), "discussion is not blocker severity")
-        status = "checking"
-        for attempt in range(12):
-            if attempt:
-                self._sleep(5)
-            status = str(
-                _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}")[
-                    "detailed_merge_status"
-                ]
-            )
-            if status not in {"checking", "unchecked", "preparing", "ci_still_running"}:
-                break
-        expect(status == "mergeable", f"merge request is {status}, expected mergeable")
-        return {"detailed_merge_status": status}
-
-    def steps(self) -> tuple[tuple[str, Any], ...]:
-        return (
-            ("create", self.step_create),
-            ("unchanged_rerun", self.step_unchanged),
-            ("changed_body", self.step_changed_body),
-            ("wontfix", self.step_wontfix),
-            ("reopen", self.step_reopen),
-            ("blocker_does_not_block", self.step_blocker_does_not_block),
-        )
+    def merge_state(self) -> tuple[dict[str, str], bool | None]:
+        mr = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}")
+        status = str(mr["detailed_merge_status"])
+        if status in {"checking", "unchecked", "preparing", "ci_still_running"}:
+            return {"detailed_merge_status": status}, None
+        return {"detailed_merge_status": status}, status == "mergeable"
 
 
 def run_lifecycle(args: argparse.Namespace) -> int:
@@ -894,32 +784,15 @@ class HostileProbe:
         self.child_jobs: dict[str, dict[str, Any]] = {}
         self.prepare_trace = ""
 
-    def _sleep(self, seconds: int) -> None:
-        expect(time.monotonic() < self.deadline, "timed out")
-        time.sleep(seconds)
-
-    def _settled(self, pipeline: int) -> None:
-        while (
-            str(_request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")["status"])
-            not in SETTLED_STATUSES
-        ):
-            self._sleep(15)
-
-    def _jobs(self, pipeline: int) -> dict[str, dict[str, Any]]:
-        jobs = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}/jobs?per_page=100")
-        return {job["name"]: job for job in jobs}
+    def _jobs_by_name(self, pipeline: int) -> dict[str, dict[str, Any]]:
+        return {job["name"]: job for job in _jobs(pipeline)}
 
     def _trace(self, job: dict[str, Any]) -> str:
         raw = _request("GET", f"projects/{DEMO_PROJECT}/jobs/{job['id']}/trace", raw=True)
         return plain_trace(raw.decode("utf-8", errors="replace"))
 
     def _verify_empty_input_bundle(self, prepare: dict[str, Any], trace: str) -> None:
-        raw = _request(
-            "GET",
-            f"projects/{DEMO_PROJECT}/jobs/{prepare['id']}/artifacts",
-            raw=True,
-            allow_missing=True,
-        )
+        raw = _artifacts(prepare, allow_missing=True)
         if raw is None:
             advertised = prepare.get("artifacts_file") or {}
             expect(
@@ -982,15 +855,9 @@ class HostileProbe:
     def credentials_withheld(self) -> dict[str, Any]:
         """Protected credentials are withheld from the unprotected ref. Only the
         presence lines are read; the trace itself is never retained."""
-        while not (
-            pipelines := _request(
-                "GET", f"projects/{DEMO_PROJECT}/merge_requests/{self.mr}/pipelines"
-            )
-        ):
-            self._sleep(5)
-        self.parent = int(pipelines[-1]["id"])
-        self._settled(self.parent)
-        self.parent_jobs = self._jobs(self.parent)
+        self.parent = _first_pipeline(self.mr, self.deadline)
+        _settled(self.parent, self.deadline)
+        self.parent_jobs = self._jobs_by_name(self.parent)
         enumerate_job = self.parent_jobs.get("hostile_enumerate_credentials")
         expect(
             enumerate_job is not None and enumerate_job["status"] == "success",
@@ -1016,14 +883,9 @@ class HostileProbe:
 
     def prepare_fails_closed(self) -> dict[str, Any]:
         """The child chain fails closed at prepare and every later stage is skipped."""
-        bridges = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{self.parent}/bridges")
-        downstream = next(
-            (b["downstream_pipeline"] for b in bridges if b.get("downstream_pipeline")), None
-        )
-        expect(downstream is not None, "the hostile trigger started no child pipeline")
-        child = int(downstream["id"])
-        self._settled(child)
-        self.child_jobs = self._jobs(child)
+        child = _child(self.parent, self.deadline)
+        _settled(child, self.deadline)
+        self.child_jobs = self._jobs_by_name(child)
         prepare = self.child_jobs.get("prepare_ai_review")
         expect(prepare is not None and prepare["status"] == "failed", "prepare did not fail closed")
         downstream_statuses = {

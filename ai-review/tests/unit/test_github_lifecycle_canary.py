@@ -98,14 +98,18 @@ class CreateStepTests(unittest.TestCase):
         self.enterContext(
             mock.patch.object(lifecycle, "download_run", side_effect=lambda _id, dest, *_: dest)
         )
-        self.enterContext(mock.patch.object(self.driver, "_new_run", return_value=5))
+        self.enterContext(mock.patch.object(self.driver, "first_run", return_value=5))
         self.enterContext(
-            mock.patch.object(self.driver, "_run_step", return_value={"created_discussions": 1})
+            mock.patch.object(
+                self.driver,
+                "complete",
+                return_value=(5, {"status": "success", "created_discussions": 1}),
+            )
         )
         self.enterContext(
             mock.patch.object(
                 self.driver,
-                "_root_comments",
+                "threads",
                 return_value=[{"id": 11, "path": lifecycle.LIFECYCLE_FIXTURE_PATH}],
             )
         )
@@ -214,19 +218,20 @@ class CreateStepTests(unittest.TestCase):
 class WontfixStepTests(unittest.TestCase):
     def setUp(self) -> None:
         self.driver = _lifecycle(self.enterContext(tempfile.TemporaryDirectory()))
-        self.driver.comment_id = 11
-        self.enterContext(mock.patch.object(self.driver, "_reply"))
-        self.dispatch = self.enterContext(mock.patch.object(self.driver, "_dispatch"))
-        self.first = {"resolved_discussions": 1, "warnings": []}
+        self.driver.root = {"id": 11}
+        self.enterContext(mock.patch.object(self.driver, "reply"))
+        self.dispatch = self.enterContext(mock.patch.object(self.driver, "rerun"))
+        self.first = {"status": "success", "resolved_discussions": 1, "warnings": []}
         self.persisted = {
+            "status": "success",
             "created_discussions": 0,
             "updated_discussions": 0,
             "resolved_discussions": 0,
             "warnings": [],
         }
-        self.run_step = self.enterContext(mock.patch.object(self.driver, "_run_step"))
+        self.run_step = self.enterContext(mock.patch.object(self.driver, "complete"))
         self._rerun(self.persisted)
-        self.enterContext(mock.patch.object(self.driver, "_thread_resolved", return_value=True))
+        self.enterContext(mock.patch.object(self.driver, "resolved", return_value=True))
         # gh --paginate --slurp returns one array per page. Ignore human-authored state.
         forged = dict(_state_note(status="resolved"), user={"login": "contributor"})
         self.pages = [
@@ -234,12 +239,12 @@ class WontfixStepTests(unittest.TestCase):
             [_state_note()],
         ]
         self.json = self.enterContext(
-            mock.patch.object(self.driver, "_json", side_effect=[self.pages, self.pages])
+            mock.patch.object(lifecycle, "_json", side_effect=[self.pages, self.pages])
         )
 
     def _rerun(self, persisted: dict[str, object]) -> None:
         self.dispatch.side_effect = [5, 6]
-        self.run_step.side_effect = [self.first, persisted]
+        self.run_step.side_effect = [(5, self.first), (6, persisted)]
 
     def test_same_saved_wontfix_record_survives_without_another_resolution(self) -> None:
         observed = self.driver.step_wontfix()
@@ -302,15 +307,22 @@ class MergePolicyStepTests(unittest.TestCase):
     def setUp(self) -> None:
         self.driver = _lifecycle(self.enterContext(tempfile.TemporaryDirectory()))
         self.driver._next_head_run = 9
+        self.driver.root = {"id": 11}
         self.enterContext(
-            mock.patch.object(self.driver, "_run_step", return_value={"created_discussions": 0})
+            mock.patch.object(
+                self.driver,
+                "complete",
+                return_value=(9, {"status": "success", "created_discussions": 0}),
+            )
         )
-        self.enterContext(mock.patch.object(self.driver, "_body", return_value="BLOCKER"))
+        self.enterContext(
+            mock.patch.object(self.driver, "threads", return_value=[{"id": 11, "body": "BLOCKER"}])
+        )
         self.sleep = self.enterContext(mock.patch.object(self.driver, "_sleep"))
 
     def test_mergeable_clean_passes_and_records_both_statuses(self) -> None:
         with mock.patch.object(
-            self.driver,
+            lifecycle,
             "_json",
             return_value={"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"},
         ) as query:
@@ -322,7 +334,7 @@ class MergePolicyStepTests(unittest.TestCase):
 
     def test_polling_waits_for_both_statuses(self) -> None:
         with mock.patch.object(
-            self.driver,
+            lifecycle,
             "_json",
             side_effect=[
                 {"mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN"},
@@ -343,7 +355,7 @@ class MergePolicyStepTests(unittest.TestCase):
             with (
                 self.subTest(mergeable=mergeable, policy=policy),
                 mock.patch.object(
-                    self.driver,
+                    lifecycle,
                     "_json",
                     return_value={"mergeable": mergeable, "mergeStateStatus": policy},
                 ) as query,
@@ -403,23 +415,26 @@ class LifecycleStepTests(unittest.TestCase):
             mock.patch.object(lifecycle, "_run", side_effect=run),
             mock.patch.object(lifecycle.time, "sleep"),
         ):
-            self.assertEqual(_lifecycle(tmp)._dispatch("blocking"), 2)
+            self.assertEqual(_lifecycle(tmp).rerun("blocking"), 2)
 
     def test_wontfix_fails_when_post_warns_even_though_the_run_is_green(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             driver = _lifecycle(tmp)
-            driver.comment_id = 11
+            driver.root = {"id": 11}
             with (
-                mock.patch.object(driver, "_reply"),
-                mock.patch.object(driver, "_dispatch", return_value=5),
+                mock.patch.object(driver, "reply"),
+                mock.patch.object(driver, "rerun", return_value=5),
                 mock.patch.object(
                     driver,
-                    "_run_step",
-                    return_value={
-                        "status": "success",
-                        "resolved_discussions": 0,
-                        "warnings": ["failed to resolve thread 11: 401"],
-                    },
+                    "complete",
+                    return_value=(
+                        5,
+                        {
+                            "status": "success",
+                            "resolved_discussions": 0,
+                            "warnings": ["failed to resolve thread 11: 401"],
+                        },
+                    ),
                 ),
                 self.assertRaisesRegex(lifecycle.LifecycleFailure, "resolve token"),
             ):
