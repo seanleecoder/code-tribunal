@@ -1146,7 +1146,7 @@ class GitLabCanaryPollingTests(unittest.TestCase):
                 self.gitlab.GitLabCanaryError("outage", transient=True),
                 {"id": 22, "status": "failed"},
             ]) as request,
-            self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "ended with failed"),
+            self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "pipeline 22 ended failed"),
         ):
             self._poll(False, tmp)
         self.assertEqual(request.call_count, 4)

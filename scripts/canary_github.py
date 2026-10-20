@@ -22,18 +22,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ai_review.notes import parse_marker
 from ai_review.schema import load_json_file
 from candidate_canary_common import (
     DEMO_REPOSITORY,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    Lifecycle,
     LifecycleFailure,
+    LifecycleStep,
     candidate_identity,
     effort_variables,
     expect,
     inject_demo_defect,
     lifecycle_reviewer_results,
+    poll,
     post_counts,
     post_mutated,
     read_state,
@@ -198,58 +200,71 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def _json(*args: str) -> Any:
+    return json.loads(_run(*args) or "null")
+
+
+def _runs(branch: str, event: str) -> list[dict[str, Any]]:
+    return _json(
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        DEMO_REPOSITORY,
+        "--workflow",
+        "ai-review.yml",
+        "--branch",
+        branch,
+        "--event",
+        event,
+        "--limit",
+        "20",
+        "--json",
+        "databaseId,headSha",
+    )
+
+
+def _view(run_id: int | str, fields: str) -> dict[str, Any]:
+    return _json("gh", "run", "view", str(run_id), "--repo", DEMO_REPOSITORY, "--json", fields)
+
+
+def await_new_run(
+    branch: str,
+    event: str,
+    deadline: float,
+    *,
+    known: frozenset[int] = frozenset(),
+    head_sha: str | None = None,
+) -> int:
+    """Wait for a ``event`` run on ``branch`` that is not ``known``, optionally at ``head_sha``."""
+
+    def step() -> int | None:
+        for run in _runs(branch, event):
+            if run["databaseId"] not in known and (head_sha is None or run["headSha"] == head_sha):
+                return int(run["databaseId"])
+        return None
+
+    return poll(step, deadline=deadline, interval=5, error=GitHubCanaryError,
+                timeout_message=f"no new {event} run appeared on the canary branch")
+
+
+def await_success(run_id: int | str, deadline: float) -> dict[str, Any]:
+    def step() -> dict[str, Any] | None:
+        run = _view(run_id, "url,status,conclusion")
+        return run if run.get("status") == "completed" else None
+
+    run = poll(step, deadline=deadline, interval=15, error=GitHubCanaryError,
+               timeout_message=f"timed out waiting for GitHub run {run_id}")
+    if run.get("conclusion") != "success":
+        raise GitHubCanaryError(f"GitHub run {run_id} ended with {run.get('conclusion')}")
+    return run
+
+
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
-    run: dict[str, Any] | None = None
-    while time.monotonic() < deadline:
-        runs = json.loads(
-            _run(
-                "gh",
-                "run",
-                "list",
-                "--repo",
-                DEMO_REPOSITORY,
-                "--workflow",
-                "ai-review.yml",
-                "--branch",
-                state["branch"],
-                "--event",
-                "pull_request",
-                "--limit",
-                "1",
-                "--json",
-                "databaseId",
-            )
-        )
-        if runs:
-            run = runs[0]
-            break
-        time.sleep(5)
-    if run is None:
-        raise GitHubCanaryError("the canary pull request's review run did not appear")
-    run_id = str(run["databaseId"])
-    while time.monotonic() < deadline:
-        run = json.loads(
-            _run(
-                "gh",
-                "run",
-                "view",
-                run_id,
-                "--repo",
-                DEMO_REPOSITORY,
-                "--json",
-                "databaseId,url,status,conclusion",
-            )
-        )
-        if run.get("status") == "completed":
-            conclusion = str(run.get("conclusion") or "unknown")
-            if conclusion != "success":
-                raise GitHubCanaryError(f"GitHub candidate run ended with {conclusion}")
-            break
-        time.sleep(15)
-    else:
-        raise GitHubCanaryError("timed out waiting for GitHub candidate run")
+    run_id = await_new_run(state["branch"], "pull_request", deadline)
+    run = await_success(run_id, deadline)
 
     destination = Path(args.destination)
     artifacts = download_run(run_id, destination / "artifacts")
@@ -261,7 +276,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         shutil.copytree(artifacts / f"ai-review-critique-{reviewer}", output, dirs_exist_ok=True)
     shutil.copytree(artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True)
     shutil.copytree(artifacts / "ai-review-post", output / "post", dirs_exist_ok=True)
-    state.update({"run_id": run_id, "external_run_url": run["url"]})
+    state.update({"run_id": str(run_id), "external_run_url": run["url"]})
     write_state(args.state, state)
     return state
 
@@ -359,62 +374,17 @@ def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     return state
 
 
-class GitHubLifecycle:
+class GitHubLifecycle(Lifecycle):
     def __init__(self, state: dict[str, Any], workdir: Path, deadline: float) -> None:
+        super().__init__(deadline)
         self.branch = str(state["branch"])
         self.pr = str(state["pr_number"])
         self.demo = workdir / "demo"
         self.downloads = workdir / "downloads"
-        self.deadline = deadline
-        self.comment_id: int | None = None
         self._next_head_run: int | None = None
 
-    # -- platform access -------------------------------------------------
-    def _json(self, *args: str) -> Any:
-        return json.loads(_run(*args) or "null")
-
-    def _runs(self, event: str) -> list[dict[str, Any]]:
-        return self._json(
-            "gh",
-            "run",
-            "list",
-            "--repo",
-            DEMO_REPOSITORY,
-            "--workflow",
-            "ai-review.yml",
-            "--branch",
-            self.branch,
-            "--event",
-            event,
-            "--limit",
-            "20",
-            "--json",
-            "databaseId,headSha,status,conclusion",
-        )
-
-    def _sleep(self, seconds: int) -> None:
-        if time.monotonic() >= self.deadline:
-            raise LifecycleFailure("timed out")
-        time.sleep(seconds)
-
-    def _new_run(self, event: str, known: set[int], head_sha: str | None = None) -> int:
-        while True:
-            for run in self._runs(event):
-                if run["databaseId"] in known:
-                    continue
-                if head_sha is None or run.get("headSha") == head_sha:
-                    return int(run["databaseId"])
-            self._sleep(5)
-
-    def _view(self, run_id: int, fields: str = "status,conclusion") -> dict[str, Any]:
-        return self._json(
-            "gh", "run", "view", str(run_id), "--repo", DEMO_REPOSITORY, "--json", fields
-        )
-
-    def _complete(self, run_id: int) -> str:
-        while (run := self._view(run_id)).get("status") != "completed":
-            self._sleep(15)
-        return str(run.get("conclusion") or "unknown")
+    def _known(self, event: str) -> frozenset[int]:
+        return frozenset(int(run["databaseId"]) for run in _runs(self.branch, event))
 
     def _post_result(self, run_id: int) -> dict[str, Any]:
         post = download_run(
@@ -422,8 +392,12 @@ class GitHubLifecycle:
         )
         return json.loads((post / "post_result.json").read_text(encoding="utf-8"))
 
-    def _dispatch(self, scenario: str) -> int:
-        known = {int(run["databaseId"]) for run in self._runs("workflow_dispatch")}
+    # -- platform hooks ----------------------------------------------------
+    def first_run(self) -> int:
+        return await_new_run(self.branch, "pull_request", self.deadline)
+
+    def rerun(self, scenario: str) -> int:
+        known = self._known("workflow_dispatch")
         _run(
             "gh",
             "workflow",
@@ -438,10 +412,32 @@ class GitHubLifecycle:
             "-f",
             f"mock_scenario={scenario}",
         )
-        return self._new_run("workflow_dispatch", known)
+        return await_new_run(self.branch, "workflow_dispatch", self.deadline, known=known)
 
-    def _root_comments(self) -> list[dict[str, Any]]:
-        comments = self._json(
+    def complete(self, run: int) -> tuple[int, dict[str, Any]]:
+        await_success(run, self.deadline)
+        return run, self._post_result(run)
+
+    def reviewer_results(self, run: int) -> dict[str, Any]:
+        reviews = download_run(
+            run, self.downloads / str(run) / "reviews", "--pattern", "ai-review-review-*"
+        )
+        loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
+        for directory in loaded:
+            for path in sorted(reviews.glob(f"*/{directory}/*.json")):
+                try:
+                    artifact = load_json_file(path)
+                except OSError, ValueError:
+                    raise LifecycleFailure(f"unreadable review artifact {path.name}") from None
+                if path.parent.parent.name != f"ai-review-review-{path.stem}":
+                    raise LifecycleFailure(f"{path.name} is in the wrong artifact")
+                if path.stem in loaded[directory]:
+                    raise LifecycleFailure(f"duplicate {directory} artifact for {path.stem}")
+                loaded[directory][path.stem] = artifact
+        return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
+
+    def threads(self) -> list[dict[str, Any]]:
+        comments = _json(
             "gh", "api", f"repos/{DEMO_REPOSITORY}/pulls/{self.pr}/comments", "--paginate"
         )
         return [
@@ -450,14 +446,14 @@ class GitHubLifecycle:
             if c.get("in_reply_to_id") is None and c["user"]["login"] == BOT_LOGIN
         ]
 
-    def _thread_resolved(self) -> bool:
+    def resolved(self) -> bool:
         owner, name = DEMO_REPOSITORY.split("/")
         query = (
             "query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name)"
             "{pullRequest(number:$pr){reviewThreads(first:50){nodes{isResolved "
             "comments(first:1){nodes{databaseId}}}}}}}"
         )
-        data = self._json(
+        data = _json(
             "gh",
             "api",
             "graphql",
@@ -472,30 +468,23 @@ class GitHubLifecycle:
         )
         for node in data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]:
             roots = node["comments"]["nodes"]
-            if roots and roots[0]["databaseId"] == self.comment_id:
+            if roots and roots[0]["databaseId"] == self.root["id"]:
                 return bool(node["isResolved"])
         raise LifecycleFailure("the finding thread is missing")
 
-    def _reply(self, text: str) -> None:
+    def reply(self, text: str) -> None:
         _run(
             "gh",
             "api",
             "--method",
             "POST",
-            f"repos/{DEMO_REPOSITORY}/pulls/{self.pr}/comments/{self.comment_id}/replies",
+            f"repos/{DEMO_REPOSITORY}/pulls/{self.pr}/comments/{self.root['id']}/replies",
             "-f",
             f"body={text}",
         )
 
-    def _body(self) -> str:
-        return str(
-            self._json("gh", "api", f"repos/{DEMO_REPOSITORY}/pulls/comments/{self.comment_id}")[
-                "body"
-            ]
-        )
-
-    def _saved_wontfix(self) -> dict[str, Any]:
-        pages = self._json(
+    def saved_wontfix(self) -> dict[str, Any]:
+        pages = _json(
             "gh",
             "api",
             "--hostname",
@@ -511,124 +500,35 @@ class GitHubLifecycle:
             if note.get("user", {}).get("login") == BOT_LOGIN
         ]
         return saved_wontfix(
-            notes,
-            project_id=DEMO_REPOSITORY,
-            change_id=self.pr,
-            root_note_id=int(self.comment_id or 0),
+            notes, project_id=DEMO_REPOSITORY, change_id=self.pr, root_note_id=self.root["id"]
         )
 
-    # -- assertions --------------------------------------------------------
-    def _run_step(self, run_id: int, *, expect_status: str = "success") -> dict[str, Any]:
-        conclusion = self._complete(run_id)
-        expect(conclusion == "success", f"run {run_id} concluded {conclusion}")
-        post = self._post_result(run_id)
-        expect(
-            post.get("status") == expect_status,
-            f"post status {post.get('status')!r}, expected {expect_status!r}",
+    def merge_state(self) -> tuple[dict[str, str], bool | None]:
+        pr = _json(
+            "gh", "pr", "view", self.pr, "--repo", DEMO_REPOSITORY, "--json",
+            "mergeable,mergeStateStatus",
         )
-        return post
-
-    def _reviewer_results(self, reviews: Path) -> dict[str, Any]:
-        loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
-        for directory in loaded:
-            for path in sorted(reviews.glob(f"*/{directory}/*.json")):
-                try:
-                    artifact = load_json_file(path)
-                except OSError, ValueError:
-                    raise LifecycleFailure(f"unreadable review artifact {path.name}") from None
-                if path.parent.parent.name != f"ai-review-review-{path.stem}":
-                    raise LifecycleFailure(f"{path.name} is in the wrong artifact")
-                if path.stem in loaded[directory]:
-                    raise LifecycleFailure(f"duplicate {directory} artifact for {path.stem}")
-                loaded[directory][path.stem] = artifact
-        return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
-
-    # -- steps -------------------------------------------------------------
-    def step_create(self) -> dict[str, Any]:
-        run_id = self._new_run("pull_request", set())
-        post = self._run_step(run_id)
-        expect(post.get("created_discussions") == 1, "expected one created discussion")
-        roots = self._root_comments()
-        expect(len(roots) == 1, f"expected one finding thread, found {len(roots)}")
-        expect(roots[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
-        self.comment_id = int(roots[0]["id"])
-        reviews = download_run(
-            run_id, self.downloads / str(run_id) / "reviews", "--pattern", "ai-review-review-*"
-        )
-        return {
-            "run_id": run_id,
-            "thread": self.comment_id,
-            "reviewers": self._reviewer_results(reviews),
-            **post_counts(post),
+        observed = {
+            "mergeable": str(pr.get("mergeable", "UNKNOWN")),
+            "mergeStateStatus": str(pr.get("mergeStateStatus", "UNKNOWN")),
         }
+        # GitHub reports BLOCKED until the review's checks propagate, so keep polling.
+        clean = observed == {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+        return observed, True if clean else None
 
-    def step_unchanged(self) -> dict[str, Any]:
-        run_id = self._dispatch("blocking")
-        post = self._run_step(run_id)
-        expect(post.get("created_discussions") == 0, "unchanged rerun created a discussion")
-        expect((post.get("skipped_unchanged") or 0) >= 1, "unchanged rerun skipped nothing")
-        return {"run_id": run_id, **post_counts(post)}
-
-    def step_changed_body(self) -> dict[str, Any]:
-        before = parse_marker(self._body())
-        run_id = self._dispatch("blocking_alt")
-        post = self._run_step(run_id)
-        after_body = self._body()
-        after = parse_marker(after_body)
-        expect(post.get("updated_discussions") == 1, "changed body did not update in place")
-        expect(len(self._root_comments()) == 1, "changed body duplicated the thread")
-        expect(
-            bool(before and after and before["body_hash"] != after["body_hash"]),
-            "body_hash did not change",
-        )
-        expect("\nSupport:" in after_body, "updated body lacks the Support: footer")
-        return {"run_id": run_id, **post_counts(post)}
-
-    def step_wontfix(self) -> dict[str, Any]:
-        self._reply("/ai-review wontfix")
-        run_id = self._dispatch("blocking")
-        post = self._run_step(run_id)
-        # A failed resolution is only a post_result warning, so an expired resolve
-        # token must be caught here rather than by a green run.
-        expect(not post.get("warnings"), "post reported warnings; check the resolve token")
-        expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
-        expect(self._thread_resolved(), "thread is not resolved after wontfix")
-        saved = self._saved_wontfix()
-        persist = self._dispatch("blocking")
-        persisted = self._run_step(persist)
-        expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
-        expect(
-            not post_mutated(persisted),
-            "wontfix rerun mutated the review instead of preserving the disposition",
-        )
-        saved_after = self._saved_wontfix()
-        expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
-        expect(self._thread_resolved(), "wontfix did not persist")
-        return {
-            "run_id": run_id,
-            "persist_run_id": persist,
-            "state": saved,
-            **post_counts(post),
-            "persisted": post_counts(persisted),
-            "persisted_state": saved_after,
-        }
-
-    def step_reopen(self) -> dict[str, Any]:
-        self._reply("/ai-review reopen")
-        run_id = self._dispatch("blocking")
-        post = self._run_step(run_id)
-        expect(not self._thread_resolved(), "thread is still resolved after reopen")
-        expect(len(self._root_comments()) == 1, "reopen created a new thread")
-        return {"run_id": run_id, **post_counts(post)}
-
+    # -- GitHub-only steps -------------------------------------------------
     def step_stale_head(self) -> dict[str, Any]:
-        run_id = self._dispatch("blocking")
-        while not any(
-            job["name"].startswith("review") and job.get("status") != "queued"
-            for job in self._view(run_id, "jobs").get("jobs") or []
-        ):
-            self._sleep(5)
-        known = {int(run["databaseId"]) for run in self._runs("pull_request")}
+        run_id = self.rerun("blocking")
+        poll(
+            lambda: any(
+                job["name"].startswith("review") and job.get("status") != "queued"
+                for job in _view(run_id, "jobs").get("jobs") or []
+            ) or None,
+            deadline=self.deadline,
+            interval=5,
+            timeout_message="the stale-head run's review job never started",
+        )
+        known = self._known("pull_request")
         (self.demo / "docs").mkdir(exist_ok=True)
         (self.demo / "docs/canary-stale-head.txt").write_text(
             "stale-head probe\n", encoding="utf-8"
@@ -640,47 +540,21 @@ class GitHubLifecycle:
             self.branch,
         )
         head = _run("git", "rev-parse", "HEAD", cwd=self.demo)
-        post = self._run_step(run_id, expect_status="stale_head")
+        _, post = self.review(run_id, expect_status="stale_head")
         expect(not post_mutated(post), "stale-head run mutated the review")
-        self._next_head_run = self._new_run("pull_request", known, head_sha=head)
+        self._next_head_run = await_new_run(
+            self.branch, "pull_request", self.deadline, known=known, head_sha=head
+        )
         return {"run_id": run_id, **post_counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
-        run_id = self._next_head_run
-        if run_id is None:
+        if self._next_head_run is None:
             raise LifecycleFailure("the stale-head step did not find the new head's run")
-        post = self._run_step(run_id)
+        run, post = self.review(self._next_head_run)
         expect(post.get("created_discussions") == 0, "new head created a new thread")
-        expect("BLOCKER" in self._body(), "the thread is not blocker severity")
-        for attempt in range(12):
-            if attempt:
-                self._sleep(5)
-            pr = self._json(
-                "gh",
-                "pr",
-                "view",
-                self.pr,
-                "--repo",
-                DEMO_REPOSITORY,
-                "--json",
-                "mergeable,mergeStateStatus",
-            )
-            mergeable = str(pr.get("mergeable", "UNKNOWN"))
-            policy = str(pr.get("mergeStateStatus", "UNKNOWN"))
-            if mergeable == "MERGEABLE" and policy == "CLEAN":
-                break
-        expect(
-            mergeable == "MERGEABLE" and policy == "CLEAN",
-            f"pull request is {mergeable} / {policy}, expected MERGEABLE / CLEAN",
-        )
-        return {
-            "run_id": run_id,
-            "mergeable": mergeable,
-            "mergeStateStatus": policy,
-            **post_counts(post),
-        }
+        return {"run_id": run, **super().step_blocker_does_not_block(), **post_counts(post)}
 
-    def steps(self) -> tuple[tuple[str, Any], ...]:
+    def steps(self) -> tuple[tuple[str, LifecycleStep], ...]:
         return (
             ("create", self.step_create),
             ("unchanged_rerun", self.step_unchanged),

@@ -80,31 +80,33 @@ class ScenarioVariableTests(unittest.TestCase):
         teardown.assert_called_once()
 
 
-class LifecycleStepTests(unittest.TestCase):
-    def _driver(self) -> object:
-        driver = lifecycle.GitLabLifecycle({"mr_iid": "3"}, time.monotonic() + 60)
-        driver.discussion_id = "d1"
-        return driver
+class PipelinePollingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.deadline = time.monotonic() + 60
+
+    def _no_polling(self) -> mock.Mock:
+        return self.enterContext(
+            mock.patch.object(
+                lifecycle.time, "sleep", side_effect=AssertionError("unexpected polling")
+            )
+        )
 
     def test_child_lookup_stops_on_a_settled_bridge_without_a_child(self) -> None:
         for status in ("success", "failed", "canceled", "skipped", "manual"):
             with self.subTest(status=status):
-                driver = self._driver()
+                sleep = self._no_polling()
                 with (
                     mock.patch.object(
                         lifecycle,
                         "_request",
                         return_value=[{"id": 7, "status": status, "downstream_pipeline": None}],
                     ) as request,
-                    mock.patch.object(
-                        driver, "_sleep", side_effect=AssertionError("unexpected polling")
-                    ) as sleep,
                     self.assertRaisesRegex(
-                        lifecycle.LifecycleFailure,
+                        lifecycle.GitLabCanaryError,
                         f"parent pipeline 9 bridge 7 ended {status} without a child pipeline",
                     ),
                 ):
-                    driver._child(9)
+                    lifecycle._child(9, self.deadline)
                 request.assert_called_once_with(
                     "GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/9/bridges"
                 )
@@ -113,21 +115,16 @@ class LifecycleStepTests(unittest.TestCase):
     def test_child_lookup_checks_all_bridges_for_a_child_before_status(self) -> None:
         for status in ("running", "success", "failed", "canceled", "skipped", "manual"):
             with self.subTest(status=status):
-                driver = self._driver()
-                with (
-                    mock.patch.object(
-                        lifecycle,
-                        "_request",
-                        return_value=[
-                            {"id": 7, "status": "failed", "downstream_pipeline": None},
-                            {"id": 8, "status": status, "downstream_pipeline": {"id": 10}},
-                        ],
-                    ) as request,
-                    mock.patch.object(
-                        driver, "_sleep", side_effect=AssertionError("unexpected polling")
-                    ) as sleep,
-                ):
-                    self.assertEqual(driver._child(9), 10)
+                sleep = self._no_polling()
+                with mock.patch.object(
+                    lifecycle,
+                    "_request",
+                    return_value=[
+                        {"id": 7, "status": "failed", "downstream_pipeline": None},
+                        {"id": 8, "status": status, "downstream_pipeline": {"id": 10}},
+                    ],
+                ) as request:
+                    self.assertEqual(lifecycle._child(9, self.deadline), 10)
                 request.assert_called_once()
                 sleep.assert_not_called()
 
@@ -135,22 +132,19 @@ class LifecycleStepTests(unittest.TestCase):
         for status in ("success", "failed", "canceled", "skipped", "manual"):
             for bridges in ([], [{"id": 7, "status": "running", "downstream_pipeline": None}]):
                 with self.subTest(status=status, bridges=bridges):
-                    driver = self._driver()
+                    sleep = self._no_polling()
                     with (
                         mock.patch.object(
                             lifecycle,
                             "_request",
                             side_effect=[bridges, {"status": status}, bridges],
                         ) as request,
-                        mock.patch.object(
-                            driver, "_sleep", side_effect=AssertionError("unexpected polling")
-                        ) as sleep,
                         self.assertRaisesRegex(
-                            lifecycle.LifecycleFailure,
+                            lifecycle.GitLabCanaryError,
                             f"parent pipeline 9 ended {status} without a child pipeline",
                         ),
                     ):
-                        driver._child(9)
+                        lifecycle._child(9, self.deadline)
                     self.assertEqual(
                         request.call_args_list,
                         [
@@ -161,27 +155,21 @@ class LifecycleStepTests(unittest.TestCase):
                     sleep.assert_not_called()
 
     def test_child_lookup_accepts_a_child_appearing_while_parent_settles(self) -> None:
-        driver = self._driver()
-        with (
-            mock.patch.object(
-                lifecycle,
-                "_request",
-                side_effect=[
-                    [],
-                    {"status": "success"},
-                    [{"id": 7, "status": "success", "downstream_pipeline": {"id": 10}}],
-                ],
-            ) as request,
-            mock.patch.object(
-                driver, "_sleep", side_effect=AssertionError("unexpected polling")
-            ) as sleep,
-        ):
-            self.assertEqual(driver._child(9), 10)
+        sleep = self._no_polling()
+        with mock.patch.object(
+            lifecycle,
+            "_request",
+            side_effect=[
+                [],
+                {"status": "success"},
+                [{"id": 7, "status": "success", "downstream_pipeline": {"id": 10}}],
+            ],
+        ) as request:
+            self.assertEqual(lifecycle._child(9, self.deadline), 10)
         self.assertEqual(request.call_count, 3)
         sleep.assert_not_called()
 
     def test_child_lookup_waits_for_pending_bridges_and_children(self) -> None:
-        driver = self._driver()
         with (
             mock.patch.object(
                 lifecycle,
@@ -196,25 +184,67 @@ class LifecycleStepTests(unittest.TestCase):
             ),
             mock.patch.object(lifecycle.time, "sleep") as sleep,
         ):
-            self.assertEqual(driver._child(9), 10)
+            self.assertEqual(lifecycle._child(9, self.deadline), 10)
         self.assertEqual(sleep.call_args_list, [mock.call(10), mock.call(10)])
 
+    def test_child_lookup_tolerates_a_transient_outage(self) -> None:
+        with (
+            mock.patch.object(
+                lifecycle,
+                "_request",
+                side_effect=[
+                    lifecycle.GitLabCanaryError("outage", transient=True),
+                    [{"id": 7, "status": "running", "downstream_pipeline": {"id": 10}}],
+                ],
+            ),
+            mock.patch.object(lifecycle.time, "sleep") as sleep,
+        ):
+            self.assertEqual(lifecycle._child(9, self.deadline), 10)
+        sleep.assert_called_once_with(10)
+
     def test_child_lookup_stops_at_campaign_deadline(self) -> None:
-        driver = self._driver()
         with (
             mock.patch.object(
                 lifecycle, "_request", side_effect=[[], {"status": "running"}] * 2
             ),
             mock.patch.object(
-                lifecycle.time, "monotonic", side_effect=[driver.deadline - 1, driver.deadline]
+                lifecycle.time,
+                "monotonic",
+                side_effect=[self.deadline - 1, self.deadline - 1, self.deadline],
             ),
             mock.patch.object(lifecycle.time, "sleep") as sleep,
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "timed out"),
+            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "started no child pipeline"),
         ):
-            driver._child(9)
-        sleep.assert_called_once_with(10)
+            lifecycle._child(9, self.deadline)
+        sleep.assert_called_once_with(1)
 
-    def test_run_step_waits_for_parent_success_before_reading_post_result(self) -> None:
+
+class LifecycleStepTests(unittest.TestCase):
+    def _driver(self) -> object:
+        driver = lifecycle.GitLabLifecycle({"mr_iid": "3"}, time.monotonic() + 60)
+        driver.root = {"id": 11, "discussion_id": "d1", "author_id": 42}
+        return driver
+
+    def test_rerun_sets_the_scenario_before_starting_a_pipeline(self) -> None:
+        driver = self._driver()
+        calls: list[str] = []
+        with (
+            mock.patch.object(
+                lifecycle, "set_scenario", side_effect=lambda scenario: calls.append(scenario)
+            ),
+            mock.patch.object(
+                lifecycle,
+                "_request",
+                side_effect=lambda method, path, **_: calls.append(f"{method} {path}") or {"id": 9},
+            ),
+        ):
+            self.assertEqual(driver.rerun("blocking_alt"), 9)
+        self.assertEqual(
+            calls,
+            ["blocking_alt", f"POST projects/{lifecycle.DEMO_PROJECT}/merge_requests/3/pipelines"],
+        )
+
+    def test_complete_waits_for_parent_success_before_reading_post_result(self) -> None:
         driver = self._driver()
         post = {"status": "success"}
 
@@ -224,7 +254,7 @@ class LifecycleStepTests(unittest.TestCase):
             return post
 
         with (
-            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(lifecycle, "_child", return_value=10),
             mock.patch.object(
                 lifecycle,
                 "_request",
@@ -237,7 +267,7 @@ class LifecycleStepTests(unittest.TestCase):
             mock.patch.object(lifecycle.time, "sleep") as sleep,
             mock.patch.object(driver, "_post_result", side_effect=post_result),
         ):
-            self.assertEqual(driver._run_step(9), (10, post))
+            self.assertEqual(driver.complete(9), (10, post))
         self.assertEqual(
             request.call_args_list,
             [
@@ -247,12 +277,12 @@ class LifecycleStepTests(unittest.TestCase):
         )
         sleep.assert_called_once_with(15)
 
-    def test_run_step_rejects_unsuccessful_parent(self) -> None:
+    def test_complete_rejects_unsuccessful_parent(self) -> None:
         for status in ("failed", "canceled", "skipped", "manual"):
             with self.subTest(status=status):
                 driver = self._driver()
                 with (
-                    mock.patch.object(driver, "_child", return_value=10),
+                    mock.patch.object(lifecycle, "_child", return_value=10),
                     mock.patch.object(
                         lifecycle,
                         "_request",
@@ -262,30 +292,38 @@ class LifecycleStepTests(unittest.TestCase):
                         driver, "_post_result", return_value={"status": "success"}
                     ) as post_result,
                     self.assertRaisesRegex(
-                        lifecycle.LifecycleFailure, f"parent pipeline 9 ended {status}"
+                        lifecycle.GitLabCanaryError, f"parent pipeline 9 ended {status}"
                     ),
                 ):
-                    driver._run_step(9)
+                    driver.complete(9)
                 post_result.assert_not_called()
 
-    def test_run_step_stops_immediately_on_child_failure(self) -> None:
+    def test_complete_stops_immediately_on_child_failure(self) -> None:
         driver = self._driver()
         with (
-            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(lifecycle, "_child", return_value=10),
             mock.patch.object(lifecycle, "_request", return_value={"status": "failed"}) as request,
             mock.patch.object(
                 driver, "_post_result", return_value={"status": "success"}
             ) as post_result,
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "child pipeline 10 ended failed"),
+            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "child pipeline 10 ended failed"),
         ):
-            driver._run_step(9)
+            driver.complete(9)
         request.assert_called_once_with("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/10")
         post_result.assert_not_called()
 
     def test_parent_polling_stops_at_campaign_deadline(self) -> None:
         driver = self._driver()
+        now = driver.deadline - 20
+        sleeps: list[float] = []
+
+        def sleep(delay: float) -> None:
+            nonlocal now
+            sleeps.append(delay)
+            now += delay
+
         with (
-            mock.patch.object(driver, "_child", return_value=10),
+            mock.patch.object(lifecycle, "_child", return_value=10),
             mock.patch.object(
                 lifecycle,
                 "_request",
@@ -295,24 +333,22 @@ class LifecycleStepTests(unittest.TestCase):
                     {"status": "running"},
                 ],
             ) as request,
-            mock.patch.object(
-                lifecycle.time, "monotonic", side_effect=[driver.deadline - 1, driver.deadline]
-            ),
-            mock.patch.object(lifecycle.time, "sleep") as sleep,
+            mock.patch.object(lifecycle.time, "monotonic", side_effect=lambda: now),
+            mock.patch.object(lifecycle.time, "sleep", side_effect=sleep),
             mock.patch.object(
                 driver, "_post_result", return_value={"status": "success"}
             ) as post_result,
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "timed out"),
+            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "pipeline 9"),
         ):
-            driver._run_step(9)
+            driver.complete(9)
         self.assertEqual(request.call_count, 3)
-        sleep.assert_called_once_with(15)
+        self.assertEqual(sleeps, [15, 5])
         post_result.assert_not_called()
 
     def test_mergeability_waits_for_ci_and_status_propagation(self) -> None:
         driver = self._driver()
         with (
-            mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+            mock.patch.object(driver, "thread", return_value={"body": "BLOCKER"}),
             mock.patch.object(
                 lifecycle,
                 "_request",
@@ -337,13 +373,13 @@ class LifecycleStepTests(unittest.TestCase):
     def test_mergeability_fails_after_bounded_polling(self) -> None:
         driver = self._driver()
         with (
-            mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+            mock.patch.object(driver, "thread", return_value={"body": "BLOCKER"}),
             mock.patch.object(
                 lifecycle, "_request", return_value={"detailed_merge_status": "ci_still_running"}
             ) as request,
             mock.patch.object(lifecycle.time, "sleep") as sleep,
             self.assertRaisesRegex(
-                lifecycle.LifecycleFailure, "merge request is ci_still_running, expected mergeable"
+                lifecycle.LifecycleFailure, "is ci_still_running, expected it to be mergeable"
             ),
         ):
             driver.step_blocker_does_not_block()
@@ -355,33 +391,18 @@ class LifecycleStepTests(unittest.TestCase):
             with self.subTest(status=status):
                 driver = self._driver()
                 with (
-                    mock.patch.object(driver, "_thread", return_value={"body": "BLOCKER"}),
+                    mock.patch.object(driver, "thread", return_value={"body": "BLOCKER"}),
                     mock.patch.object(
                         lifecycle, "_request", return_value={"detailed_merge_status": status}
                     ) as request,
                     mock.patch.object(lifecycle.time, "sleep") as sleep,
                     self.assertRaisesRegex(
-                        lifecycle.LifecycleFailure, f"merge request is {status}, expected mergeable"
+                        lifecycle.LifecycleFailure, f"is {status}, expected it to be mergeable"
                     ),
                 ):
                     driver.step_blocker_does_not_block()
                 request.assert_called_once()
                 sleep.assert_not_called()
-
-    def test_wontfix_fails_on_a_post_warning(self) -> None:
-        driver = self._driver()
-        with (
-            mock.patch.object(lifecycle, "set_scenario"),
-            mock.patch.object(driver, "_reply"),
-            mock.patch.object(driver, "_new_pipeline", return_value=9),
-            mock.patch.object(
-                driver,
-                "_run_step",
-                return_value=(10, {"status": "success", "warnings": ["resolve failed"]}),
-            ),
-            self.assertRaisesRegex(lifecycle.LifecycleFailure, "warnings"),
-        ):
-            driver.step_wontfix()
 
     def test_reviewer_artifacts_are_read_from_review_job_archives(self) -> None:
         driver = self._driver()
@@ -397,7 +418,7 @@ class LifecycleStepTests(unittest.TestCase):
                 lifecycle, "lifecycle_reviewer_results", return_value={"claude": {}}
             ) as shared,
         ):
-            self.assertEqual(driver._reviewer_results(4), {"claude": {}})
+            self.assertEqual(driver.reviewer_results(4), {"claude": {}})
         findings, statuses = shared.call_args.args
         self.assertEqual(set(findings), {"claude"})
         self.assertEqual(set(statuses), {"claude"})
@@ -408,7 +429,7 @@ class LifecycleStepTests(unittest.TestCase):
             mock.patch.object(driver, "_archives", return_value=[]),
             self.assertRaisesRegex(lifecycle.LifecycleFailure, "one findings artifact per"),
         ):
-            driver._reviewer_results(4)
+            driver.reviewer_results(4)
 
     def test_malformed_reviewer_artifacts_produce_a_redacted_failed_summary(self) -> None:
         for directory in ("findings", "status"):
@@ -426,27 +447,16 @@ class LifecycleStepTests(unittest.TestCase):
                         tempfile.TemporaryDirectory() as tmp,
                         zipfile.ZipFile(buffer) as archive,
                         mock.patch.object(driver, "_archives", return_value=[archive]),
-                        mock.patch.object(driver, "_first_pipeline", return_value=9),
+                        mock.patch.object(driver, "first_run", return_value=9),
                         mock.patch.object(
-                            driver, "_run_step", return_value=(10, {"created_discussions": 1})
+                            driver,
+                            "complete",
+                            return_value=(10, {"status": "success", "created_discussions": 1}),
                         ),
                         mock.patch.object(
                             driver,
-                            "_discussions",
-                            return_value=[
-                                {
-                                    "id": "d1",
-                                    "notes": [
-                                        {
-                                            "id": 11,
-                                            "author": {"id": 42},
-                                            "position": {
-                                                "new_path": lifecycle.LIFECYCLE_FIXTURE_PATH
-                                            },
-                                        }
-                                    ],
-                                }
-                            ],
+                            "threads",
+                            return_value=[{"id": 11, "path": lifecycle.LIFECYCLE_FIXTURE_PATH}],
                         ),
                         mock.patch.object(driver, "step_unchanged") as next_step,
                         mock.patch.object(lifecycle, "GitLabLifecycle", return_value=driver),
