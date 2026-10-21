@@ -39,7 +39,6 @@ from candidate_canary_common import (
     post_counts,
     post_mutated,
     read_state,
-    require_real_controls,
     reviewer_ids,
     run_lifecycle_steps,
     saved_wontfix,
@@ -342,10 +341,6 @@ def mock_workflow(workflow: str) -> str:
     )
     if mocks != 2:
         raise GitHubCanaryError(f"canonical workflow has {mocks} mock switches, expected 2")
-    for control in require_real_controls():
-        workflow, count = re.subn(rf'(?m)^( +){control}: "1"$', rf'\1{control}: "0"', workflow)
-        if count != 2:
-            raise GitHubCanaryError(f"canonical workflow sets {control} {count} times, expected 2")
     return workflow
 
 

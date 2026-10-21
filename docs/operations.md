@@ -145,8 +145,9 @@ scenario via `AI_REVIEW_MOCK_SCENARIO`) drives the real posting/state path with
 a canned finding set and no provider calls. It is forbidden in production
 consumer projects; see the
 [`AI_REVIEW_ALLOW_LOCAL_MOCK` entry](configuration.md#template-and-internal-runtime-variables)
-for the allow flag's limits, and production templates keep `AI_REVIEW_REQUIRE_REAL_*=1` as the
-fail-closed guard. These are adapter controls that affect only review/critique
+for the allow flag's limits. Production templates set `AI_REVIEW_LOCAL_MOCK=0`;
+without an explicit mock selection, a missing CLI or credential always fails.
+These runner controls affect only review/critique
 behavior and are not part of the effective-config digest, so set them
 consistently on the review and critique jobs. Config-affecting overrides
 (critique/reviewer/panel) do feed the digest, so scope any of those consistently

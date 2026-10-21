@@ -1,57 +1,21 @@
 # shellcheck shell=sh
-# Scaffolding shared by every reviewer adapter.
-#
-# Sourced, not executed. Each adapter sets REQUIRE_REAL and then sources this
-# file, which is why the mock gate lives here rather than being repeated four
-# times: a new seat that forgets it would silently ignore AI_REVIEW_LOCAL_MOCK.
-#
-# What stays in the individual adapters is what actually differs between the
-# CLIs — their flags, their configuration files, their credential names, and the
-# way each one is told to emit structured output.
+# Workspace and prompt scaffolding sourced by the shell adapters.
 
 # `$0` is the sourcing adapter under POSIX sh, so this resolves relative to the
-# adapter rather than to this file. Only shell builtins are used: adapters are
-# also exercised through `env -i` with a stripped PATH, where dirname is absent,
-# and the mock fallback below has to keep working there.
+# adapter rather than to this file. Only shell builtins are used so missing-CLI
+# checks still run under a stripped PATH.
 AI_REVIEW_ROOT_DIR="$(CDPATH= cd -- "${0%/*}/.." && pwd)"
 
-# Replace this process with the deterministic mock reviewer.
-#
-# The second gate is deliberate. AI_REVIEW_LOCAL_MOCK alone is set by the local
-# harness and could also be set as a GitLab project variable, which would
-# silently mock a production review; requiring AI_REVIEW_ALLOW_LOCAL_MOCK too
-# means a stray project variable fails loudly instead. adapter_process.py
-# enforces the same pair before this script is ever reached.
-run_mock() {
-  if [ "${AI_REVIEW_ALLOW_LOCAL_MOCK:-}" != "true" ]; then
-    echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
-    exit 2
-  fi
-  exec "${PYTHON:-python3}" -c \
-    'from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))' \
-    "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
-}
-
-# Honor an explicit mock request unless this seat demands a real CLI.
-mock_if_requested() {
-  if [ "${REQUIRE_REAL:-}" != "1" ] && [ "${AI_REVIEW_LOCAL_MOCK:-}" = "1" ]; then
-    run_mock
+# Fail with exit 127 when the seat's CLI is not on PATH.
+#   require_cli <command>
+require_cli() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
+    exit 127
   fi
 }
 
-# A precondition for running the real CLI is unmet: fail closed when this seat
-# demands a real run, otherwise fall back to the mock.
-#   require_real_or_mock <message> [exit-code]
-require_real_or_mock() {
-  if [ "${REQUIRE_REAL:-}" = "1" ]; then
-    echo "$1" >&2
-    exit "${2:-2}"
-  fi
-  run_mock
-}
-
-# Reject an empty AI_REVIEW_MODEL. Unlike a missing CLI this is a configuration
-# error on every seat, so it never falls back to the mock.
+# Reject an empty AI_REVIEW_MODEL.
 require_model() {
   if [ -z "${AI_REVIEW_MODEL:-}" ]; then
     echo "AI_REVIEW_MODEL is required for the $AI_REVIEW_REVIEWER reviewer" >&2

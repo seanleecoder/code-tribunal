@@ -775,10 +775,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         expected = ["claude", "codex", "opencode", "cursor"]
         controls = {
             "AI_REVIEW_LOCAL_MOCK": "0",
-            "AI_REVIEW_REQUIRE_REAL_CLAUDE": "1",
-            "AI_REVIEW_REQUIRE_REAL_OPENROUTER": "1",
-            "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
-            "AI_REVIEW_REQUIRE_REAL_CURSOR": "1",
         }
         for job_name, shared_name in (
             ("AI review", ".review_template"),
@@ -1162,14 +1158,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("pattern: ai-review-review-*", critique)
         self.assertIn("pattern: ai-review-critique-*", consensus)
         self.assertIn("needs: [prepare, review, critique]", consensus)
-        self.assertEqual(
-            text.count('AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"'),
-            2,
-        )
-        self.assertEqual(
-            text.count('AI_REVIEW_REQUIRE_REAL_CURSOR: "1"'),
-            2,
-        )
+        self.assertEqual(text.count('AI_REVIEW_LOCAL_MOCK: "0"'), 2)
         # The Cursor credential reaches exactly one matrix entry, and only when
         # Cursor is on the panel. Dropping `matrix.reviewer == 'cursor'` would put
         # the key in every seat's job environment.

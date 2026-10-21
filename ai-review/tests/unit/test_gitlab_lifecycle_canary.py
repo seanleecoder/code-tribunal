@@ -39,8 +39,6 @@ class MockTemplateTests(unittest.TestCase):
             with self.subTest(line=line[:60]):
                 self.assertIn("AI_REVIEW_LOCAL_MOCK=1", line)
                 self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK=true", line)
-                for control in common.require_real_controls():
-                    self.assertIn(f"{control}=0", line)
         # The scenario comes from the temporary project variable, never the template.
         self.assertNotIn(lifecycle.SCENARIO_VARIABLE, template)
 
@@ -48,8 +46,7 @@ class MockTemplateTests(unittest.TestCase):
         source = (ROOT / "ai-review/ci/review.gitlab-ci.yml").read_text(encoding="utf-8")
         template = canary.candidate_template(source, ARGS)
         self.assertNotIn("AI_REVIEW_LOCAL_MOCK=1", template)
-        for control in common.require_real_controls():
-            self.assertIn(f"{control}=1", template)
+        self.assertIn("AI_REVIEW_LOCAL_MOCK=0", template)
 
 
 class ScenarioVariableTests(unittest.TestCase):

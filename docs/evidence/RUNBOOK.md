@@ -71,10 +71,9 @@ The mock toggles, and why they must be scoped to the review and critique jobs, a
 described under [cost controls](../operations.md#cost-controls) and in the
 [variable reference](../configuration.md#template-and-internal-runtime-variables).
 How each demo consumer enables them, and their resting state, is in
-[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md). A manual mock run needs all of
-`AI_REVIEW_LOCAL_MOCK=1`, `AI_REVIEW_ALLOW_LOCAL_MOCK=true`, and every
-`AI_REVIEW_REQUIRE_REAL_*=0`: the demos default the require-real controls to `1`,
-and a seat with its control at `1` ignores the mock and calls its real CLI.
+[`CONSUMER-PROJECTS.md`](CONSUMER-PROJECTS.md). A manual mock run needs both
+`AI_REVIEW_LOCAL_MOCK=1` and `AI_REVIEW_ALLOW_LOCAL_MOCK=true` on review and
+critique. The Python runner selects the mock; real adapters never fall back to it.
 `AI_REVIEW_MOCK_SCENARIO` selects the finding set:
 
 | Scenario | Emitted finding | Drives |
@@ -160,7 +159,7 @@ manifest's `effective_config`. For that run:
 - Leave model and effort overrides missing or blank so the shipped defaults apply,
   except for the route under test. For a model that requires absent effort, see
   [effort inheritance and clearing](../configuration.md#effort-inheritance-and-clearing).
-- Keep `AI_REVIEW_LOCAL_MOCK=0` and every `AI_REVIEW_REQUIRE_REAL_*=1`.
+- Keep `AI_REVIEW_LOCAL_MOCK=0`.
 - Require successful review and critique on every seat, schema-valid structured
   output, `panel_status: full`, and a posted finding.
 - Confirm from the CLI's output or the provider's metadata (for example, the

@@ -29,7 +29,6 @@ class ReviewerDefinition:
     credential_variables: frozenset[str]
     endpoint_kind: EndpointKind
     output_codec: OutputCodec
-    require_real_control: str
     supports_effort: bool
     supported_stages: frozenset[ReviewerStage]
 
@@ -41,7 +40,6 @@ _OPENROUTER_CREDENTIALS = frozenset({"OPENROUTER_API_KEY"})
 def _definition(
     reviewer_id: str,
     endpoint_kind: EndpointKind,
-    require_real_control: str,
     *,
     output_codec: OutputCodec,
     adapter_module: str | None = None,
@@ -55,7 +53,6 @@ def _definition(
         credential_variables=credential_variables,
         endpoint_kind=endpoint_kind,
         output_codec=output_codec,
-        require_real_control=require_real_control,
         supports_effort=supports_effort,
         supported_stages=_ALL_STAGES,
     )
@@ -66,26 +63,22 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
         "claude": _definition(
             "claude",
             "anthropic_openrouter",
-            "AI_REVIEW_REQUIRE_REAL_CLAUDE",
             output_codec="claude_stream_json",
         ),
         "codex": _definition(
             "codex",
             "openrouter",
-            "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
             output_codec="batch_json",
         ),
         "opencode": _definition(
             "opencode",
             "openrouter",
-            "AI_REVIEW_REQUIRE_REAL_OPENCODE",
             output_codec="batch_json",
             adapter_module="ai_review.opencode_client",
         ),
         "cursor": _definition(
             "cursor",
             "cursor_backend",
-            "AI_REVIEW_REQUIRE_REAL_CURSOR",
             output_codec="cursor_json",
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
@@ -141,6 +134,19 @@ def adapter_command(definition: ReviewerDefinition) -> list[str]:
     if definition.adapter_module is not None:
         return [sys.executable, "-P", "-m", definition.adapter_module]
     return [str(resolve_adapter_path(definition))]
+
+
+def mock_adapter_command(reviewer_id: str, stage: str) -> list[str]:
+    """The argv for the deterministic mock standing in for one seat.
+
+    It runs under the same trusted interpreter and ``-P`` rule as a module seat and
+    emits that seat's transport, so the runner parses it like the real seat.
+    """
+    return [
+        sys.executable, "-P", "-c",
+        "from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))",
+        reviewer_id, stage,
+    ]
 
 
 def adapter_python_path() -> str:

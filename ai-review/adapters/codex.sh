@@ -1,13 +1,7 @@
 #!/bin/sh
 set -eu
 
-# The seat's REQUIRE_REAL control name is owned by the reviewer registry
-# (reviewers.py) and is the only one the runner forwards; a second name read here
-# would be dead code.
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_OPENROUTER:-}"
 . "${0%/*}/common.sh"
-
-mock_if_requested
 
 # Model is supplied via AI_REVIEW_MODEL (config default or AI_REVIEW_CODEX_MODEL
 # override) and is not pinned here. The OpenRouter endpoint is fixed but not
@@ -15,14 +9,11 @@ mock_if_requested
 # endpoint_kind, so a non-canonical value cannot reach this adapter.
 require_model
 
-if ! command -v codex >/dev/null 2>&1; then
-  require_real_or_mock \
-    "codex CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" 127
-fi
+require_cli codex
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-  require_real_or_mock \
-    "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set"
+  echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
+  exit 2
 fi
 
 resolve_prompt_file

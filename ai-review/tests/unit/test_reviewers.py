@@ -128,37 +128,27 @@ class ReviewerRegistryTests(unittest.TestCase):
                     copied = set(env) & all_credentials
                     self.assertEqual(copied, set(definition.credential_variables))
 
-    def test_each_adapter_reads_exactly_its_registry_require_real_control(self) -> None:
-        """The registry owns the control name, so the adapter must read that one.
-
-        `_build_adapter_env` forwards only `require_real_control`. A second name
-        read as a fallback is either dead (it never arrives) or a fail-closed
-        guard the runner silently stops delivering, so neither is acceptable.
-        """
-        all_controls = {
-            definition.require_real_control for definition in REVIEWERS.values()
+    def test_real_adapter_environment_excludes_mock_controls(self) -> None:
+        controls = {
+            "AI_REVIEW_LOCAL_MOCK": "1",
+            "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+            "AI_REVIEW_MOCK_SCENARIO": "blocking",
         }
-        for reviewer_id, definition in REVIEWERS.items():
-            with self.subTest(reviewer=reviewer_id):
-                if definition.adapter_module is not None:
-                    # A module seat reads the name from the registry itself, so no
-                    # control name may appear in its source at all.
-                    module = definition.adapter_module.removeprefix("ai_review.")
-                    source = (_AI_REVIEW_ROOT / "src" / "ai_review" / f"{module}.py").read_text(
-                        encoding="utf-8"
-                    )
-                    for control in all_controls:
-                        self.assertNotIn(control, source)
-                    continue
-                adapter = resolve_adapter_path(definition).read_text(encoding="utf-8")
-                assignment = next(
-                    line
-                    for line in adapter.splitlines()
-                    if line.startswith("REQUIRE_REAL=")
+        for selected in (False, True):
+            with self.subTest(mock=selected), mock.patch.dict(os.environ, controls, clear=True):
+                env = _build_adapter_env(
+                    reviewer="codex",
+                    stage="review",
+                    model="model",
+                    input_dir=Path("inputs"),
+                    output_dir=Path("out"),
+                    reviewer_config={},
+                    reviewer_definition=REVIEWERS["codex"],
+                    prompt_tmp=None,
+                    mock=selected,
                 )
-                self.assertIn(definition.require_real_control, assignment)
-                for other in all_controls - {definition.require_real_control}:
-                    self.assertNotIn(other, adapter)
+                forwarded = {"AI_REVIEW_MOCK_SCENARIO": "blocking"} if selected else {}
+                self.assertEqual({k: env[k] for k in set(controls) & set(env)}, forwarded)
 
     def test_endpoint_is_injected_from_the_registry_endpoint_kind(self) -> None:
         """The endpoint is supplied by the runner, never read from the caller.
@@ -241,6 +231,12 @@ class ReviewerAdapterContractTests(unittest.TestCase):
             output_dir = root / "out"
             if bundle:
                 write_adapter_input_bundle(input_dir)
+                (input_dir / "mr.diff").write_text(
+                    "diff --git a/src/reviewed.py b/src/reviewed.py\n"
+                    "--- a/src/reviewed.py\n+++ b/src/reviewed.py\n"
+                    "@@ -0,0 +1 @@\n+print('review me')\n",
+                    encoding="utf-8",
+                )
             else:
                 # A skipped seat reads nothing but the manifest, which still
                 # carries prepare's effective-config binding.
@@ -269,7 +265,7 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                 load_json_file(output_dir / "status" / f"{status_stem}.json"),
             )
 
-    def test_every_seat_reaches_the_mock_from_a_clean_shell(self) -> None:
+    def test_every_seat_runs_mock_with_its_codec_without_a_cli(self) -> None:
         """Each mock emits its seat's transport and the active stage's root.
 
         The roster is authored per seat because the shipped default leaves cursor
@@ -278,7 +274,10 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         """
         for reviewer in sorted(REVIEWER_IDS):
             for stage, identity_field in (("review", "reviewer"), ("critique", "critic")):
-                with self.subTest(reviewer=reviewer, stage=stage):
+                with self.subTest(reviewer=reviewer, stage=stage), mock.patch(
+                    "ai_review.adapter_runner.adapter_command",
+                    side_effect=AssertionError("mock must bypass the real adapter"),
+                ):
                     batch, status = self._run_seat(
                         reviewer,
                         stage,
@@ -286,14 +285,19 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                             "AI_REVIEW_REVIEWERS": _roster_enabling(reviewer),
                             "AI_REVIEW_LOCAL_MOCK": "1",
                             "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
-                            "PYTHON": sys.executable,
-                            "PYTHONPATH": str(_AI_REVIEW_ROOT / "src"),
+                            "AI_REVIEW_MOCK_SCENARIO": "blocking",
+                            "PYTHON": "/no/such/python",
+                            "PYTHONPATH": "/tmp/hostile",
                         },
                         bundle=True,
                     )
                     self.assertEqual(batch["adapter_status"], "success")
                     self.assertEqual(batch[identity_field], reviewer)
                     self.assertEqual(status["status"], "success")
+                    if stage == "review":
+                        self.assertEqual(
+                            batch["findings"][0]["title"], "Deterministic mock blocking finding"
+                        )
 
     def test_runner_uses_the_registry_codec_instead_of_guessing_from_stdout(self) -> None:
         result = subprocess.CompletedProcess(

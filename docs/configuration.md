@@ -385,13 +385,9 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_CONFIG` | Active configuration path. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
-| `AI_REVIEW_LOCAL_MOCK` | Test/preflight mock selector; production templates force `0`. Never set as a consumer project/pipeline variable. |
-| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required for every mock fallback, including a missing CLI/credential. Image preflight and the operator's mock lifecycle runs only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
-| `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); ignored by the real reviewer CLIs and by production templates. |
-| `AI_REVIEW_REQUIRE_REAL_OPENROUTER` | Require the real Codex CLI; prevents a missing prerequisite from falling back to mock behavior. This is the Codex seat's control name. |
-| `AI_REVIEW_REQUIRE_REAL_CLAUDE` | Require the real Claude CLI. |
-| `AI_REVIEW_REQUIRE_REAL_OPENCODE` | Require the real OpenCode CLI. |
-| `AI_REVIEW_REQUIRE_REAL_CURSOR` | Require the real Cursor CLI. |
+| `AI_REVIEW_LOCAL_MOCK` | Selects the deterministic mock in the Python runner only when `1`, with the companion allow flag below. Production templates set `0`; never set as a consumer project/pipeline variable. |
+| `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required alongside `AI_REVIEW_LOCAL_MOCK=1`. A missing CLI or credential always fails when mock mode is not selected. Image preflight and the operator's mock lifecycle runs only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
+| `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); forwarded only to the selected mock subprocess. |
 
 | `AI_REVIEW_GITHUB_PR_NUMBER` | Immutable selected pull-request number passed to prepare. |
 | `AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA` | Immutable selected pull-request head passed to prepare. |
@@ -408,9 +404,8 @@ override them in merge-request-controlled configuration.
 | `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory, set by the OpenCode client for its server. |
 | `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON, set by the OpenCode client for its server. |
 
-Each seat has exactly one control name, declared in the trusted reviewer registry,
-and the runner forwards only that name to that seat's adapter. Setting any other
-`AI_REVIEW_REQUIRE_REAL_*` name has no effect on a seat that does not declare it.
+The runner owns mock selection and its allow guard. Real adapters receive no mock
+controls and always require their CLI and credential.
 
 Build-only names, package-name variables, and
 image tags belong to the release workflows, not the runtime configuration

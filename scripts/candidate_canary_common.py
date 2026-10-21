@@ -117,12 +117,6 @@ def effort_variables() -> tuple[str, ...]:
     )
 
 
-def require_real_controls() -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(definition.require_real_control for definition in REVIEWERS.values())
-    )
-
-
 def canary_stage_environment(*, mock: bool = False) -> str:
     """Process environment prefixed to every GitLab stage command.
 
@@ -132,10 +126,11 @@ def canary_stage_environment(*, mock: bool = False) -> str:
     """
     unsets = " ".join(f"-u {name}" for name in effort_variables())
     roster = ",".join(reviewer_ids())
-    required = "0" if mock else "1"
-    controls = " ".join(f"{name}={required}" for name in require_real_controls())
-    mock_switches = " AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true" if mock else ""
-    return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {controls}{mock_switches}"
+    mock_switches = (
+        "AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true"
+        if mock else "AI_REVIEW_LOCAL_MOCK=0"
+    )
+    return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {mock_switches}"
 
 
 def configure_collect(parser: argparse.ArgumentParser) -> None:

@@ -2,7 +2,7 @@
 
 The other half of the _AdapterResult seam: everything about *spawning* a
 reviewer adapter — the runtime-env allowlists, the provider endpoint pinning,
-process-group teardown on timeout, and the local-mock authorization gate.
+and process-group teardown on timeout.
 Parsing what comes back lives in adapter_output; artifact writing in
 adapter_artifacts.
 """
@@ -38,18 +38,6 @@ _ADAPTER_RUNTIME_ENV = {
 }
 
 
-_AI_REVIEW_COMMON_ADAPTER_CONTROLS = {
-    "AI_REVIEW_LOCAL_MOCK",
-    # Exact lowercase "true" is required alongside AI_REVIEW_LOCAL_MOCK=1 so a
-    # GitLab project/pipeline variable cannot silently enable the mock path in
-    # production templates (YAML job defaults lose to higher-precedence CI vars).
-    "AI_REVIEW_ALLOW_LOCAL_MOCK",
-    # Selects a deterministic mock-reviewer scenario when the mock path runs
-    # (default|blocking|advisory|none). Ignored by the real reviewer CLIs.
-    "AI_REVIEW_MOCK_SCENARIO",
-}
-
-
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
@@ -73,17 +61,9 @@ def _build_adapter_env(
     reviewer_config: dict[str, Any],
     prompt_tmp: Path | None,
     reviewer_definition: ReviewerDefinition,
+    mock: bool = False,
 ) -> dict[str, str]:
     env = {key: value for key in _ADAPTER_RUNTIME_ENV if (value := os.environ.get(key)) is not None}
-    env.update(
-        {
-            key: value
-            for key in _AI_REVIEW_COMMON_ADAPTER_CONTROLS
-            if (value := os.environ.get(key)) is not None
-        }
-    )
-    if (control := os.environ.get(reviewer_definition.require_real_control)) is not None:
-        env[reviewer_definition.require_real_control] = control
     # The provider endpoint is an image-owned constant, not configuration: each
     # endpoint_kind has exactly one accepted host, so the runner supplies it
     # rather than forwarding an ambient value and then rejecting everything but
@@ -107,7 +87,7 @@ def _build_adapter_env(
         if (credential := os.environ.get(credential_variable)) is not None:
             env[credential_variable] = credential
     # Every seat imports from the package the runner itself was loaded from (the
-    # module seats, and the mock and probes the shell seats run), never from an
+    # module seats, the mock, and the probes the shell seats run), never from an
     # ambient PYTHONPATH entry that could shadow it.
     env["PYTHONPATH"] = adapter_python_path()
 
@@ -125,6 +105,9 @@ def _build_adapter_env(
         env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
+    # Only the runner-selected mock reads its scenario; real seats never see it.
+    if mock and (scenario := os.environ.get("AI_REVIEW_MOCK_SCENARIO")) is not None:
+        env["AI_REVIEW_MOCK_SCENARIO"] = scenario
     return env
 
 
@@ -252,34 +235,3 @@ def _effective_adapter_timeout_seconds(
     """Return the stage budget after the runner's five-second reserve."""
     configured_timeout = resolve_reviewer_timeout_seconds(reviewer_config, stage)
     return max(1, configured_timeout - 5)
-
-
-MOCK_ALLOW_REFUSAL = (
-    "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true"
-)
-
-
-def local_mock_allowed() -> bool:
-    """Whether the exact companion allow flag for every mock path is set."""
-    return os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") == "true"
-
-
-def _local_mock_unauthorized() -> str | None:
-    """Return an error when mock mode is requested without an explicit allow.
-
-    Production templates set ``AI_REVIEW_LOCAL_MOCK=0``. On GitLab, project or
-    pipeline variables can override that YAML default. Require the exact
-    companion allow flag so mock findings cannot silently replace real
-    reviewers in a consumer project.
-    """
-    if os.environ.get("AI_REVIEW_LOCAL_MOCK") != "1" or local_mock_allowed():
-        return None
-    return (
-        "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
-        "(forbidden in production; image preflight and Chain B evidence only)"
-    )
-
-
-def _adapter_exit_is_mock_allow_refusal(stderr: str) -> bool:
-    """Adapters refuse every mock path without the allow flag."""
-    return MOCK_ALLOW_REFUSAL in stderr

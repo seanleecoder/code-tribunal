@@ -1,20 +1,15 @@
 #!/bin/sh
 set -eu
 
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CURSOR:-}"
 . "${0%/*}/common.sh"
 
-mock_if_requested
 require_model
 
-if ! command -v cursor-agent >/dev/null 2>&1; then
-  require_real_or_mock \
-    "cursor-agent CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" 127
-fi
+require_cli cursor-agent
 
 if [ -z "${CURSOR_API_KEY:-}" ]; then
-  require_real_or_mock \
-    "CURSOR_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set"
+  echo "CURSOR_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2
+  exit 2
 fi
 
 resolve_prompt_file

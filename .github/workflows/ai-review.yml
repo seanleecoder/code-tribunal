@@ -156,10 +156,6 @@ jobs:
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".
           CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && contains(vars.AI_REVIEW_REVIEWERS, 'cursor') && secrets.CURSOR_API_KEY || '' }}
-          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
-          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
-          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -207,10 +203,6 @@ jobs:
           # The roster check is a substring match because Actions expressions have
           # no split(); no other reviewer name contains "cursor".
           CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && contains(vars.AI_REVIEW_REVIEWERS, 'cursor') && secrets.CURSOR_API_KEY || '' }}
-          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
-          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
-          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
-          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
         run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

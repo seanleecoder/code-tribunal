@@ -382,8 +382,6 @@ class MockWorkflowTests(unittest.TestCase):
                 self.assertEqual(
                     env["AI_REVIEW_MOCK_SCENARIO"], "${{ inputs.mock_scenario || 'blocking' }}"
                 )
-                for control in lifecycle.require_real_controls():
-                    self.assertEqual(env[control], "0")
 
     def test_copy_keeps_the_candidate_pins(self) -> None:
         text = _mock_copy()
