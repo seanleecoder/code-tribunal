@@ -13,6 +13,8 @@ versioning.
   runtime stage (N05). Defaults are centralized, and prepare no longer loads the
   configuration twice. The public YAML options and environment-drift checks
   remain; omitted defaults are now explicit in the manifest's effective config.
+  Invalid integer settings report configuration errors naming the full setting
+  path, including limits, state retention, and reviewer finding caps.
 - Reviewer workspace, isolated-home, environment, CLI argument and schema setup
   is declared in the trusted registry and shared in Python (N08). Claude now has
   an isolated home, and its image-build probes use the runtime invocation. The

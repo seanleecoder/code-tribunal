@@ -572,6 +572,13 @@ def _validate_state(config: dict[str, Any]) -> None:
     state.setdefault("fail_closed_on_load_error", StateConfig.fail_closed_on_load_error)
 
 
+def _resolve_integer(value: Any, path: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ConfigError(f"{path} must resolve to an integer") from exc
+
+
 def validate_config(config: dict[str, Any]) -> ReviewConfig:
     """Validate the document boundary and resolve immutable runtime settings."""
     declared_version = config.get("schema_version")
@@ -705,7 +712,11 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     state = config["state"]
     retention = state.get("retention", {})
     resolved_retention: dict[str, Any] = {
-        key: bool(value) if key in {"keep_open", "keep_wontfix"} else int(value)
+        key: (
+            bool(value)
+            if key in {"keep_open", "keep_wontfix"}
+            else _resolve_integer(value, f"state.retention.{key}")
+        )
         for key, value in retention.items()
     }
     posting = config["posting"]
@@ -719,7 +730,9 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
                     "critique_timeout_seconds", DEFAULT_CRITIQUE_TIMEOUT_SECONDS
                 ),
                 max_findings=(
-                    int(reviewer["max_findings"]) if reviewer["max_findings"] is not None else None
+                    _resolve_integer(reviewer["max_findings"], f"reviewers.{name}.max_findings")
+                    if reviewer["max_findings"] is not None
+                    else None
                 ),
                 effort=reviewer.get("effort"),
             )
@@ -740,6 +753,8 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
             **{key: bool(value) for key, value in state.items() if key != "retention"},
             retention=StateRetention(**resolved_retention),
         ),
-        limits=LimitsConfig(**{key: int(value) for key, value in limits.items()}),
+        limits=LimitsConfig(
+            **{key: _resolve_integer(value, f"limits.{key}") for key, value in limits.items()}
+        ),
         security=SecurityConfig(**{key: bool(value) for key, value in security.items()}),
     )

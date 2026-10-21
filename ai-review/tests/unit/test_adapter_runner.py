@@ -18,7 +18,7 @@ from ai_review.adapter_process import (
     _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig
+from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig, load_config
 from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
@@ -766,6 +766,26 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
+
+    def test_invalid_integer_setting_reports_config_error_before_adapter_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            sentinel = Path(tmp) / "adapter-invoked"
+            _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
+            self._set_env(paths, config_path)
+            bind_manifest_to_config(paths["input_dir"], config_path)
+            document = load_config(config_path).to_dict()
+            document["limits"]["max_fyi_findings"] = None
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            self.assertFalse(sentinel.exists())
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["error_class"], "ConfigError")
+            self.assertIn("limits.max_fyi_findings", status["error_message_redacted"])
 
     def test_trailing_newline_model_is_rejected_before_adapter_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -30,6 +30,40 @@ _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
 
 class FrozenConfigTests(unittest.TestCase):
+    def test_integer_resolution_failures_name_the_setting(self) -> None:
+        for path in (
+            ("limits", "max_fyi_findings"),
+            ("state", "retention", "keep_resolved_records"),
+            ("state", "retention", "max_state_bytes"),
+            ("reviewers", "codex", "max_findings"),
+        ):
+            for value in (None, "invalid", [], {}, float("inf"), float("nan")):
+                if path[-1] == "max_findings" and value is None:
+                    continue  # Null keeps the existing uncapped-reviewer setting.
+                with self.subTest(path=path, value=value):
+                    document = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+                    section = document
+                    for key in path[:-1]:
+                        section = section[key]
+                    section[path[-1]] = value
+                    with self.assertRaises(ConfigError) as caught:
+                        validate_config(document)
+                    self.assertIn(".".join(path), str(caught.exception))
+
+    def test_integer_resolution_keeps_valid_coercions_and_uncapped_findings(self) -> None:
+        document = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+        document["limits"]["max_fyi_findings"] = "12"
+        document["state"]["retention"]["max_records"] = "34"
+        document["reviewers"]["codex"]["max_findings"] = "56"
+        document["reviewers"]["claude"]["max_findings"] = None
+
+        config = validate_config(document)
+
+        self.assertEqual(config.limits.max_fyi_findings, 12)
+        self.assertEqual(config.state.retention.max_records, 34)
+        self.assertEqual(config.reviewers["codex"].max_findings, 56)
+        self.assertIsNone(config.reviewers["claude"].max_findings)
+
     def test_loaded_settings_are_deeply_immutable(self) -> None:
         config = load_config(_REPO_CONFIG)
         for settings, key, value in (
