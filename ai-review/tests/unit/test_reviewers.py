@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -229,37 +231,53 @@ class ReviewerAdapterContractTests(unittest.TestCase):
             )
 
     def test_every_seat_reaches_the_mock_from_a_clean_shell(self) -> None:
-        """Per seat, not per stage: the endpoint and credential are seat fields.
-
-        Nothing about reaching the mock depends on the stage -- the stage only
-        reaches `adapter_process.py` as AI_REVIEW_STAGE and the timeout budget -- but
-        it does depend on the seat's registry entry. A seat that required a
-        caller-supplied endpoint or credential would fail here while a
-        representative-seat case stayed green, which is exactly how a claude-only
-        endpoint requirement once shipped: the reviewer-image preflight and
-        `make review-local` both run from a clean shell with no endpoint exported.
+        """Each mock emits its seat's transport and the active stage's root.
 
         The roster is authored per seat because the shipped default leaves cursor
-        off, and `config.py` enforces a floor of three enabled seats.
+        off, and config enforces a floor of three enabled seats. Both stages must
+        work through the selected codec and their shared normalization path.
         """
         for reviewer in sorted(REVIEWER_IDS):
-            with self.subTest(reviewer=reviewer):
-                batch, status = self._run_seat(
-                    reviewer,
-                    "review",
-                    env={
-                        "AI_REVIEW_REVIEWERS": _roster_enabling(reviewer),
-                        "AI_REVIEW_LOCAL_MOCK": "1",
-                        "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
-                        "PYTHON": sys.executable,
-                        "PYTHONPATH": str(_AI_REVIEW_ROOT / "src"),
-                    },
-                    bundle=True,
-                )
+            for stage, identity_field in (("review", "reviewer"), ("critique", "critic")):
+                with self.subTest(reviewer=reviewer, stage=stage):
+                    batch, status = self._run_seat(
+                        reviewer,
+                        stage,
+                        env={
+                            "AI_REVIEW_REVIEWERS": _roster_enabling(reviewer),
+                            "AI_REVIEW_LOCAL_MOCK": "1",
+                            "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+                            "PYTHON": sys.executable,
+                            "PYTHONPATH": str(_AI_REVIEW_ROOT / "src"),
+                        },
+                        bundle=True,
+                    )
+                    self.assertEqual(batch["adapter_status"], "success")
+                    self.assertEqual(batch[identity_field], reviewer)
+                    self.assertEqual(status["status"], "success")
 
-                self.assertEqual(batch["adapter_status"], "success")
-                self.assertEqual(batch["reviewer"], reviewer)
-                self.assertEqual(status["status"], "success")
+    def test_runner_uses_the_registry_codec_instead_of_guessing_from_stdout(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=json.dumps({"type": "result", "result": '{"findings":[]}'}), stderr="",
+        )
+        for codec, expected_status, expected_exit in (
+            ("batch_json", "schema_error", _EXIT_ERROR),
+            ("cursor_json", "success", 0),
+        ):
+            definition = replace(REVIEWERS["codex"], output_codec=codec)
+            with (
+                self.subTest(codec=codec),
+                mock.patch(
+                    "ai_review.adapter_runner.get_reviewer_definition", return_value=definition
+                ),
+                mock.patch("ai_review.adapter_runner._run_adapter_process", return_value=result),
+            ):
+                batch, status = self._run_seat(
+                    "codex", "review", env={}, bundle=True, expected_exit=expected_exit,
+                )
+            self.assertEqual(status["status"], expected_status)
+            self.assertEqual(batch["adapter_status"], expected_status)
 
     def test_disabled_seat_writes_a_skipped_artifact_without_spawning_a_cli(self) -> None:
         """Per seat AND per stage: both axes are load-bearing here.

@@ -27,7 +27,9 @@ run_mock() {
     echo "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true" >&2
     exit 2
   fi
-  exec "${PYTHON:-python3}" -m ai_review.mock_reviewer "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
+  exec "${PYTHON:-python3}" -c \
+    'from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))' \
+    "$AI_REVIEW_REVIEWER" "$AI_REVIEW_STAGE"
 }
 
 # Honor an explicit mock request unless this seat demands a real CLI.

@@ -53,8 +53,12 @@ from the package at all.
 | `adapter_process.py` | Adapter subprocess lifecycle and environment | no |
 | `adapter_artifacts.py` | Status and debug artifact writing | no |
 
-Two rules are worth stating because breaking either is silent:
+These rules are worth stating because breaking them is silent:
 
+- The reviewer registry selects the output codec for the pinned adapter
+  invocation. `_load_adapter_json` decodes that transport and passes the explicit
+  stage to the shared root normalizer; no decoder guesses another reviewer's
+  transport from stdout.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`

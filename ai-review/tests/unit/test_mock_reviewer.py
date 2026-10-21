@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from ai_review.mock_reviewer import _find_indexing_candidate, review_batch
+from ai_review.mock_reviewer import _find_indexing_candidate, cli, review_batch
 from ai_review.schema import finalize_finding_batch
 
 
@@ -23,6 +26,16 @@ def _diff(last_line: str) -> str:
 
 
 class MockReviewerTests(unittest.TestCase):
+    def test_documented_cli_keeps_emitting_a_batch(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", {"AI_REVIEW_INPUT_DIR": tmp}),
+            contextlib.redirect_stdout(output := io.StringIO()),
+        ):
+            (Path(tmp) / "mr.diff").write_text("", encoding="utf-8")
+            self.assertEqual(cli(["claude", "review"]), 0)
+        self.assertEqual(json.loads(output.getvalue()), {"findings": []})
+
     def test_finds_indexing_candidate(self) -> None:
         # Confirms the walker still works after being switched to anchors'
         # shared unified-diff parser.
