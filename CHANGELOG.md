@@ -7,6 +7,13 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Reviewer output parsing now uses the codec declared in the trusted reviewer
+  registry (N06). The retired OpenCode CLI stream formats and stage inference
+  are removed. Current answer-text fallbacks and versioned batch artifacts are
+  unchanged; adapter mocks emit the selected reviewer's transport format.
+
 ## [2.1.0] - 2026-10-19
 
 ### Added

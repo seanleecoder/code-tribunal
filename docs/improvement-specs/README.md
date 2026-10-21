@@ -47,9 +47,10 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S10, S17, N01, N09, N12, N13, N15, N16, N18, N19, N20.
-- **Partial:** S11 (the noise half, through SPEC-67), S12 (the test-only
-  TypedDicts, through N16), S14 (the legacy state decoder, deleted on
+- **Done:** S01, S02, S10, S17, N01, N06, N09, N12, N13, N15, N16, N18, N19, N20.
+- **Partial:** S08 (per-seat codecs, through N06), S11 (the noise half, through
+  SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
+  decoder, deleted on
   2026-10-18), S18, S19.
 - **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
 - **Decided on 2026-10-13 and 2026-10-14:**
@@ -134,7 +135,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 6. Done: the canary scripts are two platform modules behind one CLI (N18,
    [#220](https://github.com/seanleecoder/code-tribunal/pull/220) and
    [#222](https://github.com/seanleecoder/code-tribunal/pull/222)).
-7. Per-seat output codecs (N06) and OpenCode launched from Python (N07).
+7. Done: per-seat output codecs (N06). Next: launch OpenCode from Python (N07).
 8. The S03 mock switch, then seat setup in the registry (N08).
 9. The typed configuration object (N05), before the S04 knob removal.
 10. The `input_bundle` revision cleanup (N17).

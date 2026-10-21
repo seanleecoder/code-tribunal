@@ -10,6 +10,7 @@ from typing import Literal
 
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
+OutputCodec = Literal["batch_json", "claude_stream_json", "cursor_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -22,6 +23,7 @@ class ReviewerDefinition:
     adapter_path: str
     credential_variables: frozenset[str]
     endpoint_kind: EndpointKind
+    output_codec: OutputCodec
     require_real_control: str
     supports_effort: bool
     supported_stages: frozenset[ReviewerStage]
@@ -36,6 +38,7 @@ def _definition(
     endpoint_kind: EndpointKind,
     require_real_control: str,
     *,
+    output_codec: OutputCodec,
     supports_effort: bool = True,
     credential_variables: frozenset[str] = _OPENROUTER_CREDENTIALS,
 ) -> ReviewerDefinition:
@@ -44,26 +47,38 @@ def _definition(
         adapter_path=f"adapters/{reviewer_id}.sh",
         credential_variables=credential_variables,
         endpoint_kind=endpoint_kind,
+        output_codec=output_codec,
         require_real_control=require_real_control,
         supports_effort=supports_effort,
         supported_stages=_ALL_STAGES,
     )
 
+
 REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
     {
         "claude": _definition(
-            "claude", "anthropic_openrouter", "AI_REVIEW_REQUIRE_REAL_CLAUDE"
+            "claude",
+            "anthropic_openrouter",
+            "AI_REVIEW_REQUIRE_REAL_CLAUDE",
+            output_codec="claude_stream_json",
         ),
         "codex": _definition(
-            "codex", "openrouter", "AI_REVIEW_REQUIRE_REAL_OPENROUTER"
+            "codex",
+            "openrouter",
+            "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
+            output_codec="batch_json",
         ),
         "opencode": _definition(
-            "opencode", "openrouter", "AI_REVIEW_REQUIRE_REAL_OPENCODE"
+            "opencode",
+            "openrouter",
+            "AI_REVIEW_REQUIRE_REAL_OPENCODE",
+            output_codec="batch_json",
         ),
         "cursor": _definition(
             "cursor",
             "cursor_backend",
             "AI_REVIEW_REQUIRE_REAL_CURSOR",
+            output_codec="cursor_json",
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
         ),

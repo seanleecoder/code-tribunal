@@ -229,7 +229,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
 
         try:
-            raw = _load_adapter_json(result.stdout, stage=stage)
+            raw = _load_adapter_json(
+                result.stdout, codec=reviewer_definition.output_codec, stage=stage
+            )
             if stage == "review":
                 if not isinstance(raw.get("findings"), list):
                     raise SchemaValidationError("adapter output findings must be an array")

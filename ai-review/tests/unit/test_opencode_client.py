@@ -20,14 +20,17 @@ class OpenCodeClientTests(unittest.TestCase):
             opencode_client.OpenCodeClientError,
             "no structured output or text",
         ):
-            opencode_client._normalize_message({"info": {"role": "assistant"}, "parts": []})
+            opencode_client._normalize_message(
+                {"info": {"role": "assistant"}, "parts": []}, stage="review"
+            )
 
     def test_structured_output_wins_over_conflicting_text(self) -> None:
         batch, used_structured = opencode_client._normalize_message(
             {
                 "info": {"role": "assistant", "structured": {"findings": []}},
                 "parts": [{"type": "text", "text": "not reviewer JSON"}],
-            }
+            },
+            stage="review",
         )
 
         self.assertEqual(batch, {"findings": []})
@@ -39,7 +42,8 @@ class OpenCodeClientTests(unittest.TestCase):
             "provider/API error",
         ):
             opencode_client._normalize_message(
-                {"info": {"role": "assistant", "error": {"name": "rate_limit_exceeded"}}}
+                {"info": {"role": "assistant", "error": {"name": "rate_limit_exceeded"}}},
+                stage="review",
             )
 
     def test_reasoning_only_message_is_a_client_error(self) -> None:
@@ -56,7 +60,8 @@ class OpenCodeClientTests(unittest.TestCase):
                     "parts": [
                         {"type": "reasoning", "text": '{"findings":[{"title":"scratchpad"}]}'}
                     ],
-                }
+                },
+                stage="review",
             )
 
     def test_complete_json_text_is_accepted_as_compatibility_fallback(self) -> None:
@@ -64,7 +69,8 @@ class OpenCodeClientTests(unittest.TestCase):
             {
                 "info": {"role": "assistant"},
                 "parts": [{"type": "text", "text": '```json\n{"findings":[]}\n```'}],
-            }
+            },
+            stage="review",
         )
 
         self.assertEqual(batch, {"findings": []})
@@ -95,9 +101,12 @@ class OpenCodeClientTests(unittest.TestCase):
             ("nested in malformed outer", '{"outer":{"findings":[]} BROKEN'),
             ("malformed object before", '{"a": nope} {"findings":[]}'),
         ):
-            with self.subTest(label), self.assertRaisesRegex(
-                opencode_client.OpenCodeClientError,
-                "not one complete reviewer JSON root",
+            with (
+                self.subTest(label),
+                self.assertRaisesRegex(
+                    opencode_client.OpenCodeClientError,
+                    "not one complete reviewer JSON root",
+                ),
             ):
                 opencode_client._normalize_message(
                     {
@@ -106,6 +115,22 @@ class OpenCodeClientTests(unittest.TestCase):
                     },
                     stage="review",
                 )
+
+    def test_recorded_answer_parts_follow_the_current_http_transport(self) -> None:
+        fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
+        prefix = load_json_file(fixtures / "review-prefix.json")
+        batch, structured = opencode_client._normalize_message(prefix, stage="review")
+        self.assertEqual(batch, {"findings": []})
+        self.assertFalse(structured)
+        for name, message in (
+            ("review-malformed-outer.json", "not one complete reviewer JSON root"),
+            ("review-reasoning-only.json", "no structured output or text"),
+        ):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(opencode_client.OpenCodeClientError, message),
+            ):
+                opencode_client._normalize_message(load_json_file(fixtures / name), stage="review")
 
     def test_run_posts_stage_schema_and_normalizes_info_structured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,9 +203,7 @@ class OpenCodeClientTests(unittest.TestCase):
             )
             self.assertEqual(message_body["format"]["type"], "json_schema")
             expected_schema = load_json_file(
-                Path(__file__).resolve().parents[2]
-                / "schemas"
-                / "raw_finding_batch.schema.json"
+                Path(__file__).resolve().parents[2] / "schemas" / "raw_finding_batch.schema.json"
             )
             assert isinstance(expected_schema, dict)
             expected_schema.pop("$schema")
@@ -194,7 +217,8 @@ class OpenCodeClientTests(unittest.TestCase):
             printed = json.loads(output.getvalue())
             self.assertEqual(printed, {"findings": []})
             self.assertEqual(
-                _load_adapter_json(output.getvalue(), stage="review"), {"findings": []}
+                _load_adapter_json(output.getvalue(), codec="batch_json", stage="review"),
+                {"findings": []},
             )
             process.terminate.assert_called_once_with()
             process.wait.assert_called_once()

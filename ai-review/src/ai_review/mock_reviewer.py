@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import parse_unified_diff, resolve_side_paths
+from .reviewers import get_reviewer_definition
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting and state behavior with
@@ -208,7 +209,7 @@ def critique_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
     }
 
 
-def cli(argv: list[str] | None = None) -> int:
+def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reviewer")
     parser.add_argument("stage", choices=["review", "critique"])
@@ -218,6 +219,14 @@ def cli(argv: list[str] | None = None) -> int:
         batch = review_batch(args.reviewer, input_dir)
     else:
         batch = critique_batch(args.reviewer, input_dir)
+    # The documented mock CLI emits a batch. Shell adapters emit the same
+    # transport as their real CLI so the runner needs no mock parsing path.
+    if adapter_output:
+        codec = get_reviewer_definition(args.reviewer).output_codec
+        if codec == "claude_stream_json":
+            batch = {"type": "result", "is_error": False, "structured_output": batch}
+        elif codec == "cursor_json":
+            batch = {"type": "result", "is_error": False, "result": json.dumps(batch)}
     json.dump(batch, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0

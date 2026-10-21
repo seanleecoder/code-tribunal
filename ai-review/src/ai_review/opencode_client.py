@@ -318,7 +318,7 @@ def _text_from_parts(parts: Any) -> list[str]:
 
 
 def _normalize_message(
-    response: dict[str, Any], *, stage: str | None = None
+    response: dict[str, Any], *, stage: str
 ) -> tuple[dict[str, Any] | list[Any], bool]:
     """Return the reviewer batch and whether structured output produced it.
 
@@ -451,7 +451,7 @@ def run() -> int:
         raise OpenCodeClientError("opencode client produced neither a result nor a failure")
     batch, used_structured = result
 
-    # Mirror adapter_output._log_structured_output_usage's two wordings so job
+    # Mirror the Claude codec's two structured-output wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the
     # schema transport from the text fallback.
     stage_label = stage or "review"

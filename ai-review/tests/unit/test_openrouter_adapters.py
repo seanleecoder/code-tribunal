@@ -536,9 +536,9 @@ PY
                 # Emit stage-appropriate output so critique runs exercise the
                 # critique parse/finalize path, not a finding-shaped fallback.
                 'if [ "$AI_REVIEW_STAGE" = critique ]; then\n'
-                "  printf '{\"critiques\":[]}'\n"
+                "  printf '{\"type\":\"result\",\"structured_output\":{\"critiques\":[]}}'\n"
                 "else\n"
-                "  printf '{\"findings\":[]}'\n"
+                "  printf '{\"type\":\"result\",\"structured_output\":{\"findings\":[]}}'\n"
                 "fi\n",
                 encoding="utf-8",
             )
@@ -546,7 +546,7 @@ PY
             return
         if name == "opencode":
             cli.write_text(
-                "#!/usr/bin/env python3\n"
+                f"#!{sys.executable}\n"
                 "import json\n"
                 "import os\n"
                 "import sys\n"
@@ -1466,7 +1466,9 @@ PY
                 capture_output=True,
             )
 
-            self.assertEqual(completed.stdout, '{"findings":[]}')
+            self.assertEqual(
+                json.loads(completed.stdout)["structured_output"], {"findings": []}
+            )
             cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
             self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
 

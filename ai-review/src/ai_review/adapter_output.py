@@ -1,8 +1,9 @@
 """Parsing and normalizing reviewer output.
 
-Locates the one JSON payload in a reviewer's answer text, then normalizes the
-adapter root. Shared by every adapter, and by `opencode_client` for its text
-fallback, so all reviewer output is admitted under one rule. Keeping this in its
+Extracts the answer from the registry-selected transport, then normalizes the
+adapter root for an explicit stage. The answer-text extractor is also shared
+with `opencode_client` for its text fallback, so all reviewer output is admitted
+under one rule. Keeping this in its
 own module is deliberate: the rule diverged once per adapter before, and each
 divergence either salvaged a payload the model never nominated or rejected a
 usable review.
@@ -22,6 +23,7 @@ from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
+from .reviewers import OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -93,7 +95,7 @@ def _unexpected_json_syntax(value: str, *, reject_closers: bool) -> bool:
     return False
 
 
-def extract_json_text(value: str, *, stage: str | None = None) -> str:
+def extract_json_text(value: str, *, stage: str) -> str:
     """Return the one complete JSON root that is the adapter's whole answer.
 
     Prose around the payload is tolerated — models routinely preface or follow
@@ -145,24 +147,20 @@ def extract_json_text(value: str, *, stage: str | None = None) -> str:
             continue
         roots.append(candidate)
     if len(roots) > 1:
-        raise SchemaValidationError(
-            f"{stage or 'adapter'} output contains more than one complete JSON root"
-        )
+        raise SchemaValidationError(f"{stage} output contains more than one complete JSON root")
 
     root_start, root_end, text = roots[0]
     if _unexpected_json_syntax(
         stripped[:root_start], reject_closers=True
     ) or _unexpected_json_syntax(stripped[root_end:], reject_closers=False):
         raise SchemaValidationError(
-            f"{stage or 'adapter'} output has JSON syntax outside the complete root, "
+            f"{stage} output has JSON syntax outside the complete root, "
             "so which payload is the answer is ambiguous"
         )
     return text
 
 
-def _decode_stringified_structured_output(
-    payload: dict[str, Any], *, stage: str | None
-) -> dict[str, Any]:
+def _decode_stringified_structured_output(payload: dict[str, Any], *, stage: str) -> dict[str, Any]:
     """Decode one layer of stringified structured output for the active stage.
 
     A whole batch-array string is examined once, then each item exposed by that
@@ -171,8 +169,8 @@ def _decode_stringified_structured_output(
     strings that decode to another string stay untouched and fail closed during
     finalization. Duplicate keys are rejected at both decode boundaries.
     """
-    field = {"review": "findings", "critique": "critiques"}.get(stage or "")
-    if field is None or payload.get("adapter_status", "success") != "success":
+    field = {"review": "findings", "critique": "critiques"}[stage]
+    if payload.get("adapter_status", "success") != "success":
         return payload
     value = payload.get(field)
     replaced = 0
@@ -214,7 +212,7 @@ def _decode_stringified_structured_output(
     return normalized
 
 
-def _coerce_root_shape(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+def _coerce_root_shape(raw: Any, *, stage: str) -> dict[str, Any]:
     """Coerce the supported object and critique-array root shapes."""
     if isinstance(raw, dict):
         return raw
@@ -222,256 +220,142 @@ def _coerce_root_shape(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
         raise SchemaValidationError("adapter output root must be an object")
     if stage == "critique":
         return {"critiques": raw}
-    if stage is not None or not all(isinstance(item, dict) for item in raw):
-        raise SchemaValidationError("adapter output root must be an object")
-    if raw and not any("target_source_finding_id" in item or "verdict" in item for item in raw):
-        raise SchemaValidationError("adapter output root must be an object")
-    return {"critiques": raw}
+    raise SchemaValidationError("adapter output root must be an object")
 
 
-def _coerce_adapter_root(raw: Any, *, stage: str | None = None) -> dict[str, Any]:
+def _coerce_adapter_root(raw: Any, *, stage: str) -> dict[str, Any]:
     """Coerce supported reviewer roots, then decode structured string values."""
+    if stage not in {"review", "critique"}:
+        raise SchemaValidationError(f"unsupported adapter stage: {stage}")
     return _decode_stringified_structured_output(_coerce_root_shape(raw, stage=stage), stage=stage)
 
 
-_ANSWER_PART_KEYS = ("content", "result", "parts", "part", "message")
+def _load_answer_json(text: str, *, stage: str) -> Any:
+    try:
+        return json_loads_no_duplicates(extract_json_text(text, stage=stage))
+    except ValueError as exc:
+        raise SchemaValidationError(
+            f"{stage} answer was not reviewer JSON: {exc}; preview={_json_preview(text)!r}"
+        ) from exc
 
 
-def _is_answer_part(content: dict[str, Any]) -> bool:
-    """Whether a part's ``text`` is the model's answer rather than its scratchpad.
+def _load_claude_stream(stdout: str, *, stage: str) -> Any:
+    """Read the pinned Claude stream, including its observed answer fallbacks.
 
-    Reasoning, thinking, and tool parts all carry a ``text`` field. Treating them
-    as answer text is how a reasoning-only response (GitLab job 2624957) got its
-    finding batch scraped out of `metadata.openrouter.reasoning_details` and then
-    rejected as "findings must be an array" — the model had answered, but only in
-    its scratchpad, and the error named the wrong cause. An untyped dict stays
-    eligible: Claude's `message` object carries no `type` of its own.
+    Schema steering can omit structured_output. Keep the terminal result text
+    and assistant text fallbacks, including an answer preceding a terminal model
+    error. Only Claude's assistant content and terminal result carry answers;
+    OpenCode's retired message/part/text event forms are deliberately absent.
     """
-    part_type = content.get("type")
-    return part_type is None or part_type == "text"
-
-
-def _extract_text_parts(content: Any) -> list[str]:
-    if isinstance(content, str):
-        return [content]
-    if isinstance(content, dict):
-        parts = []
-        if isinstance(content.get("text"), str) and _is_answer_part(content):
-            parts.append(str(content["text"]))
-        # `metadata` is deliberately absent: providers hang reasoning traces off
-        # it (OpenRouter uses metadata.openrouter.reasoning_details).
-        for key in _ANSWER_PART_KEYS:
-            if key in content:
-                parts.extend(_extract_text_parts(content[key]))
-        return parts
-    if not isinstance(content, list):
-        return []
-    parts = []
-    for item in content:
-        parts.extend(_extract_text_parts(item))
-    return parts
-
-
-def _nonanswer_part_types(content: Any) -> set[str]:
-    """Types of parts that carried text but were excluded as non-answer parts.
-
-    Used only to explain an empty answer: "the model wrote 1101 tokens of
-    reasoning and no answer" is actionable, "stream did not contain reviewer
-    JSON" is not.
-    """
-    if isinstance(content, dict):
-        found: set[str] = set()
-        if isinstance(content.get("text"), str) and not _is_answer_part(content):
-            found.add(str(content.get("type")))
-        for key in _ANSWER_PART_KEYS:
-            if key in content:
-                found |= _nonanswer_part_types(content[key])
-        return found
-    if isinstance(content, list):
-        found = set()
-        for item in content:
-            found |= _nonanswer_part_types(item)
-        return found
-    return set()
-
-
-def _log_structured_output_usage(stage: str | None, *, used: bool) -> None:
-    # Schema steering (--json-schema) is best-effort: whether the CLI actually
-    # emitted structured_output is invisible in the findings themselves, so
-    # state it in the job log — otherwise inactive steering would be silent.
-    stage_label = stage or "review"
-    if used:
-        message = f"ai-review: {stage_label} adapter used structured_output\n"
-    else:
-        message = (
-            f"ai-review: {stage_label} adapter result event carried no "
-            "structured_output; parsing result text\n"
-        )
-    sys.stderr.write(redact_text(message))
-
-
-def _load_stream_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
-    assistant_parts = []
+    assistant_parts: list[str] = []
     result_text = ""
-    event_types = []
+    event_types: list[str] = []
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
     saw_result_event = False
     nonanswer_types: set[str] = set()
     for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
+        if not line.strip():
             continue
         try:
-            event = json_loads_no_duplicates(stripped)
-        except Exception as exc:
-            preview = _json_preview(stripped)
+            event = json_loads_no_duplicates(line)
+        except ValueError as exc:
             raise SchemaValidationError(
-                f"adapter stream contained non-JSON line: {exc}; preview={preview!r}"
+                f"Claude stream contained non-JSON line: {exc}; preview={_json_preview(line)!r}"
             ) from exc
-        if not isinstance(event, dict):
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise SchemaValidationError("Claude stream event must be an object with a type")
+        event_types.append(event["type"])
+        if event["type"] == "assistant" and isinstance(event.get("message"), dict):
+            content = event["message"].get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict) or not isinstance(part.get("text"), str):
+                        continue
+                    if part.get("type") == "text":
+                        assistant_parts.append(part["text"])
+                    else:
+                        nonanswer_types.add(str(part.get("type")))
+        if event["type"] != "result":
             continue
-        event_types.append(str(event.get("type", "unknown")))
-        if event.get("type") == "result":
-            saw_result_event = True
-        if event.get("type") == "assistant" and isinstance(event.get("message"), dict):
-            assistant_parts.extend(_extract_text_parts(event["message"].get("content")))
-        if (
-            str(event.get("type", "")).startswith("message")
-            and isinstance(event.get("message"), dict)
-            and event["message"].get("role") == "assistant"
-        ):
-            assistant_parts.extend(_extract_text_parts(event["message"]))
-        if str(event.get("type", "")).startswith("message") and isinstance(event.get("part"), dict):
-            assistant_parts.extend(_extract_text_parts(event["part"]))
-        if event.get("type") == "text":
-            assistant_parts.extend(_extract_text_parts(event))
-        nonanswer_types |= _nonanswer_part_types(event)
-        if isinstance(event.get("result"), str) and event["result"].strip():
-            result_text = str(event["result"])
-        # With --json-schema, the terminal result event carries the
-        # schema-conforming payload in `structured_output`. Best-effort: the
-        # field is sometimes absent even with the flag set, so every text-based
-        # fallback below must stay.
-        if isinstance(event.get("structured_output"), (dict, list)) and not _is_adapter_error_event(
-            event
-        ):
-            structured_result = event["structured_output"]
-        if _is_adapter_error_event(event):
-            # Record the terminal error but keep scanning: the model may have
-            # already emitted valid findings in an earlier assistant message and
-            # only *then* hit a terminal error (e.g. error_max_turns). We only
-            # fail if no usable reviewer content was produced — otherwise the
-            # good findings would be discarded. Prefer the result text, but fall
-            # back to the subtype (error_max_turns etc.) so an empty result does
-            # not collapse to an uninformative ''.
+        saw_result_event = True
+        if event.get("is_error") is True:
             stream_error = _json_preview(_terminal_error_detail(event))
+            continue
+        if isinstance(event.get("structured_output"), (dict, list)):
+            structured_result = event["structured_output"]
+        if isinstance(event.get("result"), str) and event["result"].strip():
+            result_text = event["result"]
 
     if structured_result is not None:
-        _log_structured_output_usage(stage, used=True)
-        return _coerce_adapter_root(structured_result, stage=stage)
+        sys.stderr.write(redact_text(f"ai-review: {stage} adapter used structured_output\n"))
+        return structured_result
     if saw_result_event and stream_error is None:
-        # Claude-style stream (terminal result event) without the steering
-        # payload; opencode-style streams have no result event and log nothing.
-        _log_structured_output_usage(stage, used=False)
-
-    text = (
-        result_text.strip() or "\n".join(part for part in assistant_parts if part.strip()).strip()
-    )
+        sys.stderr.write(
+            redact_text(
+                f"ai-review: {stage} adapter result event carried no "
+                "structured_output; parsing result text\n"
+            )
+        )
+    text = result_text.strip() or "\n".join(assistant_parts).strip()
     if not text:
         if stream_error is not None:
-            message = "adapter run ended in a model error before emitting reviewer output"
-            raise AdapterModelError(f"{message}: {stream_error!r}")
+            raise AdapterModelError(
+                "adapter run ended in a model error before emitting reviewer output: "
+                f"{stream_error!r}"
+            )
         if nonanswer_types:
-            # The model spent its turn in the scratchpad and never wrote an
-            # answer part. That is a model outcome, not malformed adapter output,
-            # so it must not be reported as a schema failure.
-            excluded = ",".join(sorted(nonanswer_types))
             raise AdapterModelError(
                 "model emitted no answer part; response contained only "
-                f"{excluded} parts; event_types={event_types}"
+                f"{','.join(sorted(nonanswer_types))} parts; event_types={event_types}"
             )
         raise SchemaValidationError(
-            "adapter JSON stream did not contain reviewer JSON; "
+            "Claude stream contained no reviewer answer; "
             f"event_types={event_types}; preview={_json_preview(stdout)!r}"
         )
     try:
-        raw = json_loads_no_duplicates(extract_json_text(text, stage=stage))
-    except Exception as exc:
+        return _load_answer_json(text, stage=stage)
+    except SchemaValidationError as exc:
         if stream_error is not None:
             raise AdapterModelError(
                 f"adapter run ended in a model error: {stream_error!r}"
             ) from exc
-        preview = _json_preview(text)
-        raise SchemaValidationError(
-            f"adapter JSON stream content was not reviewer JSON: {exc}; preview={preview!r}"
-        ) from exc
-    return _coerce_adapter_root(raw, stage=stage)
+        raise
 
 
-def _load_adapter_json(stdout: str, *, stage: str | None = None) -> dict[str, Any]:
+def _load_cursor_result(stdout: str, *, stage: str) -> Any:
     try:
-        raw = json_loads_no_duplicates(extract_json_text(stdout, stage=stage))
-    except Exception as exc:
-        if "\n" in stdout.strip():
-            return _load_stream_json(stdout, stage=stage)
+        envelope = json_loads_no_duplicates(stdout)
+    except ValueError as exc:
         raise SchemaValidationError(
-            f"adapter stdout was not JSON: {exc}; preview={_json_preview(stdout)!r}"
+            f"Cursor result envelope was not JSON: {exc}; preview={_json_preview(stdout)!r}"
         ) from exc
-    raw = _coerce_adapter_root(raw, stage=stage)
-    # Single-object Claude Code result envelope (--output-format json) carrying
-    # a schema-conforming `structured_output`: prefer it over re-parsing the
-    # `result` text. Error envelopes keep flowing into the AdapterModelError
-    # path below, whether the CLI identifies them with is_error or type=error.
-    #
-    # OpenCode needs no branch here: ai_review.opencode_client emits the reviewer
-    # batch itself, so it lands on the `findings`/`critiques` root above.
-    if (
-        "findings" not in raw
-        and "critiques" not in raw
-        and not _is_adapter_error_event(raw)
-        and isinstance(raw.get("structured_output"), (dict, list))
-    ):
-        _log_structured_output_usage(stage, used=True)
-        return _coerce_adapter_root(raw["structured_output"], stage=stage)
-    if (
-        raw.get("type") == "result"
-        and not _is_adapter_error_event(raw)
-        and "structured_output" not in raw
-    ):
-        _log_structured_output_usage(stage, used=False)
-    if (
-        "findings" not in raw
-        and "critiques" not in raw
-        and not _is_adapter_error_event(raw)
-        and not isinstance(raw.get("result"), str)
-    ):
-        # A batch-less, error-less root is a stream event envelope. Route it to
-        # the stream reader regardless of line count: a stream that emitted a
-        # single event has no newline to detect, and falling through would return
-        # the raw event as if it were a reviewer batch.
-        return _load_stream_json(stdout, stage=stage)
+    if not isinstance(envelope, dict) or envelope.get("type") != "result":
+        raise SchemaValidationError("Cursor output must be a JSON result envelope")
+    if envelope.get("is_error") is True:
+        error_detail = _json_preview(_terminal_error_detail(envelope))
+        raise AdapterModelError(
+            f"Cursor returned an error result: {error_detail!r}"
+        )
+    result = envelope.get("result")
+    if not isinstance(result, str):
+        raise SchemaValidationError("Cursor result must contain answer text")
+    if not result.strip():
+        raise AdapterModelError("Cursor result was empty")
+    return _load_answer_json(result, stage=stage)
 
-    if "findings" not in raw and "critiques" not in raw and _is_adapter_error_event(raw):
-        error_detail = _json_preview(_terminal_error_detail(raw))
-        raise AdapterModelError(f"reviewer CLI returned an error result: {error_detail!r}")
 
-    if "findings" not in raw and isinstance(raw.get("result"), str):
-        if raw["result"].strip():
-            try:
-                unwrapped = json_loads_no_duplicates(
-                    extract_json_text(str(raw["result"]), stage=stage)
-                )
-            except Exception as exc:
-                raise SchemaValidationError(
-                    "Claude Code result was not reviewer JSON: "
-                    f"{exc}; preview={_json_preview(str(raw['result']))!r}"
-                ) from exc
-            raw = _coerce_adapter_root(unwrapped, stage=stage)
-        else:
-            raise AdapterModelError("Claude Code result was empty")
-
-    return raw
+def _load_adapter_json(stdout: str, *, codec: OutputCodec, stage: str) -> dict[str, Any]:
+    """Extract the registry-selected transport, then normalize once for the stage."""
+    if codec == "batch_json":
+        raw = _load_answer_json(stdout, stage=stage)
+    elif codec == "claude_stream_json":
+        raw = _load_claude_stream(stdout, stage=stage)
+    elif codec == "cursor_json":
+        raw = _load_cursor_result(stdout, stage=stage)
+    else:
+        raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
+    return _coerce_adapter_root(raw, stage=stage)
 
 
 def _json_preview(value: str, *, limit: int = 500) -> str:
@@ -509,19 +393,7 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
     subtype = str(event.get("subtype", "")).strip()
     if subtype:
         return subtype
-    error = event.get("error")
-    if isinstance(error, dict):
-        data = error.get("data")
-        if isinstance(data, dict) and isinstance(data.get("message"), str):
-            return str(data["message"])
-        if isinstance(error.get("message"), str):
-            return str(error["message"])
     try:
         return json.dumps(event, sort_keys=True)
     except (TypeError, ValueError):
         return str(event)
-
-
-def _is_adapter_error_event(event: dict[str, Any]) -> bool:
-    """Recognize terminal error envelopes emitted by supported reviewer CLIs."""
-    return event.get("is_error") is True or event.get("type") == "error"

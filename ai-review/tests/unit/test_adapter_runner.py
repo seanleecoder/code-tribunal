@@ -37,8 +37,6 @@ from support.adapter_inputs import (  # noqa: E402
 )
 from support.config_yaml import CONFIG_TAIL, config_tail, panel_filler  # noqa: E402
 
-_OPENCODE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
-
 _CONFIG_TAIL = CONFIG_TAIL
 
 
@@ -108,490 +106,281 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):
-    def test_loads_direct_reviewer_json(self) -> None:
-        loaded = _load_adapter_json('{"findings":[]}')
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_unwraps_claude_code_json_result(self) -> None:
-        stdout = json.dumps(
+    @staticmethod
+    def _claude_answer(text: str) -> str:
+        return json.dumps(
             {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": '{"findings":[]}',
-            }
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_unwraps_fenced_claude_code_result(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": '```json\n{"findings":[]}\n```',
-            }
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_extracts_object_after_bracketed_preamble(self) -> None:
-        loaded = _load_adapter_json('[draft 1]\n{"findings":[]}', stage="review")
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_unwraps_fenced_claude_code_critique_array_result(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": (
-                    "```json\n"
-                    '[{"target_source_finding_id":"' + "1" * 64 + '", '
-                    '"critic":"claude","verdict":"agree",'
-                    '"adjusted_severity":null,"rationale":"valid"}]\n'
-                    "```"
-                ),
-            }
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(len(loaded["critiques"]), 1)
-        self.assertEqual(loaded["critiques"][0]["verdict"], "agree")
-
-    def test_loads_empty_critique_array_for_critique_stage(self) -> None:
-        loaded = _load_adapter_json("[]", stage="critique")
-        self.assertEqual(loaded, {"critiques": []})
-
-    def test_rejects_empty_review_array_for_review_stage(self) -> None:
-        with self.assertRaisesRegex(SchemaValidationError, "root must be an object"):
-            _load_adapter_json("[]", stage="review")
-
-    def test_loads_critique_array_before_unrelated_trailing_bracket(self) -> None:
-        stdout = (
-            '[{"target_source_finding_id":"' + "3" * 64 + '", '
-            '"critic":"claude","verdict":"agree",'
-            '"adjusted_severity":null,"rationale":"valid"}]'
-            "\ntrailing note ]"
-        )
-        loaded = _load_adapter_json(stdout, stage="critique")
-        self.assertEqual(len(loaded["critiques"]), 1)
-        self.assertEqual(loaded["critiques"][0]["target_source_finding_id"], "3" * 64)
-
-    def test_loads_opencode_stream_critique_array(self) -> None:
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "step_start", "sessionID": "s"}),
-                json.dumps(
-                    {
-                        "type": "text",
-                        "text": (
-                            '[{"target_source_finding_id":"' + "2" * 64 + '", '
-                            '"critic":"opencode","verdict":"noise",'
-                            '"adjusted_severity":null,"rationale":"too vague"}]'
-                        ),
-                    }
-                ),
-            ]
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(len(loaded["critiques"]), 1)
-        self.assertEqual(loaded["critiques"][0]["critic"], "opencode")
-
-    def test_empty_claude_code_result_fails(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": "",
-            }
-        )
-        with self.assertRaisesRegex(AdapterModelError, "result was empty"):
-            _load_adapter_json(stdout)
-
-    def test_terminal_is_error_after_findings_keeps_findings(self) -> None:
-        # A terminal is_error event (e.g. error_max_turns) must not discard
-        # findings the model already emitted earlier in the stream.
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": '{"findings":[]}'}],
-                        },
-                    }
-                ),
-                json.dumps(
-                    {"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}
-                ),
-            ]
-        )
-        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
-
-    def test_terminal_is_error_without_output_is_model_error(self) -> None:
-        # No usable reviewer content before the terminal error → model_error,
-        # not schema_error (the CLI ran; it just never produced findings).
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}
-                ),
-            ]
-        )
-        # The subtype must survive so the message is not a bare '' — it is the
-        # only clue to *why* the run failed when result is empty.
-        with self.assertRaisesRegex(AdapterModelError, "error_max_turns"):
-            _load_adapter_json(stdout)
-
-    def test_opencode_error_event_without_output_is_model_error(self) -> None:
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "step_start", "sessionID": "s"}),
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error": {
-                            "name": "UnknownError",
-                            "data": {
-                                "message": (
-                                    '{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}'
-                                )
-                            },
-                        },
-                    }
-                ),
-            ]
-        )
-        with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
-            _load_adapter_json(stdout)
-
-    def test_single_object_opencode_error_is_model_error(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "error",
-                "error": {
-                    "name": "UnknownError",
-                    "data": {
-                        "message": ('{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}')
-                    },
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
                 },
             }
         )
-        with self.assertRaisesRegex(AdapterModelError, "rate_limit_exceeded"):
-            _load_adapter_json(stdout)
 
-    def test_single_object_error_does_not_use_structured_output(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "error",
-                "error": {"message": "provider unavailable"},
-                "structured_output": {"findings": []},
-            }
+    def test_batch_codec_loads_both_stage_shapes(self) -> None:
+        for stage, payload, expected in (
+            ("review", {"findings": []}, {"findings": []}),
+            ("critique", [], {"critiques": []}),
+            ("critique", {"critiques": []}, {"critiques": []}),
+        ):
+            with self.subTest(stage=stage, payload=payload):
+                self.assertEqual(
+                    _load_adapter_json(json.dumps(payload), codec="batch_json", stage=stage),
+                    expected,
+                )
+        with self.assertRaisesRegex(SchemaValidationError, "root must be an object"):
+            _load_adapter_json("[]", codec="batch_json", stage="review")
+
+    def test_stage_is_required_and_invalid_stages_are_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            _load_adapter_json('{"findings":[]}', codec="batch_json")
+        with self.assertRaisesRegex(SchemaValidationError, "unsupported adapter stage"):
+            _load_adapter_json('{"findings":[]}', codec="batch_json", stage="other")
+
+    def test_codec_does_not_fall_back_to_other_transports(self) -> None:
+        envelope = {"type": "result", "result": '{"findings":[]}'}
+        # A batch codec leaves an envelope uninterpreted; batch validation will
+        # reject its missing findings. It never unwraps another seat's format.
+        self.assertEqual(
+            _load_adapter_json(json.dumps(envelope), codec="batch_json", stage="review"),
+            envelope,
         )
-        with self.assertRaisesRegex(AdapterModelError, "provider unavailable"):
-            _load_adapter_json(stdout)
+        with self.assertRaisesRegex(SchemaValidationError, "result envelope"):
+            _load_adapter_json('{"findings":[]}', codec="cursor_json", stage="review")
+        with self.assertRaisesRegex(SchemaValidationError, "event must be an object with a type"):
+            _load_adapter_json('{"findings":[]}', codec="claude_stream_json", stage="review")
+        stream = self._claude_answer('{"findings":[]}') + "\n" + json.dumps(envelope)
+        for codec in ("batch_json", "cursor_json"):
+            with self.subTest(codec=codec), self.assertRaises(SchemaValidationError):
+                _load_adapter_json(stream, codec=codec, stage="review")
 
-    def test_stream_structured_output_preferred_over_result_text(self) -> None:
-        # With --json-schema the terminal result event carries the payload in
-        # structured_output; it must win over a fenced/noisy result string.
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": "not json at all"}],
-                        },
-                    }
-                ),
-                json.dumps(
+    def test_cursor_unwraps_only_its_result_text(self) -> None:
+        for stage, text, expected in (
+            ("review", '```json\n{"findings":[]}\n```', {"findings": []}),
+            ("critique", "[]", {"critiques": []}),
+        ):
+            with self.subTest(stage=stage):
+                stdout = json.dumps(
                     {
                         "type": "result",
-                        "subtype": "success",
                         "is_error": False,
-                        "result": "```json\nnot even parseable\n```",
-                        "structured_output": {"findings": []},
+                        "result": text,
+                        "structured_output": {"findings": [{"title": "wrong transport"}]},
                     }
-                ),
-            ]
-        )
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-        # Steering activity is stated in the job log so it is never silent.
-        self.assertIn("used structured_output", stderr.getvalue())
+                )
+                self.assertEqual(
+                    _load_adapter_json(stdout, codec="cursor_json", stage=stage), expected
+                )
 
-    def test_stream_structured_output_critique_list_root(self) -> None:
-        critique = {
-            "target_source_finding_id": "4" * 64,
-            "critic": "claude",
-            "verdict": "agree",
-            "adjusted_severity": None,
-            "rationale": "valid",
-        }
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "result",
-                        "subtype": "success",
-                        "is_error": False,
-                        "result": "",
-                        "structured_output": [critique],
-                    }
-                ),
-            ]
-        )
-        loaded = _load_adapter_json(stdout, stage="critique")
-        self.assertEqual(loaded, {"critiques": [critique]})
+    def test_cursor_empty_and_error_results_are_model_errors(self) -> None:
+        for envelope, message in (
+            ({"type": "result", "result": ""}, "result was empty"),
+            (
+                {
+                    "type": "result",
+                    "is_error": True,
+                    "result": "provider unavailable",
+                    "structured_output": {"findings": []},
+                },
+                "provider unavailable",
+            ),
+        ):
+            with (
+                self.subTest(envelope=envelope),
+                self.assertRaisesRegex(AdapterModelError, message),
+            ):
+                _load_adapter_json(json.dumps(envelope), codec="cursor_json", stage="review")
+        with self.assertRaisesRegex(SchemaValidationError, "answer text"):
+            _load_adapter_json('{"type":"result"}', codec="cursor_json", stage="review")
 
-    def test_stream_structured_output_absent_falls_back_to_result_text(self) -> None:
-        # --json-schema is best-effort: structured_output is sometimes omitted,
-        # so the existing result-text path must keep working — and the job log
-        # must say steering was inactive (never silently).
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "result",
-                        "subtype": "success",
-                        "is_error": False,
-                        "result": '{"findings":[]}',
-                    }
-                ),
-            ]
-        )
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-        self.assertIn("no structured_output", stderr.getvalue())
+    def test_cursor_error_details_are_bounded(self) -> None:
+        detail = "provider unavailable\n" + "diagnostic " * 1000 + "cursor-error-tail"
+        for envelope in (
+            {"type": "result", "is_error": True, "result": detail},
+            {"type": "result", "is_error": True, "diagnostic": detail},
+        ):
+            with self.subTest(envelope_field=next(reversed(envelope))):
+                with self.assertRaises(AdapterModelError) as caught:
+                    _load_adapter_json(json.dumps(envelope), codec="cursor_json", stage="review")
+                message = str(caught.exception)
+                self.assertIn("provider unavailable", message)
+                self.assertIn("[truncated]", message)
+                self.assertNotIn("cursor-error-tail", message)
+                self.assertNotIn("\n", message)
+                self.assertLess(len(message), 600)
 
-    def test_opencode_stream_logs_no_structured_output_message(self) -> None:
-        # opencode streams have no terminal result event; the steering log
-        # would be noise there and must not appear either way.
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "step_start", "sessionID": "s"}),
-                json.dumps({"type": "text", "text": '{"findings":[]}'}),
-            ]
-        )
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-        self.assertNotIn("structured_output", stderr.getvalue())
-
-    def test_stream_structured_output_on_error_event_is_ignored(self) -> None:
-        # A terminal error's structured_output must not be trusted; with no other
-        # usable content the run is a model error, same as before.
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "result",
-                        "subtype": "error_during_execution",
-                        "is_error": True,
-                        "result": "",
-                        "structured_output": {"findings": []},
-                    }
-                ),
-            ]
-        )
-        with self.assertRaisesRegex(AdapterModelError, "error_during_execution"):
-            _load_adapter_json(stdout)
-
-    def test_single_envelope_structured_output_unwrapped(self) -> None:
-        # --output-format json shape (single result object): prefer
-        # structured_output over re-parsing the result string.
-        stdout = json.dumps(
-            {
-                "type": "result",
-                "subtype": "success",
-                "is_error": False,
-                "result": "prose that is not JSON",
-                "structured_output": {"findings": []},
-            }
-        )
-        self.assertEqual(_load_adapter_json(stdout), {"findings": []})
-
-    def test_single_envelope_error_ignores_structured_output(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "result",
-                "subtype": "error_during_execution",
-                "is_error": True,
-                "result": "boom",
-                "structured_output": {"findings": []},
-            }
-        )
-        with self.assertRaisesRegex(AdapterModelError, "error result"):
-            _load_adapter_json(stdout)
-
-    def test_loads_stream_json_assistant_content(self) -> None:
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "system", "subtype": "init"}),
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": '{"findings":[]}'}],
-                        },
-                    }
-                ),
-                json.dumps(
-                    {"type": "result", "subtype": "success", "is_error": False, "result": ""}
-                ),
-            ]
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_loads_opencode_stream_json_assistant_part(self) -> None:
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "session.created", "sessionID": "s"}),
-                json.dumps(
-                    {
-                        "type": "message.updated",
-                        "message": {"role": "assistant"},
-                        "part": {"type": "text", "text": '{"findings":[]}'},
-                    }
-                ),
-            ]
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_loads_opencode_stream_json_text_event(self) -> None:
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "step_start", "sessionID": "s"}),
-                json.dumps({"type": "text", "text": '{"findings":[]}'}),
-            ]
-        )
-        loaded = _load_adapter_json(stdout)
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_recovers_observed_opencode_prefix_around_one_json_root(self) -> None:
-        # Non-regression guard: a sentence before a single complete payload must
-        # stay recoverable. Refusing it converts a usable review into a schema
-        # error, and this extractor is shared by every reviewer.
-        stdout = (_OPENCODE_FIXTURES / "review-prefix.ndjson").read_text(encoding="utf-8")
-
-        loaded = _load_adapter_json(stdout, stage="review")
-
-        self.assertEqual(loaded, {"findings": []})
-
-    def test_does_not_salvage_nested_json_from_malformed_outer_root(self) -> None:
-        # The interior of `{"outer":{"findings":[]} BROKEN` parses on its own, so
-        # a scan that accepts the first complete root would return a batch the
-        # model never meant as its answer.
-        stdout = (_OPENCODE_FIXTURES / "review-malformed-outer.ndjson").read_text(
-            encoding="utf-8"
-        )
-
-        with self.assertRaises(SchemaValidationError):
-            _load_adapter_json(stdout, stage="review")
-
-    def test_reasoning_only_response_is_a_model_error_not_a_schema_error(self) -> None:
-        # Regression for GitLab job 2624957: the model wrote its finding batch
-        # only into reasoning/tool metadata and never emitted an answer part.
-        # Scraping that scratchpad produced "findings must be an array", blaming
-        # the adapter for a model outcome.
-        stdout = (_OPENCODE_FIXTURES / "review-reasoning-only.ndjson").read_text(
-            encoding="utf-8"
-        )
-
-        with self.assertRaises(AdapterModelError) as caught:
-            _load_adapter_json(stdout, stage="review")
-
-        message = str(caught.exception)
-        self.assertIn("no answer part", message)
-        self.assertIn("reasoning", message)
-        # The batch that only ever existed in the scratchpad must not be adopted.
-        self.assertNotIn("Empty catch masks logout failures", message)
-
-    def test_two_complete_json_roots_are_refused(self) -> None:
-        stdout = json.dumps(
-            {
-                "type": "text",
-                "text": '{"findings":[]} {"findings":[{"title":"other"}]}',
-            }
-        )
-
+    def test_cursor_malformed_envelope_includes_a_bounded_preview(self) -> None:
+        stdout = "malformed Cursor response\n" + "diagnostic " * 1000 + "cursor-stdout-tail"
         with self.assertRaises(SchemaValidationError) as caught:
-            _load_adapter_json(stdout, stage="review")
+            _load_adapter_json(stdout, codec="cursor_json", stage="review")
+        message = str(caught.exception)
+        self.assertIn("preview=", message)
+        self.assertIn("malformed Cursor response", message)
+        self.assertIn("[truncated]", message)
+        self.assertNotIn("cursor-stdout-tail", message)
+        self.assertLess(len(message), 700)
 
-        self.assertIn("more than one complete JSON root", str(caught.exception))
-
-    def test_brace_free_prose_around_one_payload_still_parses(self) -> None:
-        # Prose around a single payload stays recoverable, as long as the prose
-        # carries no JSON syntax of its own. Refusing these regresses every
-        # adapter, not just opencode.
-        for label, text in (
-            ("fence then prose", '```json\n{"findings":[]}\n```\nDone.'),
-            ("plain prose after", '{"findings":[]}\nNo issues found.'),
-            ("prose before", 'Based on my review of the diff.\n{"findings":[]}'),
-            ("simple bracketed label after", '{"findings":[]}\n[end of report]'),
+    def test_claude_structured_output_wins_and_is_normalized_for_stage(self) -> None:
+        for stage, payload, expected in (
+            ("review", {"findings": "[]"}, {"findings": []}),
+            ("critique", [], {"critiques": []}),
         ):
-            with self.subTest(label):
-                stdout = json.dumps({"type": "text", "text": text})
+            stream = (
+                self._claude_answer("not JSON")
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "result",
+                        "is_error": False,
+                        "result": "not JSON either",
+                        "structured_output": payload,
+                    }
+                )
+            )
+            with self.subTest(stage=stage), contextlib.redirect_stderr(errors := io.StringIO()):
+                loaded = _load_adapter_json(stream, codec="claude_stream_json", stage=stage)
+            self.assertEqual(loaded, expected)
+            self.assertIn("used structured_output", errors.getvalue())
 
-                self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+    def test_claude_result_text_and_assistant_text_fallbacks(self) -> None:
+        for result in ('```json\n{"findings":[]}\n```', ""):
+            stream = (
+                self._claude_answer('{"findings":[]}')
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "result",
+                        "is_error": False,
+                        "result": result,
+                    }
+                )
+            )
+            with self.subTest(result=result), contextlib.redirect_stderr(errors := io.StringIO()):
+                loaded = _load_adapter_json(stream, codec="claude_stream_json", stage="review")
+            self.assertEqual(loaded, {"findings": []})
+            self.assertIn("no structured_output", errors.getvalue())
 
-    def test_trailing_closer_after_a_complete_payload_is_tolerated(self) -> None:
-        # Deliberately asymmetric with the leading-closer cases below. A closer
-        # after a complete payload cannot mean the payload is an interior
-        # fragment — the enclosing opener would have to precede it, which is
-        # refused — so what is left is trailing model noise. Live reviewer output
-        # does this; see test_loads_critique_array_before_unrelated_trailing_bracket,
-        # added from real phase-5 acceptance output. Do not "fix" this into a
-        # rejection without new evidence that the shape signals a bad payload.
-        for label, text in (
-            ("stray bracket after", '{"findings":[]}\ntrailing note ]'),
-            ("stray brace after", '{"findings":[]}\ntrailing note }'),
+    def test_claude_terminal_error_keeps_a_preceding_answer(self) -> None:
+        terminal = json.dumps(
+            {
+                "type": "result",
+                "is_error": True,
+                "subtype": "error_max_turns",
+                "result": "",
+                "structured_output": {"findings": [{"title": "ignore"}]},
+            }
+        )
+        self.assertEqual(
+            _load_adapter_json(
+                self._claude_answer('{"findings":[]}') + "\n" + terminal,
+                codec="claude_stream_json",
+                stage="review",
+            ),
+            {"findings": []},
+        )
+        for prefix in ("", self._claude_answer("not JSON") + "\n"):
+            with (
+                self.subTest(prefix=prefix),
+                self.assertRaisesRegex(AdapterModelError, "error_max_turns"),
+            ):
+                _load_adapter_json(prefix + terminal, codec="claude_stream_json", stage="review")
+
+    def test_claude_does_not_scrape_reasoning_tools_or_nonterminal_structured_output(self) -> None:
+        stream = json.dumps(
+            {
+                "type": "assistant",
+                "structured_output": {"findings": []},
+                "message": {
+                    "content": [
+                        {"type": "reasoning", "text": '{"findings":[]}'},
+                        {"type": "tool_use", "text": '{"findings":[]}'},
+                    ],
+                    "metadata": {"result": '{"findings":[]}'},
+                },
+            }
+        )
+        with self.assertRaisesRegex(AdapterModelError, "no answer part"):
+            _load_adapter_json(stream, codec="claude_stream_json", stage="review")
+
+    def test_retired_opencode_events_are_not_an_answer(self) -> None:
+        for event in (
+            {"type": "text", "text": '{"findings":[]}'},
+            {
+                "type": "message.updated",
+                "message": {"role": "assistant"},
+                "part": {"type": "text", "text": '{"findings":[]}'},
+            },
         ):
-            with self.subTest(label):
-                stdout = json.dumps({"type": "text", "text": text})
+            with (
+                self.subTest(event=event),
+                self.assertRaisesRegex(SchemaValidationError, "no reviewer answer"),
+            ):
+                _load_adapter_json(json.dumps(event), codec="claude_stream_json", stage="review")
 
-                self.assertEqual(_load_adapter_json(stdout, stage="review"), {"findings": []})
+    def test_empty_or_truncated_claude_stream_is_a_schema_error(self) -> None:
+        for stdout in ("", json.dumps({"type": "system", "subtype": "init"})):
+            with (
+                self.subTest(stdout=stdout),
+                self.assertRaisesRegex(SchemaValidationError, "no reviewer answer"),
+            ):
+                _load_adapter_json(stdout, codec="claude_stream_json", stage="review")
 
-    def test_json_syntax_outside_the_payload_is_refused(self) -> None:
-        # Every one of these offers an interior the model never nominated as its
-        # answer. Accepting any of them yields a silently wrong review rather
-        # than a failed one — the balanced cases were accepted before, because
-        # the earlier guard only noticed containers left open.
-        for label, text in (
-            ("malformed object before", '{"outer": nope} prose {"findings":[]}'),
-            ("malformed object after", '{"findings":[]} {"broken": nope}'),
-            ("malformed object on a later line", '{"findings":[]}\ntrailing {"a": oops}'),
-            ("unclosed outer wrapper", '{"outer":{"findings":[]} BROKEN'),
-            ("bracket list mentioning paths", 'Reviewed [src/a.py, src/b.py]\n{"findings":[]}'),
-            ("brace shape mentioned after", '{"findings":[]}\nNote: shape is {"findings": [..]}.'),
-            # A closer *before* the payload means a structure ended there, so the
-            # payload may be the interior of something malformed.
-            ("unmatched brace before", '} prose {"findings":[]}'),
-            ("unmatched bracket before", '] {"findings":[]}'),
+    def test_duplicate_keys_are_rejected_at_transport_and_answer_boundaries(self) -> None:
+        for codec, stdout in (
+            ("batch_json", '{"findings":[],"findings":[]}'),
+            ("cursor_json", '{"type":"result","result":"{}","result":"{}"}'),
+            (
+                "claude_stream_json",
+                '{"type":"result","structured_output":{"findings":[],"findings":[]}}',
+            ),
+            (
+                "cursor_json",
+                json.dumps({"type": "result", "result": '{"findings":[],"findings":[]}'}),
+            ),
+            ("claude_stream_json", self._claude_answer('{"findings":[],"findings":[]}')),
         ):
-            with self.subTest(label):
-                stdout = json.dumps({"type": "text", "text": text})
+            with self.subTest(codec=codec), self.assertRaises(SchemaValidationError):
+                _load_adapter_json(stdout, codec=codec, stage="review")
 
-                with self.assertRaises(SchemaValidationError):
-                    _load_adapter_json(stdout, stage="review")
+    def test_one_unambiguous_answer_can_have_prose_fences_and_trailing_noise(self) -> None:
+        for text in (
+            '[draft 1]\n{"findings":[]}',
+            '```json\n{"findings":[]}\n```\nDone.',
+            '{"findings":[]}\nNo issues found.',
+            'Based on my review of the diff.\n{"findings":[]}',
+            '{"findings":[]}\n[end of report]',
+            '{"findings":[]}\ntrailing note ]',
+            '{"findings":[]}\ntrailing note }',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _load_adapter_json(
+                        self._claude_answer(text), codec="claude_stream_json", stage="review"
+                    ),
+                    {"findings": []},
+                )
+        self.assertEqual(
+            _load_adapter_json("[]\ntrailing note ]", codec="batch_json", stage="critique"),
+            {"critiques": []},
+        )
+
+    def test_ambiguous_answer_is_never_salvaged(self) -> None:
+        for text in (
+            '{"findings":[]} {"findings":[{"title":"other"}]}',
+            '{"outer": nope} prose {"findings":[]}',
+            '{"findings":[]} {"broken": nope}',
+            '{"findings":[]}\ntrailing {"a": oops}',
+            '{"outer":{"findings":[]} BROKEN',
+            'Reviewed [src/a.py, src/b.py]\n{"findings":[]}',
+            '{"findings":[]}\nNote: shape is {"findings": [..]}.',
+            '} prose {"findings":[]}',
+            '] {"findings":[]}',
+        ):
+            with self.subTest(text=text), self.assertRaises(SchemaValidationError):
+                _load_adapter_json(
+                    self._claude_answer(text), codec="claude_stream_json", stage="review"
+                )
 
 
 class StringifiedStructuredOutputTests(unittest.TestCase):
@@ -710,10 +499,8 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                 pooled_finding_ids=set(),
             )
 
-    def test_no_stage_failure_batches_and_envelopes_are_unchanged(self) -> None:
-        item = json.dumps({"title": "leave encoded"})
+    def test_failure_batches_and_envelopes_are_unchanged(self) -> None:
         payloads = (
-            ({"findings": [item]}, None),
             ({"adapter_status": "timeout", "findings": "[]"}, "review"),
             ({"type": "result", "structured_output": {"findings": []}}, "review"),
         )
@@ -1151,94 +938,33 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["error_class"], "ConfigError")
             self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
-    def test_opencode_stream_error_status_is_model_error(self) -> None:
+    def test_opencode_client_failure_is_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "opencode")
-            stream = "\n".join(
-                [
-                    json.dumps({"type": "step_start", "sessionID": "s"}),
-                    json.dumps(
-                        {
-                            "type": "error",
-                            "error": {
-                                "data": {
-                                    "message": (
-                                        '{"code":429,"metadata":'
-                                        '{"error_type":"rate_limit_exceeded"}}'
-                                    )
-                                }
-                            },
-                        }
-                    ),
-                ]
-            )
             _write_adapter(
-                paths["adapter_dir"],
-                "opencode",
-                "#!/bin/sh\ncat <<'EOF'\n" + stream + "\nEOF\n",
+                paths["adapter_dir"], "opencode",
+                '#!/bin/sh\necho "opencode provider/API error: rate_limit_exceeded" >&2\nexit 1\n',
             )
             self._set_env(paths, config_path)
-
             self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
-
-            batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
-            self.assertEqual(batch["adapter_status"], "model_error")
             status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
             self.assertEqual(status["status"], "model_error")
-            self.assertEqual(status["error_class"], "AdapterModelError")
+            self.assertEqual(status["error_class"], "AdapterExit")
             self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
 
-    def test_opencode_single_object_error_status_is_model_error(self) -> None:
+    def test_retired_opencode_stream_fails_as_a_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "opencode")
-            error = json.dumps(
-                {
-                    "type": "error",
-                    "error": {
-                        "data": {
-                            "message": (
-                                '{"code":429,"metadata":{"error_type":"rate_limit_exceeded"}}'
-                            )
-                        }
-                    },
-                }
-            )
+            event = json.dumps({"type": "text", "text": '{"findings":[]}'})
             _write_adapter(
-                paths["adapter_dir"],
-                "opencode",
-                "#!/bin/sh\nprintf '%s\\n' '" + error + "'\n",
+                paths["adapter_dir"], "opencode", "#!/bin/sh\ncat <<'EOF'\n" + event + "\nEOF\n"
             )
             self._set_env(paths, config_path)
-
             self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
-
             status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
-            self.assertEqual(status["status"], "model_error")
-            self.assertEqual(status["error_class"], "AdapterModelError")
-            self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
-
-    def test_malformed_opencode_prose_has_schema_error_and_no_success(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "opencode")
-            fixture = _OPENCODE_FIXTURES / "review-malformed-outer.ndjson"
-            _write_adapter(
-                paths["adapter_dir"],
-                "opencode",
-                f'#!/bin/sh\ncat "{fixture}"\n',
-            )
-            self._set_env(paths, config_path)
-
-            self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
-
-            batch = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
-            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
-            self.assertEqual(batch["adapter_status"], "schema_error")
-            self.assertEqual(batch["findings"], [])
             self.assertEqual(status["status"], "schema_error")
-            self.assertEqual(status["error_class"], "SchemaValidationError")
 
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
