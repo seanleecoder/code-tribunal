@@ -95,8 +95,9 @@ def _build_adapter_env(
     env["AI_REVIEW_REVIEWER"] = reviewer
     env["AI_REVIEW_STAGE"] = stage
     env["AI_REVIEW_MODEL"] = model
-    env["AI_REVIEW_INPUT_DIR"] = str(input_dir)
-    env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
+    # Absolute, because shell seats run from their own working root.
+    env["AI_REVIEW_INPUT_DIR"] = str(input_dir.resolve())
+    env["AI_REVIEW_OUTPUT_DIR"] = str(output_dir.resolve())
     # Reasoning-effort hint for CLIs that support it (Claude's --effort,
     # Codex's model_reasoning_effort, and OpenCode's reasoningEffort).
     # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
@@ -105,7 +106,7 @@ def _build_adapter_env(
     if reviewer_config.get("effort"):
         env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
     if prompt_tmp is not None:
-        env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
+        env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp.resolve())
     # Only the runner-selected mock reads its scenario; real seats never see it.
     if mock and (scenario := os.environ.get("AI_REVIEW_MOCK_SCENARIO")) is not None:
         env["AI_REVIEW_MOCK_SCENARIO"] = scenario
@@ -162,7 +163,12 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
 
 
 def _run_adapter_process(
-    command: list[str], env: dict[str, str], timeout_seconds: int, *, mirror_logs: bool
+    command: list[str],
+    env: dict[str, str],
+    timeout_seconds: int,
+    *,
+    mirror_logs: bool,
+    cwd: Path | None = None,
 ) -> _AdapterResult:
     # Capture the adapter's stdout+stderr, and when mirror_logs is set, also
     # stream them to the job log line-by-line (redacted) instead of buffering
@@ -184,7 +190,7 @@ def _run_adapter_process(
         text=True,
         bufsize=1,
         env=env,
-        cwd=env.get("AI_REVIEW_WORKSPACE"),
+        cwd=cwd,
         start_new_session=True,
     )
     collected: dict[str, list[str]] = {"stdout": [], "stderr": []}

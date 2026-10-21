@@ -12,7 +12,6 @@ from typing import Literal
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
 OutputCodec = Literal["batch_json", "claude_stream_json", "cursor_json"]
-SchemaTransport = Literal["inline_json", "file", "http_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -32,12 +31,10 @@ class ReviewerDefinition:
     output_codec: OutputCodec
     supports_effort: bool
     supported_stages: frozenset[ReviewerStage]
-    cli: str
     cli_arguments: tuple[str, ...]
     review_arguments: tuple[str, ...]
     critique_arguments: tuple[str, ...]
     effort_arguments: tuple[str, ...]
-    schema_transport: SchemaTransport | None
     state_directories: tuple[tuple[str, str], ...]
     environment: tuple[tuple[str, str], ...]
     home_files: tuple[tuple[str, str], ...]
@@ -55,12 +52,10 @@ def _definition(
     adapter_module: str | None = None,
     supports_effort: bool = True,
     credential_variables: frozenset[str] = _OPENROUTER_CREDENTIALS,
-    cli: str | None = None,
     cli_arguments: tuple[str, ...] = (),
     review_arguments: tuple[str, ...] = (),
     critique_arguments: tuple[str, ...] = (),
     effort_arguments: tuple[str, ...] = (),
-    schema_transport: SchemaTransport | None = None,
     state_directories: tuple[tuple[str, str], ...] | None = None,
     environment: tuple[tuple[str, str], ...] = (),
     home_files: tuple[tuple[str, str], ...] = (),
@@ -74,12 +69,10 @@ def _definition(
         output_codec=output_codec,
         supports_effort=supports_effort,
         supported_stages=_ALL_STAGES,
-        cli=cli or reviewer_id,
         cli_arguments=cli_arguments,
         review_arguments=review_arguments,
         critique_arguments=critique_arguments,
         effort_arguments=effort_arguments,
-        schema_transport=schema_transport,
         state_directories=state_directories or (("HOME", f"{reviewer_id}-home"),),
         environment=environment,
         home_files=home_files,
@@ -94,14 +87,13 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             output_codec="claude_stream_json",
             cli_arguments=(
                 "-p", "--safe-mode", "--model", "{model}", "--no-session-persistence",
-                "--output-format", "stream-json", "--verbose", "--json-schema", "{schema}",
+                "--output-format", "stream-json", "--verbose", "--json-schema", "{schema_json}",
             ),
             review_arguments=("--add-dir", "{root}", "--tools", "Read,Grep,Glob"),
             critique_arguments=("--tools", ""),
             # --bare cannot authenticate through OpenRouter's Anthropic route.
             # The safe-mode flag and explicit stage tool lists are intentional.
             effort_arguments=("--effort", "{effort}"),
-            schema_transport="inline_json",
             environment=(
                 ("ANTHROPIC_AUTH_TOKEN", "{OPENROUTER_API_KEY}"),
                 ("ANTHROPIC_MODEL", "{model}"),
@@ -118,10 +110,9 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 "--config", 'model_providers.openrouter.name="OpenRouter"',
                 "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
                 "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
-                "--output-schema", "{schema}", "-o", "{raw_output}", "-",
+                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}", "-",
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
-            schema_transport="file",
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),
         ),
         "opencode": _definition(
@@ -129,7 +120,6 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "openrouter",
             output_codec="batch_json",
             adapter_module="ai_review.opencode_client",
-            schema_transport="http_json",
             state_directories=(
                 ("HOME", "opencode-home"),
                 ("XDG_CONFIG_HOME", "opencode-config-home"),
@@ -155,7 +145,6 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             output_codec="cursor_json",
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
-            cli="cursor-agent",
             cli_arguments=(
                 "-p", "--output-format", "json", "--trust", "--sandbox", "disabled",
                 "--mode", "ask", "--model", "{model}",

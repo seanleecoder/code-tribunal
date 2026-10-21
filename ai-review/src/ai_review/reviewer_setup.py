@@ -11,15 +11,20 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .adapter_process import _build_adapter_env
 from .reviewers import ReviewerDefinition, get_reviewer_definition
 from .schema import load_json_file, schema_dir
 
+_STAGE_SCHEMAS = {
+    "review": "raw_finding_batch.schema.json",
+    "critique": "critique_batch.schema.json",
+}
+
 
 def stage_schema_path(stage: str) -> Path:
-    if stage not in {"review", "critique"}:
+    if (name := _STAGE_SCHEMAS.get(stage)) is None:
         raise ValueError(f"unsupported reviewer stage: {stage!r}")
-    name = "raw_finding_batch" if stage == "review" else "critique_batch"
-    return schema_dir() / f"{name}.schema.json"
+    return schema_dir() / name
 
 
 def transport_schema(stage: str) -> dict[str, Any]:
@@ -42,15 +47,13 @@ def state_environment(
 def prepare_workspace(
     definition: ReviewerDefinition, stage: str, input_dir: Path, output_dir: Path
 ) -> tuple[Path, Path]:
-    if stage not in definition.supported_stages:
-        raise ValueError(f"unsupported reviewer stage: {stage!r}")
     tmp_dir = (output_dir / ".tmp").resolve()
     root = tmp_dir / f"{definition.reviewer_id}-{stage}-root.{os.getpid()}"
     for directory in (root, *(tmp_dir / name for _, name in definition.state_directories)):
         directory.mkdir(parents=True, exist_ok=True)
+    home = tmp_dir / dict(definition.state_directories)["HOME"]
     for path, content in definition.home_files:
-        home = dict(definition.state_directories)["HOME"]
-        target = tmp_dir / home / path
+        target = home / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     # Review explores a copy of the sanitized pinned snapshot. Critique sees only
@@ -65,41 +68,31 @@ def prepare_workspace(
     return tmp_dir, root
 
 
-def cli_arguments(
-    definition: ReviewerDefinition, stage: str, env: Mapping[str, str], root: Path, tmp_dir: Path
-) -> list[str]:
+def prepare_shell_adapter(
+    definition: ReviewerDefinition, stage: str, env: dict[str, str]
+) -> tuple[list[str], Path]:
+    """Complete ``env`` for a shell seat; return its CLI arguments and working root."""
+    tmp_dir, root = prepare_workspace(
+        definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
+    )
+    env["AI_REVIEW_RAW_OUTPUT"] = str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json")
     values = {
-        **env, "root": str(root), "model": env["AI_REVIEW_MODEL"],
-        "raw_output": str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json"),
-        "schema": (
-            json.dumps(transport_schema(stage))
-            if definition.schema_transport == "inline_json" else str(stage_schema_path(stage))
-        ),
+        **env,
+        # The adapter itself reports a missing credential; templates must not.
+        "OPENROUTER_API_KEY": env.get("OPENROUTER_API_KEY", ""),
+        "model": env["AI_REVIEW_MODEL"],
+        "root": str(root),
+        "schema_path": str(stage_schema_path(stage)),
+        "schema_json": json.dumps(transport_schema(stage)),
     }
+    env.update(state_environment(definition, tmp_dir, values))
     arguments = definition.cli_arguments + (
         definition.review_arguments if stage == "review" else definition.critique_arguments
     )
     if effort := env.get("AI_REVIEW_EFFORT"):
         values["effort"] = effort
         arguments += definition.effort_arguments
-    return [argument.format_map(values) for argument in arguments]
-
-
-def prepare_shell_adapter(
-    definition: ReviewerDefinition, stage: str, env: dict[str, str]
-) -> list[str]:
-    tmp_dir, root = prepare_workspace(
-        definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
-    )
-    env.update(state_environment(definition, tmp_dir, {
-        **env, "model": env["AI_REVIEW_MODEL"],
-        "OPENROUTER_API_KEY": env.get("OPENROUTER_API_KEY", ""),
-    }))
-    env["AI_REVIEW_WORKSPACE"] = str(root)
-    env["AI_REVIEW_RAW_OUTPUT"] = str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json")
-    for key in ("AI_REVIEW_INPUT_DIR", "AI_REVIEW_OUTPUT_DIR", "AI_REVIEW_RENDERED_PROMPT"):
-        env[key] = str(Path(env[key]).resolve())
-    return cli_arguments(definition, stage, env, root, tmp_dir)
+    return [argument.format_map(values) for argument in arguments], root
 
 
 def main() -> int:
@@ -109,8 +102,6 @@ def main() -> int:
     result event for the auth error; rejected flags or schemas yield no event.
     This proves acceptance and stream shape, not provider structured output.
     """
-    from .adapter_process import _build_adapter_env
-
     definition = get_reviewer_definition("claude")
     with tempfile.TemporaryDirectory() as scratch:
         work = Path(scratch)
@@ -128,10 +119,10 @@ def main() -> int:
             # a developer shell that holds a real provider credential.
             for name in definition.credential_variables:
                 env.pop(name, None)
-            arguments = prepare_shell_adapter(definition, stage, env)
+            arguments, root = prepare_shell_adapter(definition, stage, env)
             result = subprocess.run(
-                [definition.cli, *arguments], input="probe\n", capture_output=True,
-                text=True, cwd=env["AI_REVIEW_WORKSPACE"], env=env, check=False, timeout=30,
+                ["claude", *arguments], input="probe\n", capture_output=True,
+                text=True, cwd=root, env=env, check=False, timeout=30,
             )
             for line in result.stdout.splitlines():
                 try:

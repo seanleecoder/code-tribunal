@@ -35,6 +35,7 @@ from .redact import redact_text
 from .reviewer_setup import prepare_workspace, state_environment, transport_schema
 from .reviewers import get_reviewer_definition
 
+_DEFINITION = get_reviewer_definition("opencode")
 _HOST = "127.0.0.1"
 # Where the image installs the pinned CLIs. It must win over anything earlier on the
 # runner's ambient PATH: running an ambient-resolved binary would let a preceding
@@ -309,7 +310,7 @@ def _server_env(tmp_dir: Path, *, api_key: str, config: dict[str, Any]) -> dict[
     """The server's whole environment: nothing ambient beyond TMPDIR."""
     env = {
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-        **state_environment(get_reviewer_definition("opencode"), tmp_dir, {}),
+        **state_environment(_DEFINITION, tmp_dir, {}),
         "OPENCODE_CONFIG_CONTENT": json.dumps(config, ensure_ascii=False),
         "OPENROUTER_API_KEY": api_key,
     }
@@ -491,7 +492,7 @@ def run() -> int:
     schema = transport_schema(stage)
     prompt = prompt_path.read_text(encoding="utf-8")
     tmp_dir, root = prepare_workspace(
-        get_reviewer_definition("opencode"),
+        _DEFINITION,
         stage,
         Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs")),
         Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out")),
@@ -545,6 +546,7 @@ def run() -> int:
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
+        shutil.rmtree(root, ignore_errors=True)
     # After the server is stopped and its log drained, so a fetch logged late in the
     # session is still caught. Deliberately outside the try/finally: this must raise
     # instead of letting `batch` be printed.

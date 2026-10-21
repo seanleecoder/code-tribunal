@@ -9,5 +9,4 @@ if [ -z "${CURSOR_API_KEY:-}" ]; then
   exit 2
 fi
 
-trap 'rm -rf "$AI_REVIEW_WORKSPACE"' EXIT
 cursor-agent "$@" < "$AI_REVIEW_RENDERED_PROMPT"

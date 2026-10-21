@@ -819,7 +819,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("--status-dir out/status", text)
 
 
-
 class GitHubActionsTemplateTests(unittest.TestCase):
     # Canonical-template -> installed-copy parity lives only in
     # `make workflow-parity`, which is also the one that can repair the drift.

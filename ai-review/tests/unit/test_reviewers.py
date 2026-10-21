@@ -195,17 +195,17 @@ class ReviewerSetupTests(unittest.TestCase):
     def test_every_seat_copies_the_snapshot_and_separates_critique(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
             work = Path(scratch)
-            snapshot = work / "inputs" / "repo_snapshot"
-            snapshot.mkdir(parents=True)
-            (snapshot / "reviewed.py").write_text("original\n", encoding="utf-8")
+            write_adapter_input_bundle(work / "inputs")
+            reviewed = work / "inputs" / "repo_snapshot" / "src" / "reviewed.py"
+            original = reviewed.read_text()
             for definition in REVIEWERS.values():
                 with self.subTest(reviewer=definition.reviewer_id):
                     output = work / definition.reviewer_id
                     _, review = prepare_workspace(definition, "review", work / "inputs", output)
                     self.assertTrue(review.is_absolute())
-                    self.assertEqual((review / "reviewed.py").read_text(), "original\n")
-                    (review / "reviewed.py").write_text("CLI write\n")
-                    self.assertEqual((snapshot / "reviewed.py").read_text(), "original\n")
+                    self.assertEqual((review / "src" / "reviewed.py").read_text(), original)
+                    (review / "src" / "reviewed.py").write_text("CLI write\n")
+                    self.assertEqual(reviewed.read_text(), original)
                     _, critique = prepare_workspace(definition, "critique", work / "inputs", output)
                     self.assertEqual(list(critique.iterdir()), [])
             with self.assertRaisesRegex(ValueError, "repo_snapshot is required"):

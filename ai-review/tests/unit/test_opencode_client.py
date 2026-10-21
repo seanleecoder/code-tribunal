@@ -307,11 +307,13 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = None
             thread = mock.Mock()
             directories: list[object] = []
+            snapshot_copied: list[bool] = []
 
             def start_server(
                 server_root: Path, _executable: str, _env: dict[str, str]
             ) -> tuple[object, str, opencode_client._ServerLog, object]:
                 directories.append(server_root)
+                snapshot_copied.append((server_root / "reviewed.py").is_file())
                 return process, "http://127.0.0.1:43123/", opencode_client._ServerLog(), thread
 
             def request(
@@ -349,12 +351,14 @@ class OpenCodeClientTests(unittest.TestCase):
                 os.chdir(cwd)
 
             # The server cwd and every request directory: absolute, and the same
-            # single copy of the root path, which holds the snapshot.
+            # single copy of the root path, which holds the snapshot while the
+            # server runs and is removed after it stops.
             self.assertGreaterEqual(len(directories), 3)
             for seen in directories:
                 self.assertEqual(Path(str(seen)), root)
                 self.assertTrue(Path(str(seen)).is_absolute())
-            self.assertTrue((root / "reviewed.py").is_file())
+            self.assertEqual(snapshot_copied, [True])
+            self.assertFalse(root.exists())
 
     def test_start_server_is_pinned_to_loopback_and_random_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -703,6 +707,7 @@ class OpenCodeClientTests(unittest.TestCase):
                 "INFO  downloading model list",
             )
         )
+
 
 if __name__ == "__main__":
     unittest.main()

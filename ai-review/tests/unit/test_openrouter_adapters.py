@@ -278,6 +278,9 @@ PY
                 "            write_json(self, 200, {'id': 'ses_fake', 'title': body.get('title')})\n"  # noqa: E501
                 "            return\n"
                 "        if self.path.endswith('/message'):\n"
+                "            directory = Path(self.headers['X-Opencode-Directory'])\n"
+                "            entries = sorted(f\"{p.relative_to(directory)}{'/' if p.is_dir() else ''}\" for p in directory.rglob('*'))\n"  # noqa: E501
+                "            (trace_dir / 'workspace.json').write_text(json.dumps(entries), encoding='utf-8')\n"  # noqa: E501
                 "            unknown = sorted(set(body) - {'agent', 'model', 'parts', 'format'})\n"  # noqa: E501
                 "            if unknown:\n"
                 "                write_json(self, 400, {'error': 'unknown message keys: ' + ','.join(unknown)})\n"  # noqa: E501
@@ -314,14 +317,16 @@ PY
             "  fi\n"
             "fi\n"
             "out=''\n"
+            "cd_dir=.\n"
             'while [ "$#" -gt 0 ]; do\n'
-            "  if [ \"$1\" = '-o' ]; then\n"
-            "    shift\n"
-            '    out="$1"\n'
-            "  fi\n"
+            '  case "$1" in\n'
+            '    -o) shift; out="$1" ;;\n'
+            '    --cd) shift; cd_dir="$1" ;;\n'
+            "  esac\n"
             "  shift || true\n"
             "done\n"
             'if [ -n "$out" ]; then\n'
+            '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$out.tree"\n'  # noqa: E501
             '  printf \'%s\\n\' "$0 $args" > "$out.args"\n'
             '  env | sort > "$out.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$out.key"\n'
@@ -417,7 +422,7 @@ PY
                     cli_env_path = Path(f"{trace_prefix}.env")
                     cli_key_path = Path(f"{trace_prefix}.key")
                     cli_pwd_path = None
-                    cli_tree_path = None
+                    cli_tree_path = Path(f"{trace_prefix}.tree")
                     expected_key = "sk-or-v1-test"
                 else:
                     trace_dir = (
@@ -463,12 +468,11 @@ PY
                 if isinstance(requests, list) and requests:
                     directory = requests[-1].get("directory")
                     if isinstance(directory, str) and directory:
-                        selected_dir = Path(directory)
                         meta["selected_dir"] = directory
-                        meta["workspace_entries"] = {
-                            f"{path.relative_to(selected_dir)}{'/' if path.is_dir() else ''}"
-                            for path in selected_dir.rglob("*")
-                        }
+                        workspace_path = cli_args_path.parent / "workspace.json"
+                        meta["workspace_entries"] = set(
+                            json.loads(workspace_path.read_text(encoding="utf-8"))
+                        )
                 if cli_tree_path is not None and cli_tree_path.exists():
                     meta["workspace_entries"] = {
                         line.removeprefix("./")
@@ -477,13 +481,7 @@ PY
                 dir_flag = {"opencode": "--dir", "codex": "--cd"}.get(cli_name)
                 if dir_flag is not None and dir_flag in shlex.split(cli_args):
                     argv = shlex.split(cli_args)
-                    selected_dir = Path(argv[argv.index(dir_flag) + 1])
-                    workspace_entries = {
-                        f"{path.relative_to(selected_dir)}{'/' if path.is_dir() else ''}"
-                        for path in selected_dir.rglob("*")
-                    }
-                    meta["selected_dir"] = str(selected_dir)
-                    meta["workspace_entries"] = workspace_entries
+                    meta["selected_dir"] = argv[argv.index(dir_flag) + 1]
                 return batch, cli_args, cli_env, meta
             finally:
                 os.chdir(entry_cwd)
