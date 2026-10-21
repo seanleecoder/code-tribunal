@@ -616,8 +616,8 @@ class SchemaValidationTests(unittest.TestCase):
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             try:
                 with mock.patch(
-                    "ai_review.adapter_runner.resolve_adapter_path",
-                    return_value=bad_adapter,
+                    "ai_review.adapter_runner.adapter_command",
+                    return_value=[str(bad_adapter)],
                 ):
                     self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
             finally:

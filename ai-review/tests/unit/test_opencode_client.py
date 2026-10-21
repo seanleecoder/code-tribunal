@@ -11,7 +11,37 @@ from unittest import mock
 
 from ai_review import opencode_client
 from ai_review.adapter_output import _load_adapter_json
+from ai_review.adapter_process import MOCK_ALLOW_REFUSAL
 from ai_review.schema import load_json_file
+
+_PINNED = "/usr/local/bin/opencode"
+
+
+def _write_snapshot(root: Path) -> None:
+    snapshot = root / "inputs" / "repo_snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "reviewed.py").write_text("value = 1\n", encoding="utf-8")
+
+
+def _seat_env(root: Path, prompt: Path, **extra: str) -> dict[str, str]:
+    """The environment the runner hands the seat, with a one-file snapshot."""
+    _write_snapshot(root)
+    return {
+        "AI_REVIEW_STAGE": "review",
+        "AI_REVIEW_MODEL": "google/test-model",
+        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+        "AI_REVIEW_INPUT_DIR": str(root / "inputs"),
+        "AI_REVIEW_OUTPUT_DIR": str(root / "out"),
+        "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
+        "OPENROUTER_API_KEY": "sk-or-v1-test",
+        **extra,
+    }
+
+
+def _pinned_opencode() -> contextlib.AbstractContextManager[object]:
+    return mock.patch.object(
+        opencode_client, "_resolve_opencode_executable", return_value=_PINNED
+    )
 
 
 class OpenCodeClientTests(unittest.TestCase):
@@ -158,16 +188,8 @@ class OpenCodeClientTests(unittest.TestCase):
                 }
 
             with (
-                mock.patch.dict(
-                    os.environ,
-                    {
-                        "AI_REVIEW_STAGE": "review",
-                        "AI_REVIEW_MODEL": "google/test-model",
-                        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                        "AI_REVIEW_OPENCODE_ROOT": str(root),
-                    },
-                    clear=True,
-                ),
+                mock.patch.dict(os.environ, _seat_env(root, prompt), clear=True),
+                _pinned_opencode(),
                 mock.patch.object(
                     opencode_client,
                     "_start_server",
@@ -249,16 +271,8 @@ class OpenCodeClientTests(unittest.TestCase):
                 }
 
             with (
-                mock.patch.dict(
-                    os.environ,
-                    {
-                        "AI_REVIEW_STAGE": "review",
-                        "AI_REVIEW_MODEL": "google/test-model",
-                        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                        "AI_REVIEW_OPENCODE_ROOT": str(root),
-                    },
-                    clear=True,
-                ),
+                mock.patch.dict(os.environ, _seat_env(root, prompt), clear=True),
+                _pinned_opencode(),
                 mock.patch.object(
                     opencode_client,
                     "_start_server",
@@ -284,11 +298,11 @@ class OpenCodeClientTests(unittest.TestCase):
     def test_relative_root_is_resolved_before_it_reaches_the_server(self) -> None:
         # The root is the server's cwd *and* the directory sent with every request,
         # so a relative value is joined onto itself and the server fails realPath on
-        # out/.tmp/opencode-review-root.N/out/.tmp/opencode-review-root.N.
+        # out/.tmp/opencode-review-root.N/out/.tmp/opencode-review-root.N. CI passes
+        # relative input and output directories.
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp).resolve()
-            root = parent / "out" / ".tmp" / "opencode-review-root.1"
-            root.mkdir(parents=True)
+            root = parent / "out" / ".tmp" / f"opencode-review-root.{os.getpid()}"
             prompt = parent / "prompt.md"
             prompt.write_text("Return the stage payload.\n", encoding="utf-8")
             process = mock.Mock()
@@ -297,7 +311,7 @@ class OpenCodeClientTests(unittest.TestCase):
             directories: list[object] = []
 
             def start_server(
-                server_root: Path,
+                server_root: Path, _executable: str, _env: dict[str, str]
             ) -> tuple[object, str, opencode_client._ServerLog, object]:
                 directories.append(server_root)
                 return process, "http://127.0.0.1:43123/", opencode_client._ServerLog(), thread
@@ -315,20 +329,15 @@ class OpenCodeClientTests(unittest.TestCase):
                     }
                 }
 
+            env = _seat_env(
+                parent, prompt, AI_REVIEW_INPUT_DIR="inputs", AI_REVIEW_OUTPUT_DIR="out"
+            )
             cwd = Path.cwd()
             os.chdir(parent)
             try:
                 with (
-                    mock.patch.dict(
-                        os.environ,
-                        {
-                            "AI_REVIEW_STAGE": "review",
-                            "AI_REVIEW_MODEL": "google/test-model",
-                            "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                            "AI_REVIEW_OPENCODE_ROOT": "out/.tmp/opencode-review-root.1",
-                        },
-                        clear=True,
-                    ),
+                    mock.patch.dict(os.environ, env, clear=True),
+                    _pinned_opencode(),
                     mock.patch.object(
                         opencode_client, "_start_server", side_effect=start_server
                     ),
@@ -342,11 +351,12 @@ class OpenCodeClientTests(unittest.TestCase):
                 os.chdir(cwd)
 
             # The server cwd and every request directory: absolute, and the same
-            # single copy of the root path.
+            # single copy of the root path, which holds the snapshot.
             self.assertGreaterEqual(len(directories), 3)
             for seen in directories:
                 self.assertEqual(Path(str(seen)), root)
                 self.assertTrue(Path(str(seen)).is_absolute())
+            self.assertTrue((root / "reviewed.py").is_file())
 
     def test_critique_transport_uses_critique_schema(self) -> None:
         schema = opencode_client._load_transport_schema("critique")
@@ -365,9 +375,6 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = None
             process.stdout = io.StringIO("")
             with (
-                mock.patch.object(
-                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
-                ),
                 mock.patch.object(opencode_client, "_free_loopback_port", return_value=43124),
                 mock.patch.object(
                     opencode_client,
@@ -378,7 +385,9 @@ class OpenCodeClientTests(unittest.TestCase):
                     opencode_client.subprocess, "Popen", return_value=process
                 ) as popen,
             ):
-                started, base_url, _logs, thread = opencode_client._start_server(Path(tmp))
+                started, base_url, _logs, thread = opencode_client._start_server(
+                    Path(tmp), _PINNED, {}
+                )
                 self.assertIs(started, process)
                 self.assertEqual(base_url, "http://127.0.0.1:43124/")
                 self.assertEqual(
@@ -404,16 +413,13 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = 1
             process.stdout = io.StringIO("failed to bind port\n")
             with (
-                mock.patch.object(
-                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
-                ),
                 mock.patch.object(opencode_client, "_free_loopback_port", return_value=43125),
                 mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
                 self.assertRaisesRegex(
                     opencode_client.OpenCodeClientError, "exited before readiness"
                 ) as caught,
             ):
-                opencode_client._start_server(Path(tmp))
+                opencode_client._start_server(Path(tmp), _PINNED, {})
 
             # The server's own output is the only clue to why it died, so it has
             # to reach the error rather than be dropped.
@@ -469,16 +475,8 @@ class OpenCodeClientTests(unittest.TestCase):
                 server_log.append('level=ERROR ref=err_adda2891 cause="UnknownError: boom"')
 
             with (
-                mock.patch.dict(
-                    os.environ,
-                    {
-                        "AI_REVIEW_STAGE": "review",
-                        "AI_REVIEW_MODEL": "google/test-model",
-                        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                        "AI_REVIEW_OPENCODE_ROOT": str(root),
-                    },
-                    clear=True,
-                ),
+                mock.patch.dict(os.environ, _seat_env(root, prompt), clear=True),
+                _pinned_opencode(),
                 mock.patch.object(
                     opencode_client,
                     "_start_server",
@@ -503,9 +501,6 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = None
             process.stdout = io.StringIO("")
             with (
-                mock.patch.object(
-                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
-                ),
                 mock.patch.object(opencode_client, "_free_loopback_port", return_value=43126),
                 mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
                 mock.patch.object(
@@ -518,48 +513,186 @@ class OpenCodeClientTests(unittest.TestCase):
                     opencode_client.OpenCodeClientError, "did not become ready"
                 ),
             ):
-                opencode_client._start_server(Path(tmp))
+                opencode_client._start_server(Path(tmp), _PINNED, {})
 
-    def test_missing_opencode_executable_is_a_client_error(self) -> None:
+    def _resolve(self, root: Path, *, pinned: bool, ambient: bool, evidence: bool) -> str | None:
+        """Resolve opencode with the trusted prefix and the evidence sandboxed."""
+        trusted = root / "trusted"
+        decoy = root / "decoy"
+        for directory, present in ((trusted, pinned), (decoy, ambient)):
+            directory.mkdir(exist_ok=True)
+            binary = directory / "opencode"
+            binary.unlink(missing_ok=True)
+            if present:
+                binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                binary.chmod(0o755)
+        marker = root / "pinned-evidence"
+        if evidence:
+            marker.mkdir(exist_ok=True)
+        with (
+            mock.patch.object(opencode_client, "_TRUSTED_BIN", trusted),
+            mock.patch.object(opencode_client, "_PINNED_OPENCODE_EVIDENCE", marker),
+            mock.patch.dict(os.environ, {"PATH": f"{decoy}:/usr/bin:/bin"}),
+        ):
+            return opencode_client._resolve_opencode_executable()
+
+    def test_the_pinned_opencode_wins_over_a_shadowing_decoy(self) -> None:
+        """An ambient-first lookup would let an earlier `opencode` replace the pin."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for evidence in (False, True):
+                with self.subTest(evidence=evidence):
+                    self.assertEqual(
+                        self._resolve(root, pinned=True, ambient=True, evidence=evidence),
+                        str(root / "trusted" / "opencode"),
+                    )
+
+    def test_an_ambient_opencode_is_used_only_where_nothing_was_pinned(self) -> None:
+        """A checkout and the base image's suite ship no pinned opencode."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(
+                self._resolve(root, pinned=False, ambient=True, evidence=False),
+                str(root / "decoy" / "opencode"),
+            )
+            self.assertIsNone(self._resolve(root, pinned=False, ambient=False, evidence=False))
+
+    def test_a_lost_pinned_opencode_refuses_the_ambient_one(self) -> None:
+        """An image that shipped a pinned CLI and lost it is broken, not a fallback."""
         with (
             tempfile.TemporaryDirectory() as tmp,
-            mock.patch.object(opencode_client.shutil, "which", return_value=None),
-            self.assertRaisesRegex(opencode_client.OpenCodeClientError, "was not found"),
+            self.assertRaisesRegex(
+                opencode_client.OpenCodeClientError, "refusing to run an ambient one"
+            ),
         ):
-            opencode_client._start_server(Path(tmp))
+            self._resolve(Path(tmp), pinned=False, ambient=True, evidence=True)
 
-    def test_forwarded_opencode_bin_is_used_when_executable(self) -> None:
+    def test_server_environment_is_fixed_and_carries_no_ambient_value(self) -> None:
+        """Nothing from the runner's environment reaches the server but TMPDIR."""
+        with mock.patch.dict(
+            os.environ,
+            {"TMPDIR": "/scratch", "PATH": "/hostile:/usr/bin", "GITLAB_TOKEN": "secret"},
+            clear=True,
+        ):
+            env = opencode_client._server_env(
+                Path("/work/out/.tmp"), api_key="sk-or-v1-test", config={"lsp": False}
+            )
+        self.assertEqual(
+            set(env),
+            {
+                "PATH",
+                "TMPDIR",
+                "HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "OPENCODE_CONFIG_DIR",
+                "OPENCODE_CONFIG_CONTENT",
+                "OPENROUTER_API_KEY",
+                *opencode_client._SERVER_HARDENING,
+            },
+        )
+        self.assertEqual(env["PATH"], "/usr/local/bin:/usr/bin:/bin")
+        self.assertEqual(env["TMPDIR"], "/scratch")
+        self.assertEqual(env["HOME"], "/work/out/.tmp/opencode-home")
+        self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"]), {"lsp": False})
+        for name in opencode_client._SERVER_HARDENING:
+            self.assertEqual(env[name], "1")
+
+    def test_review_root_holds_the_snapshot_and_critique_root_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            binary = Path(tmp) / "opencode"
-            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            binary.chmod(0o755)
-            with mock.patch.dict(os.environ, {"OPENCODE_BIN": str(binary)}):
-                self.assertEqual(
-                    opencode_client._resolve_opencode_executable(), str(binary)
-                )
-
-    def test_unusable_opencode_bin_falls_back_to_path_resolution(self) -> None:
-        """A stale or relative value must not reach Popen as a FileNotFoundError."""
-        for value in ("", "opencode", "/nonexistent/opencode"):
-            with self.subTest(value=value):
-                with (
-                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
-                    mock.patch.object(
-                        opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
-                    ),
-                ):
-                    self.assertEqual(
-                        opencode_client._resolve_opencode_executable(),
-                        "/usr/local/bin/opencode",
+            root = Path(tmp)
+            _write_snapshot(root)
+            for stage, expected in (("review", ["reviewed.py"]), ("critique", [])):
+                with self.subTest(stage=stage):
+                    output = root / stage
+                    _tmp_dir, review_root = opencode_client._prepare_workspace(
+                        stage, root / "inputs", output
                     )
-                with (
-                    mock.patch.dict(os.environ, {"OPENCODE_BIN": value}),
-                    mock.patch.object(opencode_client.shutil, "which", return_value=None),
-                    self.assertRaisesRegex(
-                        opencode_client.OpenCodeClientError, "was not found"
-                    ),
+                    self.assertEqual(
+                        sorted(path.name for path in review_root.iterdir()), expected
+                    )
+            with self.assertRaisesRegex(
+                opencode_client.OpenCodeClientError, "repo_snapshot is required"
+            ):
+                opencode_client._prepare_workspace("review", root / "absent", root / "out")
+
+    def test_mock_request_runs_the_mock_unless_a_real_cli_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = _seat_env(
+                root,
+                root / "prompt.md",
+                AI_REVIEW_LOCAL_MOCK="1",
+                AI_REVIEW_ALLOW_LOCAL_MOCK="true",
+                AI_REVIEW_REQUIRE_REAL_OPENCODE="0",
+            )
+            with (
+                mock.patch.dict(os.environ, env, clear=True),
+                mock.patch.object(opencode_client, "_start_server") as start_server,
+                mock.patch.object(opencode_client, "mock_reviewer_cli", return_value=0) as cli,
+            ):
+                self.assertEqual(opencode_client.run(), 0)
+            start_server.assert_not_called()
+            # The batch itself is the mock reviewer's, covered per seat in
+            # test_reviewers.py from a real input bundle.
+            cli.assert_called_once_with(["opencode", "review"], adapter_output=True)
+
+    def test_missing_prerequisite_falls_back_only_when_a_real_cli_is_not_required(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt = root / "prompt.md"
+            for label, executable, overrides in (
+                ("no cli", None, {}),
+                ("no key", _PINNED, {"OPENROUTER_API_KEY": ""}),
+            ):
+                with self.subTest(label), mock.patch.object(
+                    opencode_client, "_resolve_opencode_executable", return_value=executable
                 ):
-                    opencode_client._resolve_opencode_executable()
+                    required = _seat_env(root, prompt, **overrides)
+                    with (
+                        mock.patch.dict(os.environ, required, clear=True),
+                        self.assertRaisesRegex(
+                            opencode_client.OpenCodeClientError, "requires it"
+                        ),
+                    ):
+                        opencode_client.run()
+                    # Without the allow flag the fallback refuses, which the runner
+                    # reports as a config_error.
+                    refused = {**required, "AI_REVIEW_REQUIRE_REAL_OPENCODE": "0"}
+                    with (
+                        mock.patch.dict(os.environ, refused, clear=True),
+                        self.assertRaisesRegex(
+                            opencode_client.OpenCodeClientError, MOCK_ALLOW_REFUSAL
+                        ),
+                    ):
+                        opencode_client.run()
+                    allowed = {**refused, "AI_REVIEW_ALLOW_LOCAL_MOCK": "true"}
+                    with (
+                        mock.patch.dict(os.environ, allowed, clear=True),
+                        mock.patch.object(
+                            opencode_client, "mock_reviewer_cli", return_value=0
+                        ) as cli,
+                    ):
+                        self.assertEqual(opencode_client.run(), 0)
+                    cli.assert_called_once_with(["opencode", "review"], adapter_output=True)
+
+    def test_generated_config_is_restricted_and_maps_effort_unchanged(self) -> None:
+        config = opencode_client._opencode_config("google/test-model", "xhigh")
+        agent = config["agent"]["ai-reviewer"]
+        self.assertEqual(agent["model"], "openrouter/google/test-model")
+        self.assertEqual(agent["reasoningEffort"], "xhigh")
+        self.assertEqual(config["provider"]["openrouter"]["models"], {"google/test-model": {}})
+        self.assertEqual(config["enabled_providers"], ["openrouter"])
+        for permissions in (agent["permission"], config["permission"]):
+            self.assertEqual(permissions["*"], "deny")
+            self.assertEqual(permissions["external_directory"], {"*": "deny"})
+            self.assertEqual(permissions["StructuredOutput"], "allow")
+        for effort in (None, "", "minimal"):
+            with self.subTest(effort=effort):
+                config = opencode_client._opencode_config("google/test-model", effort)
+                self.assertNotIn("reasoningEffort", config["agent"]["ai-reviewer"])
 
     @staticmethod
     def _server_log(*lines: str, maxlen: int = 80) -> opencode_client._ServerLog:
@@ -614,16 +747,15 @@ class OpenCodeClientTests(unittest.TestCase):
                 + "".join(f"INFO  tool call {index}\n" for index in range(200))
             )
             with (
-                mock.patch.object(
-                    opencode_client.shutil, "which", return_value="/usr/local/bin/opencode"
-                ),
                 mock.patch.object(opencode_client, "_free_loopback_port", return_value=43127),
                 mock.patch.object(opencode_client.subprocess, "Popen", return_value=process),
                 mock.patch.object(
                     opencode_client, "_request_json", return_value={"healthy": True}
                 ),
             ):
-                _, _, server_log, drain_thread = opencode_client._start_server(Path(tmp))
+                _, _, server_log, drain_thread = opencode_client._start_server(
+                    Path(tmp), _PINNED, {}
+                )
             drain_thread.join(timeout=5)
             self.assertEqual(server_log.ripgrep_fetch, "INFO  downloading ripgrep 15.1.0")
 
