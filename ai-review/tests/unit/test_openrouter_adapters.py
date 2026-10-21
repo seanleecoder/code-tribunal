@@ -65,6 +65,7 @@ _ENV_KEYS = [
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "HISTFILE",
+    "HOME",
     "CODEX_HOME",
     "OPENCODE_CONFIG_DIR",
     "OPENCODE_CONFIG_CONTENT",
@@ -211,6 +212,7 @@ PY
                 'printf \'%s\\n\' "$0 $args" > "$AI_REVIEW_OUTPUT_DIR/claude.args"\n'
                 'printf \'%s\\n\' "$@" > "$AI_REVIEW_OUTPUT_DIR/claude.argv"\n'
                 'env | sort > "$AI_REVIEW_OUTPUT_DIR/claude.env"\n'
+                'printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$AI_REVIEW_OUTPUT_DIR/claude.key"\n'
                 'pwd > "$AI_REVIEW_OUTPUT_DIR/claude.pwd"\n'
                 'find . -mindepth 1 > "$AI_REVIEW_OUTPUT_DIR/claude.tree"\n'
                 'cat > "$AI_REVIEW_OUTPUT_DIR/claude.stdin"\n'
@@ -372,6 +374,7 @@ PY
             os.environ["GEMINI_API_KEY"] = "gemini-secret"
             os.environ["GOOGLE_API_KEY"] = "google-secret"
             os.environ["HISTFILE"] = "/tmp/host-history"
+            os.environ["HOME"] = "/tmp/host-home"
             os.environ["CODEX_HOME"] = "/tmp/host-codex-home"
             os.environ["OPENCODE_CONFIG_DIR"] = "/tmp/host-opencode-config"
             os.environ["OPENCODE_CONFIG_CONTENT"] = '{"host":true}'
@@ -401,6 +404,13 @@ PY
                     cli_pwd_path = trace_dir / "cli.pwd"
                     cli_tree_path = trace_dir / "cli.tree"
                     expected_key = "cursor-test-key"
+                elif cli_name == "claude":
+                    cli_args_path = output_dir / "claude.args"
+                    cli_env_path = output_dir / "claude.env"
+                    cli_key_path = output_dir / "claude.key"
+                    cli_pwd_path = output_dir / "claude.pwd"
+                    cli_tree_path = output_dir / "claude.tree"
+                    expected_key = "sk-or-v1-test"
                 elif Path(f"{raw_out}.args").exists():
                     trace_prefix = Path(str(raw_out))
                     cli_args_path = Path(f"{trace_prefix}.args")
@@ -743,12 +753,12 @@ PY
         # critique reasons over the prompt payload only: tools are disabled (empty
         # --tools value) so claude answers in one shot instead of agentically
         # exploring the snapshot, and the repo snapshot is neither copied nor
-        # rooted (no --add-dir, no claude-review-root, cwd is not a review root).
+        # exposed through --add-dir. Its disposable working root stays empty.
         self.assertIn("--tools", argv)
         self.assertEqual(argv[argv.index("--tools") + 1], "")
         self.assertNotIn("--add-dir", argv)
         self.assertNotIn("Read,Grep,Glob", argv)
-        self.assertNotRegex(cwd, r"/out/\.tmp/claude-review-root\.\d+$")
+        self.assertRegex(cwd, r"/out/\.tmp/claude-critique-root\.\d+$")
         self.assertEqual(review_roots, [])
         # critique steers toward the critique schema, not the review one.
         self.assertIn("--json-schema", argv)
@@ -969,12 +979,16 @@ PY
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
         for reviewer, cli_name, key_name in (
+            ("claude", "claude", "OPENROUTER_API_KEY"),
             ("codex", "codex", "OPENROUTER_API_KEY"),
             ("opencode", "opencode", "OPENROUTER_API_KEY"),
             ("cursor", "cursor-agent", "CURSOR_API_KEY"),
         ):
             with self.subTest(reviewer=reviewer):
-                _batch, _cli_args, cli_env, _meta = self._run_with_fake_cli(reviewer, cli_name)
+                _batch, _cli_args, cli_env, meta = self._run_with_fake_cli(reviewer, cli_name)
+                output = Path(str(meta["input_dir"])).parent / "out"
+                self.assertIn(f"HOME={output}/.tmp/{reviewer}-home\n", cli_env)
+                self.assertNotIn("/tmp/host-home", cli_env)
 
                 if key_name == "OPENROUTER_API_KEY":
                     self.assertIn("OPENROUTER_API_KEY=sk-or-v1-test", cli_env)
@@ -1090,53 +1104,6 @@ PY
         self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
         self.assertNotIn("evil.com", cli_args)
         self.assertNotIn("evil.com", cli_env)
-
-    def test_claude_shell_maps_openrouter_token_unconditionally(self) -> None:
-        """The shell maps the OpenRouter token with no endpoint condition.
-
-        Claude has one route, so the mapping is unconditional. The endpoint is
-        not read here at all — the runner injects it (see
-        test_claude_native_anthropic_route_is_unreachable, which covers what the
-        CLI actually receives through the supported path).
-        """
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            input_dir = root / "inputs"
-            output_dir = root / "out"
-            bin_dir = root / "bin"
-            prompt = root / "prompt.md"
-            bin_dir.mkdir()
-            output_dir.mkdir()
-            write_adapter_input_bundle(input_dir)
-            self._write_fake_cli(bin_dir, "claude")
-            prompt.write_text("prompt", encoding="utf-8")
-
-            env = {
-                **os.environ,
-                "AI_REVIEW_INPUT_DIR": str(input_dir),
-                "AI_REVIEW_OUTPUT_DIR": str(output_dir),
-                "AI_REVIEW_LOCAL_MOCK": "0",
-                "AI_REVIEW_REVIEWER": "claude",
-                "AI_REVIEW_STAGE": "review",
-                "AI_REVIEW_MODEL": "anthropic/claude-haiku-4.5",
-                "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-                "OPENROUTER_API_KEY": "sk-or-v1-test",
-                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-            }
-
-            completed = subprocess.run(
-                [str(Path(__file__).resolve().parents[2] / "adapters" / "claude.sh")],
-                check=True,
-                env=env,
-                text=True,
-                capture_output=True,
-            )
-
-            self.assertEqual(
-                json.loads(completed.stdout)["structured_output"], {"findings": []}
-            )
-            cli_env = (output_dir / "claude.env").read_text(encoding="utf-8")
-            self.assertIn("ANTHROPIC_AUTH_TOKEN=sk-or-v1-test", cli_env)
 
     def test_codex_model_override_reaches_cli(self) -> None:
         batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(

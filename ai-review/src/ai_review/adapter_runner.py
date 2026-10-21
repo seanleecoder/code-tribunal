@@ -31,6 +31,7 @@ from .config import (
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
+from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
     adapter_command,
@@ -208,6 +209,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp=prompt_tmp,
             mock=mock_requested,
         )
+        if not mock_requested and reviewer_definition.adapter_path is not None:
+            command.extend(prepare_shell_adapter(reviewer_definition, stage, env))
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         # Opt-in live mirroring of the adapter's output to the job log; off by

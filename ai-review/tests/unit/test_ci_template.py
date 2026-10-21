@@ -23,7 +23,6 @@ _PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-im
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
 _IMAGE_DOCKERFILES = tuple((Path(__file__).resolve().parents[2] / "images").glob("*.Dockerfile"))
-_CODEX_ADAPTER = Path(__file__).resolve().parents[2] / "adapters" / "codex.sh"
 _OPENCODE_SEARCH_SMOKE_SH = (
     Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.sh"
 )
@@ -819,20 +818,6 @@ class GitLabCiTemplateTests(unittest.TestCase):
         # SPEC-66: the review and critique jobs' needs deliver out/status/.
         self.assertIn("--status-dir out/status", text)
 
-    def test_codex_critique_uses_critique_schema(self) -> None:
-        """The stage selects the schema, and codex passes what the stage selected.
-
-        Selection moved into the shared adapter scaffolding when the four seats
-        stopped each carrying their own copy, so the pairing is asserted across the
-        two files rather than within one.
-        """
-        common = (_CODEX_ADAPTER.parent / "common.sh").read_text(encoding="utf-8")
-        self.assertIn("raw_finding_batch.schema.json", common)
-        self.assertIn("critique_batch.schema.json", common)
-
-        text = _CODEX_ADAPTER.read_text(encoding="utf-8")
-        self.assertIn("resolve_output_schema", text)
-        self.assertIn('"$OUTPUT_SCHEMA"', text)
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):

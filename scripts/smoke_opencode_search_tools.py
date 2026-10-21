@@ -195,7 +195,9 @@ def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
     snapshot = work / "inputs" / "repo_snapshot"
     snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "example.py").write_text("value = 1\n", encoding="utf-8")
-    tmp_dir, root = client._prepare_workspace("review", work / "inputs", work / "out")
+    tmp_dir, root = client.prepare_workspace(
+        client.get_reviewer_definition("opencode"), "review", work / "inputs", work / "out"
+    )
     config = client._opencode_config(PROBE_MODEL, None)
     return client._server_env(tmp_dir, api_key=PROBE_API_KEY, config=config), root
 

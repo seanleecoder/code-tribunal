@@ -21,6 +21,8 @@ from ai_review.adapter_process import (
 )
 from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.config import ConfigError, validate_config
+from ai_review.reviewer_setup import main as probe_claude
+from ai_review.reviewer_setup import prepare_workspace, transport_schema
 from ai_review.reviewers import (
     REVIEWER_IDS,
     REVIEWERS,
@@ -187,6 +189,75 @@ class ReviewerRegistryTests(unittest.TestCase):
                             {k: v for k, v in env.items() if k in endpoint_names},
                             expected_by_kind[definition.endpoint_kind],
                         )
+
+
+class ReviewerSetupTests(unittest.TestCase):
+    def test_every_seat_copies_the_snapshot_and_separates_critique(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            work = Path(scratch)
+            snapshot = work / "inputs" / "repo_snapshot"
+            snapshot.mkdir(parents=True)
+            (snapshot / "reviewed.py").write_text("original\n", encoding="utf-8")
+            for definition in REVIEWERS.values():
+                with self.subTest(reviewer=definition.reviewer_id):
+                    output = work / definition.reviewer_id
+                    _, review = prepare_workspace(definition, "review", work / "inputs", output)
+                    self.assertTrue(review.is_absolute())
+                    self.assertEqual((review / "reviewed.py").read_text(), "original\n")
+                    (review / "reviewed.py").write_text("CLI write\n")
+                    self.assertEqual((snapshot / "reviewed.py").read_text(), "original\n")
+                    _, critique = prepare_workspace(definition, "critique", work / "inputs", output)
+                    self.assertEqual(list(critique.iterdir()), [])
+            with self.assertRaisesRegex(ValueError, "repo_snapshot is required"):
+                prepare_workspace(REVIEWERS["codex"], "review", work / "absent", work / "missing")
+
+    def test_transport_schema_keeps_every_key_except_the_draft_declaration(self) -> None:
+        for stage, name in (("review", "raw_finding_batch"), ("critique", "critique_batch")):
+            with self.subTest(stage=stage):
+                original = load_json_file(_AI_REVIEW_ROOT / "schemas" / f"{name}.schema.json")
+                expected = {key: value for key, value in original.items() if key != "$schema"}
+                self.assertEqual(transport_schema(stage), expected)
+                self.assertIn("$schema", original)
+        with self.assertRaisesRegex(ValueError, "unsupported reviewer stage"):
+            transport_schema("")
+
+    def test_build_probe_accepts_auth_results_and_rejects_either_stage_without_one(self) -> None:
+        for rejected_stage in (None, "review", "critique"):
+            seen: list[str] = []
+
+            def invoke(command, rejected_stage=rejected_stage, seen=seen, **kwargs):
+                env = kwargs["env"]
+                stage = env["AI_REVIEW_STAGE"]
+                seen.append(stage)
+                self.assertEqual(command[0], "claude")
+                self.assertIn("--safe-mode", command)
+                self.assertIn("--effort", command)
+                self.assertNotIn("OPENROUTER_API_KEY", env)
+                self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "")
+                schema = json.loads(command[command.index("--json-schema") + 1])
+                self.assertNotIn("$schema", schema)
+                tools = command[command.index("--tools") + 1]
+                self.assertEqual(tools, "Read,Grep,Glob" if stage == "review" else "")
+                self.assertEqual("--add-dir" in command, stage == "review")
+                self.assertTrue(Path(env["HOME"]).is_dir())
+                self.assertEqual(list(Path(kwargs["cwd"]).iterdir()), [])
+                stdout = "banner\n" if stage == rejected_stage else '{"type":"result"}\n'
+                return subprocess.CompletedProcess(command, 1, stdout, "auth or argv error")
+
+            with (
+                self.subTest(rejected_stage=rejected_stage),
+                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "must-not-be-used"}),
+                mock.patch("ai_review.reviewer_setup.subprocess.run", side_effect=invoke),
+            ):
+                if rejected_stage is None:
+                    self.assertEqual(probe_claude(), 0)
+                else:
+                    with self.assertRaisesRegex(
+                        RuntimeError, f"Claude {rejected_stage} probe failed"
+                    ):
+                        probe_claude()
+            expected = ["review"] if rejected_stage == "review" else ["review", "critique"]
+            self.assertEqual(seen, expected)
 
 
 class ReviewerAdapterContractTests(unittest.TestCase):

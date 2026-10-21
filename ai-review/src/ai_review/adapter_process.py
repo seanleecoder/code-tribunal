@@ -81,7 +81,8 @@ def _build_adapter_env(
     # cursor_backend gets no endpoint env: the Cursor CLI exposes none to pin.
     # Its backend is an explicit, opt-in second egress destination gated by
     # reviewers.cursor enabled=false and a dedicated CURSOR_API_KEY credential;
-    # no OpenRouter fallback is injected for it, and cursor.sh scrubs env again.
+    # no OpenRouter fallback is injected for it. The allowlist and credential
+    # selection here define every shell seat's complete subprocess environment.
 
     for credential_variable in reviewer_definition.credential_variables:
         if (credential := os.environ.get(credential_variable)) is not None:
@@ -183,6 +184,7 @@ def _run_adapter_process(
         text=True,
         bufsize=1,
         env=env,
+        cwd=env.get("AI_REVIEW_WORKSPACE"),
         start_new_session=True,
     )
     collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
