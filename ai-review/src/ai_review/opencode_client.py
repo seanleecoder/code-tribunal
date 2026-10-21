@@ -1,4 +1,12 @@
-"""Small, one-shot HTTP client for the pinned OpenCode server."""
+"""The OpenCode reviewer seat: launch the pinned server and drive its HTTP API.
+
+The runner starts this module directly (the registry's ``adapter_module``), so it
+owns everything a seat's shell adapter does elsewhere: the mock gate, pinned-binary
+resolution, the isolated home, the review root, the generated configuration and the
+scrubbed server environment. OpenCode's ``run --format json`` only selects raw
+event output and enforces no response schema, so the seat uses the pinned server
+API instead, where the stage schema reaches OpenCode's StructuredOutput tool.
+"""
 
 from __future__ import annotations
 
@@ -20,11 +28,41 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from .adapter_output import extract_json_text
+from .adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
 from .canonical import json_loads_no_duplicates
+from .mock_reviewer import cli as mock_reviewer_cli
 from .redact import redact_text
+from .reviewers import get_reviewer_definition
 from .schema import load_json_file, schema_dir
 
+_REVIEWER = "opencode"
 _HOST = "127.0.0.1"
+# Where the image installs the pinned CLIs. It must win over anything earlier on the
+# runner's ambient PATH: running an ambient-resolved binary would let a preceding
+# `opencode` substitute itself for the pinned one.
+_TRUSTED_BIN = Path("/usr/local/bin")
+# Evidence that this environment shipped a pinned opencode. If it is present but the
+# binary is not, the image is broken, and running an ambient binary instead would be
+# the same substitution by another route.
+_PINNED_OPENCODE_EVIDENCE = Path("/usr/local/lib/node_modules/opencode-ai")
+# The server's PATH is fixed rather than the runner's ambient one, so OpenCode's
+# which("rg") resolves the pinned /usr/local/bin/rg and never falls through to a
+# download or to an earlier rg. reviewer.Dockerfile's final guard proves resolution
+# on exactly this PATH.
+_SERVER_PATH = "/usr/local/bin:/usr/bin:/bin"
+_SERVER_HARDENING = (
+    "OPENCODE_DISABLE_AUTOUPDATE",
+    "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+    "OPENCODE_DISABLE_LSP_DOWNLOAD",
+    "OPENCODE_DISABLE_CLAUDE_CODE",
+    "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
+    "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
+    "OPENCODE_DISABLE_MODELS_FETCH",
+)
+# Supported reviewer efforts map onto reasoningEffort unchanged. A provider- or
+# model-specific rejection stays visible rather than silently falling back to a
+# different effort or the provider default.
+_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 # Matches either word order, because the wording is OpenCode's, not ours: any log
 # line that mentions both downloading and ripgrep means the pinned binary lost.
 _RIPGREP_FETCH_PATTERN = re.compile(
@@ -38,14 +76,66 @@ _SERVER_LOG_DETAIL_LINES = 12
 _SERVER_LOG_DETAIL_LIMIT = 4000
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
 _MESSAGE_TIMEOUT_SECONDS = 24 * 60 * 60
+# Applied to the ai-reviewer agent and as the top-level default.
+#
+# external_directory must be denied explicitly. It is a permission key of its own,
+# so the "*": "deny" tool wildcard does not cover it, and OpenCode's default is
+# {"*": "ask"} — verified with `opencode --pure debug agent ai-reviewer` against
+# this exact config. Without the explicit rule, read/grep on an absolute path
+# outside the review root raises an approval request that nothing in a headless
+# reviewer can answer, and the sanitized snapshot boundary stops being the
+# reviewer's actual reach.
+#
+# StructuredOutput must be allowed explicitly, for the opposite reason: it is the
+# tool OpenCode injects when the session request carries
+# format: {"type":"json_schema", …}, and it is the only way a schema-conforming
+# batch can be returned. The "*": "deny" wildcard covered it, so it was filtered
+# out of the tool list sent to the model — the reviewer was instructed by
+# OpenCode's own prompt to call a tool it was never offered, every response was
+# flagged StructuredOutputError, and every review failed. Verified in the built
+# reviewer image against a loopback stub provider: with the wildcard alone the
+# provider request carries only glob/grep/read; with this rule it carries
+# StructuredOutput as well and the batch comes back through info.structured.
+# The tool has no filesystem or network reach — it returns the model's answer —
+# so allowing it does not widen the review boundary that external_directory,
+# bash/edit/write and the empty critique root define.
+_CONFIG_PERMISSIONS: dict[str, Any] = {
+    "*": "deny",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "StructuredOutput": "allow",
+    "bash": "deny",
+    "edit": "deny",
+    "write": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "task": "deny",
+    "skill": "deny",
+    "external_directory": {"*": "deny"},
+}
+# Trims the schemas of tools the permissions above already deny; the permissions
+# remain the enforcement.
+_DISABLED_TOOLS = (
+    "bash",
+    "edit",
+    "write",
+    "patch",
+    "webfetch",
+    "websearch",
+    "task",
+    "todowrite",
+    "todoread",
+    "skill",
+)
 _PERMISSION_RULES = [
     {"permission": "question", "action": "deny", "pattern": "*"},
     {"permission": "plan_enter", "action": "deny", "pattern": "*"},
     {"permission": "plan_exit", "action": "deny", "pattern": "*"},
-    # Denied at the session too, not only in the adapter's agent config: every
-    # permission whose default is "ask" would otherwise block a headless session
-    # on an approval nobody can grant. OpenCode's default for external_directory
-    # is {"*": "ask"}, and the tool-level "*" wildcard does not cover it.
+    # Denied at the session too, not only in the agent config: every permission
+    # whose default is "ask" would otherwise block a headless session on an
+    # approval nobody can grant. OpenCode's default for external_directory is
+    # {"*": "ask"}, and the tool-level "*" wildcard does not cover it.
     {"permission": "external_directory", "action": "deny", "pattern": "*"},
 ]
 
@@ -146,8 +236,8 @@ def _server_log_detail(server_log: _ServerLog | None) -> str:
 
     OpenCode answers an internal failure with `UnknownError` and "Check server logs
     for details" plus a `ref`; the cause and its stack exist only in the server's log,
-    keyed by that same ref. That log is written under XDG_DATA_HOME, which the adapter
-    points into `out/.tmp` — not an uploaded artifact — so without this the ref names
+    keyed by that same ref. That log is written under XDG_DATA_HOME, which
+    `_server_env` points into `out/.tmp` — not an uploaded artifact — so without this the ref names
     a record nobody can read, and a 500 is indistinguishable from any other 500.
     `_start_server` passes `--print-logs` so those lines arrive on the captured
     stdout; this puts them next to the failure that needs them.
@@ -165,7 +255,7 @@ def _assert_no_ripgrep_fetch(server_log: _ServerLog) -> None:
 
     OpenCode's grep/glob tools resolve which("rg") first and otherwise download a
     ripgrep release, verifying nothing but a non-zero byte length. The image ships a
-    pinned, checksum-verified rg on the adapter's fixed PATH so that never happens;
+    pinned, checksum-verified rg on the server's fixed PATH so that never happens;
     if it happens anyway, an unverified binary executed inside the reviewer and its
     findings must not be posted. That makes this a hard failure rather than a log
     line someone might notice.
@@ -180,33 +270,116 @@ def _assert_no_ripgrep_fetch(server_log: _ServerLog) -> None:
         )
 
 
-def _resolve_opencode_executable() -> str:
-    """Prefer the adapter's OPENCODE_BIN, but only if it is actually executable.
+def _resolve_opencode_executable() -> str | None:
+    """The pinned opencode first; an ambient one only where nothing was pinned.
 
-    The adapter resolves the pinned binary on the ambient PATH and forwards it,
-    because the fixed trusted PATH it hands opencode governs which("rg") and must
-    not carry an injected binary directory. An unusable value (empty, relative,
-    stale) must not reach Popen as a raw FileNotFoundError; fall back to PATH
-    resolution so the failure is this module's own diagnosis.
+    Where nothing was ever pinned (a checkout, a dev machine, or the base image,
+    whose test suite supplies its own fake CLIs) ambient resolution on the runner's
+    PATH is all that is left. Returns None when no opencode exists at all.
     """
-    forwarded = os.environ.get("OPENCODE_BIN", "")
-    if forwarded and os.path.isabs(forwarded) and os.access(forwarded, os.X_OK):
-        return forwarded
-    executable = shutil.which("opencode")
-    if executable is None:
-        raise OpenCodeClientError("pinned opencode executable was not found")
-    return executable
+    pinned = _TRUSTED_BIN / "opencode"
+    if pinned.is_file() and os.access(pinned, os.X_OK):
+        return str(pinned)
+    if _PINNED_OPENCODE_EVIDENCE.exists():
+        raise OpenCodeClientError(
+            f"{_PINNED_OPENCODE_EVIDENCE} exists, so a pinned opencode is expected "
+            f"in {_TRUSTED_BIN} but is missing; refusing to run an ambient one"
+        )
+    return shutil.which("opencode")
+
+
+def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
+    """The restricted configuration the server loads from OPENCODE_CONFIG_CONTENT.
+
+    The API key stays an `{env:…}` template the server expands, and the OpenRouter
+    endpoint is a literal: OpenCode reads no endpoint variable.
+    """
+    agent: dict[str, Any] = {
+        "description": "Read-only AI code reviewer",
+        "model": f"openrouter/{model}",
+        "permission": _CONFIG_PERMISSIONS,
+        "tools": dict.fromkeys(_DISABLED_TOOLS, False),
+    }
+    if effort in _REASONING_EFFORTS:
+        agent["reasoningEffort"] = effort
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        "lsp": False,
+        "formatter": False,
+        "provider": {
+            "openrouter": {
+                "options": {
+                    "apiKey": "{env:OPENROUTER_API_KEY}",
+                    "baseURL": "https://openrouter.ai/api/v1",
+                },
+                "models": {model: {}},
+            }
+        },
+        "enabled_providers": ["openrouter"],
+        "agent": {"ai-reviewer": agent},
+        "permission": _CONFIG_PERMISSIONS,
+    }
+
+
+def _prepare_workspace(stage: str, input_dir: Path, output_dir: Path) -> tuple[Path, Path]:
+    """Create the disposable state directories and the review root.
+
+    Returns the scratch directory and the review root, both resolved: the root is
+    the server's cwd and the directory sent with every request, so a relative root
+    would be joined onto itself, and a root whose path differs from its realpath
+    makes every in-root path look external to OpenCode.
+    """
+    tmp_dir = (output_dir / ".tmp").resolve()
+    root = tmp_dir / f"opencode-review-root.{os.getpid()}"
+    for directory in (
+        root,
+        tmp_dir / "opencode-home",
+        tmp_dir / "opencode-config-home",
+        tmp_dir / "opencode-data-home",
+        tmp_dir / "opencode-config-dir",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    if stage == "review":
+        # Explore a copy of the pinned snapshot, so the reviewed files sit at the
+        # root, CLI writes stay out of the shared bundle, and the input directory is
+        # off the path the CLI walks upward for project config. Prepare already
+        # dropped the agent files every CLI reads.
+        snapshot = input_dir / "repo_snapshot"
+        if not snapshot.is_dir():
+            raise OpenCodeClientError(
+                "AI review repo_snapshot is required for the opencode reviewer"
+            )
+        shutil.copytree(snapshot, root, symlinks=True, dirs_exist_ok=True)
+    # Critique reasons only over the pooled findings in the prompt, so its root
+    # stays empty: read/glob/grep remain allowed but have nothing to explore, the
+    # same net effect as claude's tools-off critique.
+    return tmp_dir, root
+
+
+def _server_env(tmp_dir: Path, *, api_key: str, config: dict[str, Any]) -> dict[str, str]:
+    """The server's whole environment: nothing ambient beyond TMPDIR."""
+    env = {
+        "PATH": _SERVER_PATH,
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+        "HOME": str(tmp_dir / "opencode-home"),
+        "XDG_CONFIG_HOME": str(tmp_dir / "opencode-config-home"),
+        "XDG_DATA_HOME": str(tmp_dir / "opencode-data-home"),
+        "OPENCODE_CONFIG_DIR": str(tmp_dir / "opencode-config-dir"),
+        "OPENCODE_CONFIG_CONTENT": json.dumps(config, ensure_ascii=False),
+        "OPENROUTER_API_KEY": api_key,
+    }
+    env.update(dict.fromkeys(_SERVER_HARDENING, "1"))
+    return env
 
 
 def _start_server(
-    root: Path,
+    root: Path, executable: str, env: dict[str, str]
 ) -> tuple[subprocess.Popen[str], str, _ServerLog, threading.Thread]:
-    executable = _resolve_opencode_executable()
     port = _free_loopback_port()
     process = subprocess.Popen(
         # --print-logs is not diagnostics-by-preference: OpenCode reports an internal
         # failure as UnknownError plus a log ref, and writes the cause only to its own
-        # log file under XDG_DATA_HOME — which the adapter points at out/.tmp, so it is
+        # log file under XDG_DATA_HOME — which _server_env points at out/.tmp, so it is
         # discarded with the run. Printing to stdout puts it in the captured server log
         # instead. INFO is explicit rather than relying on the default: it carries the
         # ERROR line, the per-request logging around it, and the permission decisions,
@@ -224,7 +397,7 @@ def _start_server(
             str(port),
         ],
         cwd=root,
-        env=os.environ.copy(),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -375,21 +548,46 @@ def _normalize_message(
     return payload, False
 
 
+def _run_mock(stage: str) -> int:
+    # The second gate is deliberate: AI_REVIEW_LOCAL_MOCK alone could be set as a
+    # GitLab project variable, which would silently mock a production review.
+    if os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") != "true":
+        raise OpenCodeClientError(_SHELL_MOCK_ALLOW_REFUSAL)
+    return mock_reviewer_cli([_REVIEWER, stage], adapter_output=True)
+
+
 def run() -> int:
     stage = os.environ.get("AI_REVIEW_STAGE", "")
+    require_real = (
+        os.environ.get(get_reviewer_definition(_REVIEWER).require_real_control) == "1"
+    )
+    if not require_real and os.environ.get("AI_REVIEW_LOCAL_MOCK") == "1":
+        return _run_mock(stage)
     model = os.environ.get("AI_REVIEW_MODEL", "")
-    prompt_path = Path(os.environ.get("AI_REVIEW_RENDERED_PROMPT", ""))
-    # Absolute: the root is both the server's cwd and the directory sent with every
-    # request, so a relative value would be resolved against itself.
-    root = Path(os.environ.get("AI_REVIEW_OPENCODE_ROOT", "")).resolve()
     if not model:
+        # A configuration error on every seat, so it never falls back to the mock.
         raise OpenCodeClientError("AI_REVIEW_MODEL is required")
+    executable = _resolve_opencode_executable()
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if executable is None or not api_key:
+        if not require_real:
+            return _run_mock(stage)
+        missing = "the opencode CLI was not found" if executable is None else (
+            "OPENROUTER_API_KEY was not set"
+        )
+        raise OpenCodeClientError(f"{missing}, and the opencode reviewer requires it")
+    prompt_path = Path(os.environ.get("AI_REVIEW_RENDERED_PROMPT", ""))
     if not prompt_path.is_file():
         raise OpenCodeClientError("AI_REVIEW_RENDERED_PROMPT is required")
-    if not root.is_dir():
-        raise OpenCodeClientError("AI_REVIEW_OPENCODE_ROOT must be an existing directory")
     schema = _load_transport_schema(stage)
     prompt = prompt_path.read_text(encoding="utf-8")
+    tmp_dir, root = _prepare_workspace(
+        stage,
+        Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs")),
+        Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out")),
+    )
+    config = _opencode_config(model, os.environ.get("AI_REVIEW_EFFORT"))
+    env = _server_env(tmp_dir, api_key=api_key, config=config)
 
     process: subprocess.Popen[str] | None = None
     drain_thread: threading.Thread | None = None
@@ -397,7 +595,7 @@ def run() -> int:
     session_failure: OpenCodeClientError | None = None
     result: tuple[dict[str, Any] | list[Any], bool] | None = None
     try:
-        process, base_url, server_log, drain_thread = _start_server(root)
+        process, base_url, server_log, drain_thread = _start_server(root, executable, env)
         try:
             session = _request_json(
                 base_url,

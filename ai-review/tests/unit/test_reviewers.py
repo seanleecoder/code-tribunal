@@ -25,6 +25,7 @@ from ai_review.reviewers import (
     REVIEWER_IDS,
     REVIEWERS,
     ReviewerRegistryError,
+    adapter_command,
     resolve_adapter_path,
     trusted_runtime_root,
 )
@@ -54,11 +55,42 @@ class ReviewerRegistryTests(unittest.TestCase):
         self.assertEqual(trusted_runtime_root(), _AI_REVIEW_ROOT)
         for definition in REVIEWERS.values():
             with self.subTest(reviewer=definition.reviewer_id):
+                self.assertNotEqual(
+                    definition.adapter_path is None, definition.adapter_module is None
+                )
+                if definition.adapter_module is not None:
+                    command = adapter_command(definition)
+                    self.assertEqual(
+                        command, [sys.executable, "-P", "-m", definition.adapter_module]
+                    )
+                    continue
+                assert definition.adapter_path is not None
                 self.assertFalse(Path(definition.adapter_path).is_absolute())
                 resolved = resolve_adapter_path(definition)
+                self.assertEqual(adapter_command(definition), [str(resolved)])
                 self.assertTrue(resolved.is_relative_to(trusted_runtime_root()))
                 self.assertTrue(resolved.is_file())
                 self.assertTrue(resolved.stat().st_mode & stat.S_IXUSR)
+
+    def test_module_seats_import_from_the_runner_package_only(self) -> None:
+        """An ambient PYTHONPATH entry must not shadow the seat's module."""
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/tmp/hostile"}, clear=True):
+            for reviewer_id, definition in REVIEWERS.items():
+                with self.subTest(reviewer=reviewer_id):
+                    env = _build_adapter_env(
+                        reviewer=reviewer_id,
+                        stage="review",
+                        model="model",
+                        input_dir=Path("inputs"),
+                        output_dir=Path("out"),
+                        reviewer_config={"timeout_seconds": 30},
+                        reviewer_definition=definition,
+                        prompt_tmp=None,
+                    )
+                    if definition.adapter_module is None:
+                        self.assertEqual(env["PYTHONPATH"], "/tmp/hostile")
+                    else:
+                        self.assertEqual(env["PYTHONPATH"], str(_AI_REVIEW_ROOT / "src"))
 
     def test_absolute_and_escaping_registry_paths_are_rejected(self) -> None:
         definition = REVIEWERS["codex"]
@@ -111,6 +143,16 @@ class ReviewerRegistryTests(unittest.TestCase):
         }
         for reviewer_id, definition in REVIEWERS.items():
             with self.subTest(reviewer=reviewer_id):
+                if definition.adapter_module is not None:
+                    # A module seat reads the name from the registry itself, so no
+                    # control name may appear in its source at all.
+                    module = definition.adapter_module.removeprefix("ai_review.")
+                    source = (_AI_REVIEW_ROOT / "src" / "ai_review" / f"{module}.py").read_text(
+                        encoding="utf-8"
+                    )
+                    for control in all_controls:
+                        self.assertNotIn(control, source)
+                    continue
                 adapter = resolve_adapter_path(definition).read_text(encoding="utf-8")
                 assignment = next(
                     line

@@ -35,8 +35,8 @@ from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
 from .reviewers import (
     ReviewerRegistryError,
+    adapter_command,
     get_reviewer_definition,
-    resolve_adapter_path,
 )
 from .schema import (
     AdapterModelError,
@@ -162,7 +162,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
 
         try:
-            adapter_path = resolve_adapter_path(reviewer_definition)
+            command = adapter_command(reviewer_definition)
         except ReviewerRegistryError as exc:
             raise ConfigError(str(exc)) from exc
         prompt_tmp: Path | None = None
@@ -202,7 +202,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         # Opt-in live mirroring of the adapter's output to the job log; off by
         # default to avoid large stream-json/--verbose dumps and log truncation.
         mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
-        result = _run_adapter_process(adapter_path, env, timeout_seconds, mirror_logs=mirror_logs)
+        result = _run_adapter_process(command, env, timeout_seconds, mirror_logs=mirror_logs)
         # When not mirroring live, still surface the adapter's stderr after it
         # exits (adapters like codex narrate progress there) — matching the
         # pre-streaming behavior. When mirroring, it was already echoed live.
@@ -212,7 +212,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
             stderr_text = result.stderr or f"adapter exited {result.returncode}"
-            # Shell adapters refuse mock fallback without the allow flag; that is
+            # Adapters refuse mock fallback without the allow flag; that is
             # misconfiguration, not a model failure.
             if _adapter_exit_is_mock_allow_refusal(stderr_text):
                 exit_status = "config_error"

@@ -154,7 +154,11 @@ class PackagedReviewerImageTests(unittest.TestCase):
         from ai_review.reviewers import REVIEWERS, resolve_adapter_path
 
         scripts = [trusted_runtime_root() / "adapters" / "run_reviewer.sh"]
-        scripts.extend(resolve_adapter_path(definition) for definition in REVIEWERS.values())
+        scripts.extend(
+            resolve_adapter_path(definition)
+            for definition in REVIEWERS.values()
+            if definition.adapter_path is not None
+        )
         for script in scripts:
             with self.subTest(script=script.name):
                 self.assertTrue(script.is_file(), f"{script} is missing from the image")

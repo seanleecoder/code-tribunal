@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,11 @@ class ReviewerRegistryError(ValueError):
 @dataclass(frozen=True)
 class ReviewerDefinition:
     reviewer_id: str
-    adapter_path: str
+    # Exactly one launcher: a shell adapter beneath the trusted runtime root, or a
+    # module of this package that the runner starts with its own interpreter. S07
+    # moves every seat to the second form; OpenCode is the first (N07).
+    adapter_path: str | None
+    adapter_module: str | None
     credential_variables: frozenset[str]
     endpoint_kind: EndpointKind
     output_codec: OutputCodec
@@ -39,12 +44,14 @@ def _definition(
     require_real_control: str,
     *,
     output_codec: OutputCodec,
+    adapter_module: str | None = None,
     supports_effort: bool = True,
     credential_variables: frozenset[str] = _OPENROUTER_CREDENTIALS,
 ) -> ReviewerDefinition:
     return ReviewerDefinition(
         reviewer_id=reviewer_id,
-        adapter_path=f"adapters/{reviewer_id}.sh",
+        adapter_path=None if adapter_module else f"adapters/{reviewer_id}.sh",
+        adapter_module=adapter_module,
         credential_variables=credential_variables,
         endpoint_kind=endpoint_kind,
         output_codec=output_codec,
@@ -73,6 +80,7 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "openrouter",
             "AI_REVIEW_REQUIRE_REAL_OPENCODE",
             output_codec="batch_json",
+            adapter_module="ai_review.opencode_client",
         ),
         "cursor": _definition(
             "cursor",
@@ -103,7 +111,11 @@ def get_reviewer_definition(reviewer_id: str) -> ReviewerDefinition:
 def resolve_adapter_path(
     definition: ReviewerDefinition, *, runtime_root: Path | None = None
 ) -> Path:
-    """Resolve a registry adapter beneath the installed trusted runtime root."""
+    """Resolve a registry shell adapter beneath the installed trusted runtime root."""
+    if definition.adapter_path is None:
+        raise ReviewerRegistryError(
+            f"reviewer {definition.reviewer_id} has no shell adapter"
+        )
     relative_path = Path(definition.adapter_path)
     if relative_path.is_absolute():
         raise ReviewerRegistryError(
@@ -117,3 +129,20 @@ def resolve_adapter_path(
             f"reviewer {definition.reviewer_id} adapter path escapes trusted runtime root"
         )
     return resolved
+
+
+def adapter_command(definition: ReviewerDefinition) -> list[str]:
+    """The argv the runner spawns for one seat.
+
+    A module seat runs under the runner's own interpreter, which is the trusted one
+    by construction, with ``-P`` so the job's working directory cannot shadow the
+    package; ``adapter_python_path`` pins the import root to match.
+    """
+    if definition.adapter_module is not None:
+        return [sys.executable, "-P", "-m", definition.adapter_module]
+    return [str(resolve_adapter_path(definition))]
+
+
+def adapter_python_path() -> str:
+    """The import root a module seat runs from: this installed package's own."""
+    return str(Path(__file__).resolve().parents[1])

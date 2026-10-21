@@ -612,7 +612,7 @@ class EffortEnvTests(unittest.TestCase):
                 os.environ["AI_REVIEW_CODEX_EFFORT"] = env_effort
             try:
                 with mock.patch(
-                    "ai_review.adapter_runner.resolve_adapter_path", return_value=adapter
+                    "ai_review.adapter_runner.adapter_command", return_value=[str(adapter)]
                 ):
                     self.assertEqual(run_prepared_adapter("codex", "review"), 0)
                 seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
@@ -742,8 +742,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         self._previous = {key: os.environ.get(key) for key in self._env_keys}
 
     def tearDown(self) -> None:
-        if hasattr(self, "_adapter_path_patch"):
-            self._adapter_path_patch.stop()
+        if hasattr(self, "_adapter_command_patch"):
+            self._adapter_command_patch.stop()
         for key, value in self._previous.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -754,12 +754,13 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         os.environ["AI_REVIEW_INPUT_DIR"] = str(paths["input_dir"])
         os.environ["AI_REVIEW_OUTPUT_DIR"] = str(paths["output_dir"])
         os.environ["AI_REVIEW_CONFIG"] = str(config_path)
-        self._adapter_path_patch = mock.patch(
-            "ai_review.adapter_runner.resolve_adapter_path",
-            side_effect=lambda definition: paths["adapter_dir"]
-            / f"{definition.reviewer_id}.sh",
+        self._adapter_command_patch = mock.patch(
+            "ai_review.adapter_runner.adapter_command",
+            side_effect=lambda definition: [
+                str(paths["adapter_dir"] / f"{definition.reviewer_id}.sh")
+            ],
         )
-        self._adapter_path_patch.start()
+        self._adapter_command_patch.start()
 
     def test_status_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -840,11 +841,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             self._set_env(paths, config_path)
-            self._adapter_path_patch.stop()
-            del self._adapter_path_patch
+            self._adapter_command_patch.stop()
+            del self._adapter_command_patch
 
             with mock.patch(
-                "ai_review.adapter_runner.resolve_adapter_path",
+                "ai_review.adapter_runner.adapter_command",
                 side_effect=ReviewerRegistryError("adapter unavailable"),
             ):
                 self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
@@ -877,8 +878,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
                 with mock.patch.dict(os.environ, drift):
                     self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
-                self._adapter_path_patch.stop()
-                del self._adapter_path_patch
+                self._adapter_command_patch.stop()
+                del self._adapter_command_patch
 
                 self.assertFalse(sentinel.exists())
                 self.assertFalse((paths["output_dir"] / ".tmp").exists())

@@ -52,13 +52,15 @@ from the package at all.
 | `adapter_output.py` | Reviewer output parsing and root normalization | no |
 | `adapter_process.py` | Adapter subprocess lifecycle and environment | no |
 | `adapter_artifacts.py` | Status and debug artifact writing | no |
+| `opencode_client.py` | The OpenCode seat, launched by the runner as a module: workspace, generated config, server environment and the loopback server client | no |
 
 These rules are worth stating because breaking them is silent:
 
-- The reviewer registry selects the output codec for the pinned adapter
-  invocation. `_load_adapter_json` decodes that transport and passes the explicit
-  stage to the shared root normalizer; no decoder guesses another reviewer's
-  transport from stdout.
+- The reviewer registry selects each seat's launcher (a shell adapter, or a
+  module run under the runner's own interpreter) and the output codec for the
+  pinned adapter invocation. `_load_adapter_json` decodes that transport and
+  passes the explicit stage to the shared root normalizer; no decoder guesses
+  another reviewer's transport from stdout.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`

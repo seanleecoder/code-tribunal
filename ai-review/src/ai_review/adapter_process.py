@@ -21,7 +21,7 @@ from typing import Any
 
 from .config import resolve_reviewer_timeout_seconds
 from .redact import redact_text
-from .reviewers import ReviewerDefinition
+from .reviewers import ReviewerDefinition, adapter_python_path
 
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
@@ -107,6 +107,10 @@ def _build_adapter_env(
     for credential_variable in reviewer_definition.credential_variables:
         if (credential := os.environ.get(credential_variable)) is not None:
             env[credential_variable] = credential
+    if reviewer_definition.adapter_module is not None:
+        # A module seat imports from the package the runner itself was loaded from,
+        # never from an ambient PYTHONPATH entry that could shadow it.
+        env["PYTHONPATH"] = adapter_python_path()
 
     env["AI_REVIEW_REVIEWER"] = reviewer
     env["AI_REVIEW_STAGE"] = stage
@@ -175,7 +179,7 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
 
 
 def _run_adapter_process(
-    adapter_path: Path, env: dict[str, str], timeout_seconds: int, *, mirror_logs: bool
+    command: list[str], env: dict[str, str], timeout_seconds: int, *, mirror_logs: bool
 ) -> _AdapterResult:
     # Capture the adapter's stdout+stderr, and when mirror_logs is set, also
     # stream them to the job log line-by-line (redacted) instead of buffering
@@ -184,13 +188,14 @@ def _run_adapter_process(
     # narrates on stderr); it goes to stderr so stdout stays a clean channel.
     # Mirroring is opt-in (AI_REVIEW_STREAM_ADAPTER_LOGS=1) because stream-json /
     # --verbose output can be large and risk job-log truncation.
-    # start_new_session puts the adapter shell in its own process group so we can
-    # kill the whole tree on timeout. The adapters don't `exec` their final CLI
-    # (claude/codex/opencode run as children of the shell), so killing only the
-    # shell PID would orphan the CLI, leave it holding the stdout/stderr pipes
-    # open, and hang the pump threads (and the timeout) indefinitely.
+    # start_new_session puts the adapter in its own process group so we can kill
+    # the whole tree on timeout. The adapters don't `exec` their final CLI
+    # (claude and codex run as children of the shell, and opencode serve as a
+    # child of its Python client), so killing only the adapter PID would orphan
+    # the CLI, leave it holding the stdout/stderr pipes open, and hang the pump
+    # threads (and the timeout) indefinitely.
     proc = subprocess.Popen(
-        [str(adapter_path)],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -227,7 +232,7 @@ def _run_adapter_process(
         for thread in threads:
             thread.join(timeout=5)
         raise subprocess.TimeoutExpired(
-            [str(adapter_path)],
+            command,
             timeout_seconds,
             output="".join(collected["stdout"]),
             stderr="".join(collected["stderr"]),

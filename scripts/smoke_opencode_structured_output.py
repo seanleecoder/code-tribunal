@@ -4,14 +4,14 @@
 Runs inside the reviewer image via scripts/smoke_opencode_structured_output.sh,
 which denies egress. The only thing faked is the provider: a loopback stub stands
 in for OpenRouter, so the probe needs no secret and can run on every build. The
-adapter's own generated config, its sanitized review root, the pinned `opencode`
+client's own generated config, its sanitized review root, the pinned `opencode`
 server, the pinned `rg`, and the real `ai_review.opencode_client` are all the
 shipped ones.
 
 The defect this exists for shipped once. OpenCode injects a tool named
 `StructuredOutput` when the session request carries
 `format: {"type":"json_schema", …}`, and its own prompt tells the model to call it
-exactly once; the adapter's `"*": "deny"` permission wildcard covered that tool, so
+exactly once; the config's `"*": "deny"` permission wildcard covered that tool, so
 it was filtered out of the tool list sent to the provider. The reviewer was
 instructed to call a tool it was never offered, every response came back
 `StructuredOutputError`, and every review failed with zero findings. Nothing in the
@@ -27,7 +27,7 @@ Proves, against the real pinned binaries:
    not merely non-empty. The client must also report the honest
    `used structured_output` wording the rollout canary reads.
 
-2. Removing only the `StructuredOutput` permission from the captured config removes
+2. Removing only the `StructuredOutput` permission from the client's config removes
    the tool from the provider request and fails the run. That is the negative
    control: without it this probe would keep passing if the transport broke for a
    different reason, or if the assertion stopped being reachable.
@@ -42,16 +42,15 @@ Proves, against the real pinned binaries:
    would accept.
 
 Deliberately not proven here: that the OpenRouter endpoint is the only egress. The
-stub replaces `provider.openrouter.options.baseURL` in the captured config, which is
-exactly the value the adapter pins and `adapter_runner` validates, so that pin is
-asserted where it is enforced rather than in a probe that has to move it.
+stub replaces `provider.openrouter.options.baseURL` in the client's config, which is
+exactly the value the client pins, so that pin is asserted where it is enforced
+rather than in a probe that has to move it.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -67,26 +66,22 @@ FIXED_PATH = "/usr/local/bin:/usr/bin:/bin"
 SMOKE_DIR = Path("/smoke")
 INSTALL_ROOT = Path("/opt/ai-review")
 
-OPENCODE_HARDENING = (
-    "OPENCODE_DISABLE_AUTOUPDATE",
-    "OPENCODE_DISABLE_DEFAULT_PLUGINS",
-    "OPENCODE_DISABLE_LSP_DOWNLOAD",
-    "OPENCODE_DISABLE_CLAUDE_CODE",
-    "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
-    "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
-    "OPENCODE_DISABLE_MODELS_FETCH",
-)
-
 STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
 PROBE_MODEL = "preflight/probe-model"
 # A token that exists only in the snapshot this probe writes, so a match proves the
 # search ran in the review root rather than anywhere else on the filesystem.
 GREP_MARKER = "PREFLIGHT_GREP_MARKER"
 CLIENT_TIMEOUT_SECONDS = 180.0
-
-
-def adapter_path() -> Path:
-    return INSTALL_ROOT / "adapters" / "opencode.sh"
+# Runs the shipped client end to end — mock gate, pinned-binary resolution,
+# workspace, server environment, session — with only its generated config replaced
+# by the patched copy passed as the first argument.
+CLIENT_WITH_CONFIG = (
+    "import json, sys\n"
+    "from ai_review import opencode_client\n"
+    "config = json.loads(sys.argv[1])\n"
+    "opencode_client._opencode_config = lambda _model, _effort: config\n"
+    "raise SystemExit(opencode_client.main())\n"
+)
 
 
 def python_path() -> str:
@@ -132,9 +127,9 @@ def patch_provider_base_url(config: str, base_url: str) -> str:
     try:
         options = parsed["provider"]["openrouter"]["options"]
     except (KeyError, TypeError):
-        fail(f"the adapter's config has no openrouter provider options: {config!r}")
+        fail(f"the client's config has no openrouter provider options: {config!r}")
     if not isinstance(options, dict) or "baseURL" not in options:
-        fail("the adapter's openrouter options carry no baseURL to redirect")
+        fail("the client's openrouter options carry no baseURL to redirect")
     options["baseURL"] = base_url
     return json.dumps(parsed)
 
@@ -154,7 +149,7 @@ def strip_structured_output_permission(config: str) -> str:
             removed = True
     if not removed:
         fail(
-            "the adapter's config carries no StructuredOutput permission, so the "
+            "the client's config carries no StructuredOutput permission, so the "
             "negative control would prove nothing"
         )
     return json.dumps(parsed)
@@ -302,95 +297,43 @@ class _StubProvider:
         return f"http://127.0.0.1:{self.port}/api/v1"
 
 
-def _capture_adapter_config() -> tuple[str, Path]:
-    """Capture the config and review root the adapter really generates.
+def _client_config() -> str:
+    """The config the shipped client generates, from the function `run()` calls.
 
-    Driven through `PYTHON`, which the adapter honors verbatim as a caller's
-    deliberate choice: the shim stands in for the client and dumps
-    `$OPENCODE_CONFIG_CONTENT`. Restating the config here would make the probe blind
-    to the drift it exists to catch — the permission block under test is the
-    adapter's, not a copy of it.
+    Restating the config here would make the probe blind to the drift it exists to
+    catch — the permission block under test is the client's, not a copy of it.
     """
-    work = SMOKE_DIR / "structured-output"
-    inputs = work / "inputs"
-    snapshot = inputs / "repo_snapshot"
-    output = work / "out"
-    stub_dir = work / "stub-bin"
-    home = work / "adapter-home"
-    captured = work / "captured-config.json"
-    for directory in (snapshot, output, stub_dir, home):
-        directory.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, python_path())
+    from ai_review import opencode_client  # noqa: PLC0415
+
+    return json.dumps(opencode_client._opencode_config(PROBE_MODEL, None))
+
+
+def _run_client(config: str, label: str) -> tuple[int, str, str]:
+    """Run the shipped client as the runner would, with `config` in place of its own."""
+    work = SMOKE_DIR / f"client-{label}"
+    snapshot = work / "inputs" / "repo_snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "example.py").write_text(f"{GREP_MARKER} = 1\n", encoding="utf-8")
-    prompt = inputs / "prompt.md"
+    prompt = work / "inputs" / "prompt.md"
     prompt.write_text("preflight structured-output probe prompt\n", encoding="utf-8")
-
-    shim = stub_dir / "python-shim"
-    shim.write_text(
-        f'#!/bin/sh\nprintf "%s" "$OPENCODE_CONFIG_CONTENT" > "{captured}"\nexit 1\n',
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-
-    subprocess.run(
-        ["/bin/sh", str(adapter_path())],
-        env={
-            "PATH": FIXED_PATH,
-            "PYTHON": str(shim),
-            "HOME": str(home),
-            "PYTHONPATH": python_path(),
-            "AI_REVIEW_REVIEWER": "opencode",
-            "AI_REVIEW_STAGE": "review",
-            "AI_REVIEW_MODEL": PROBE_MODEL,
-            "AI_REVIEW_INPUT_DIR": str(inputs),
-            "AI_REVIEW_OUTPUT_DIR": str(output),
-            "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-            "AI_REVIEW_REQUIRE_REAL_OPENROUTER": "1",
-            "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
-        },
-        cwd=work,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if not captured.exists() or not captured.read_text(encoding="utf-8").strip():
-        fail("the adapter did not hand its client a generated config to capture")
-    roots = sorted((output / ".tmp").glob("opencode-review-root.*"))
-    if not roots:
-        fail("the adapter did not create a sanitized review root")
-    return captured.read_text(encoding="utf-8"), roots[-1]
-
-
-def _run_client(config: str, root: Path, label: str) -> tuple[int, str, str]:
-    """Run the shipped client against a config, in the adapter's own environment."""
-    run_home = SMOKE_DIR / f"client-{label}"
-    for name in ("home", "config", "data", "config-dir"):
-        (run_home / name).mkdir(parents=True, exist_ok=True)
-    prompt = SMOKE_DIR / "structured-output" / "inputs" / "prompt.md"
     env = {
         "PATH": FIXED_PATH,
         "PYTHONPATH": python_path(),
         "TMPDIR": "/tmp",
-        "HOME": str(run_home / "home"),
-        "XDG_CONFIG_HOME": str(run_home / "config"),
-        "XDG_DATA_HOME": str(run_home / "data"),
-        "OPENCODE_CONFIG_DIR": str(run_home / "config-dir"),
-        "OPENCODE_CONFIG_CONTENT": config,
-        "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
-        "AI_REVIEW_MODEL": PROBE_MODEL,
         "AI_REVIEW_STAGE": "review",
+        "AI_REVIEW_MODEL": PROBE_MODEL,
+        "AI_REVIEW_INPUT_DIR": str(work / "inputs"),
+        "AI_REVIEW_OUTPUT_DIR": str(work / "out"),
         "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-        "AI_REVIEW_OPENCODE_ROOT": str(root),
+        "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
+        "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
     }
-    env.update(dict.fromkeys(OPENCODE_HARDENING, "1"))
-    opencode = shutil.which("opencode", path=FIXED_PATH)
-    if opencode is None:
-        fail("pinned opencode was not found on the adapter's fixed trusted PATH")
-    env["OPENCODE_BIN"] = str(opencode)
     try:
         completed = subprocess.run(
-            [sys.executable, "-m", "ai_review.opencode_client"],
+            [sys.executable, "-P", "-c", CLIENT_WITH_CONFIG, config],
             env=env,
-            cwd=root,
+            cwd=work,
             capture_output=True,
             text=True,
             check=False,
@@ -401,11 +344,11 @@ def _run_client(config: str, root: Path, label: str) -> tuple[int, str, str]:
     return completed.returncode, completed.stdout, completed.stderr
 
 
-def _prove_structured_output_transport(config: str, root: Path) -> None:
+def _prove_structured_output_transport(config: str) -> None:
     batch = probe_batch()
     with _StubProvider(batch) as stub:
         code, stdout, stderr = _run_client(
-            patch_provider_base_url(config, stub.base_url), root, "transport"
+            patch_provider_base_url(config, stub.base_url), "transport"
         )
         requests = list(stub.requests)
 
@@ -451,12 +394,12 @@ def _prove_grep_ran_in_the_review_root(requests: list[dict[str, Any]], stderr: s
         fail(f"opencode attempted a review-time ripgrep download: {stderr.strip()}")
 
 
-def _prove_wildcard_alone_hides_the_tool(config: str, root: Path) -> None:
+def _prove_wildcard_alone_hides_the_tool(config: str) -> None:
     """The negative control: remove the allow, lose the tool and the run."""
     stripped = strip_structured_output_permission(config)
     with _StubProvider(probe_batch()) as stub:
         code, _stdout, stderr = _run_client(
-            patch_provider_base_url(stripped, stub.base_url), root, "control"
+            patch_provider_base_url(stripped, stub.base_url), "control"
         )
         requests = list(stub.requests)
 
@@ -474,9 +417,9 @@ def _prove_wildcard_alone_hides_the_tool(config: str, root: Path) -> None:
 
 def main() -> int:
     os.environ["PATH"] = FIXED_PATH
-    config, root = _capture_adapter_config()
-    _prove_structured_output_transport(config, root)
-    _prove_wildcard_alone_hides_the_tool(config, root)
+    config = _client_config()
+    _prove_structured_output_transport(config)
+    _prove_wildcard_alone_hides_the_tool(config)
     print("opencode structured-output preflight smoke passed")
     return 0
 

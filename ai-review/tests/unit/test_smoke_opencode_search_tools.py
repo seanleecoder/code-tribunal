@@ -85,16 +85,16 @@ class ProbeContractTests(unittest.TestCase):
         """Both were findings once: a shadowed CLI, and acceptance read as enforcement."""
         text = SCRIPT.read_text(encoding="utf-8")
         # The pinned opencode must win over a decoy earlier on the ambient PATH,
-        # checked by running the adapter's own resolver rather than a copy of it.
-        self.assertIn("resolve_trusted opencode", text)
+        # checked by running the client's own resolver rather than a copy of it.
+        self.assertIn("shipped_client()._resolve_opencode_executable()", text)
         self.assertIn('resolved != "/usr/local/bin/opencode"', text)
         # The session must retain the rule, not merely accept it.
         self.assertIn(
             '{"permission": "external_directory", "action": "deny", "pattern": "*"}', text
         )
-        # Config capture must not rely on shadowing, which the check above forbids.
-        self.assertIn('"PYTHON": str(shim)', text)
-        self.assertNotIn('"PATH": f"{stub_dir}', text)
+        # The config and server environment are the client's, not restated here.
+        self.assertIn("client._opencode_config(PROBE_MODEL, None)", text)
+        self.assertIn("client._server_env(", text)
 
     def test_wrapper_mounts_the_pin_and_driver_the_probe_reads(self) -> None:
         """Neither file ships in the image (N20), so the wrapper must mount both."""

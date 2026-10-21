@@ -402,7 +402,6 @@ override them in merge-request-controlled configuration.
 | `OPENROUTER_BASE_URL` | Pinned Codex and OpenCode egress route, set by the runner to `https://openrouter.ai/api/v1`. Not read from the environment; an ambient value is overridden. Cursor receives no endpoint variable — its CLI exposes none to pin. |
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
-| `AI_REVIEW_OPENCODE_ROOT` | Clean, disposable OpenCode working root passed to the loopback server client. |
 | `AI_REVIEW_STREAM_ADAPTER_LOGS` | Internal diagnostic streaming switch; avoid in shared logs. |
 | `XDG_CONFIG_HOME` | Disposable OpenCode configuration home created by the adapter. |
 | `XDG_DATA_HOME` | Disposable OpenCode data home created by the adapter. |

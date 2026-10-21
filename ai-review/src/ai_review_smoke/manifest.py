@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from ai_review.reviewers import REVIEWERS
 
-# The modules a consumer pipeline invokes as ``python -m``. Import alone does not
-# prove the entry point survived a refactor, so these are additionally required
-# to expose a callable ``main``/``cli``.
+# The modules a consumer pipeline or the runner invokes as ``python -m``. Import
+# alone does not prove the entry point survived a refactor, so these are
+# additionally required to expose a callable ``main``/``cli``. Module seats come
+# from the registry, like the adapter scripts below.
 CLI_MODULES: tuple[str, ...] = (
     "ai_review.input_bundle",
     "ai_review.consensus",
     "ai_review.post",
     "ai_review.schema",
+    *sorted(
+        definition.adapter_module
+        for definition in REVIEWERS.values()
+        if definition.adapter_module is not None
+    ),
 )
 
 # Runtime paths relative to the packaged root (``/opt/ai-review``). Files an
@@ -22,7 +28,11 @@ CLI_MODULES: tuple[str, ...] = (
 # here without anyone remembering to extend this list.
 RUNTIME_FILES: tuple[str, ...] = tuple(
     sorted(
-        {definition.adapter_path for definition in REVIEWERS.values()}
+        {
+            definition.adapter_path
+            for definition in REVIEWERS.values()
+            if definition.adapter_path is not None
+        }
         | {
             "adapters/common.sh",
             "adapters/run_reviewer.sh",

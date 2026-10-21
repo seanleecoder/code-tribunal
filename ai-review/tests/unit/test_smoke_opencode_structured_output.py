@@ -1,7 +1,7 @@
 """Unit coverage for the OpenCode structured-output preflight probe.
 
 The probe itself needs the reviewer image and a Docker daemon. What is pure here is
-how it reads a provider request and how it mutates the captured config for its
+how it reads a provider request and how it mutates the client's config for its
 negative control — and both are exactly where a wrong reading would turn a broken
 transport into a pass. The fixtures are shaped like the real request bodies the
 pinned server sends: tools as OpenAI-style function entries, tool results as
@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from ai_review import opencode_client
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "smoke_opencode_structured_output.py"
@@ -130,9 +134,24 @@ class ProbeContractTests(unittest.TestCase):
         # The negative control and the non-empty grep result are both load-bearing.
         self.assertIn("_prove_wildcard_alone_hides_the_tool", text)
         self.assertIn("GREP_MARKER not in result", text)
-        # Config capture must come from the adapter, not be restated here.
-        self.assertIn('"PYTHON": str(shim)', text)
+        # The config must come from the client, not be restated here.
         self.assertNotIn('"permission": {"*": "deny"', text)
+
+    def test_probe_config_is_the_clients_own(self) -> None:
+        with mock.patch.object(smoke, "INSTALL_ROOT", REPO_ROOT / "ai-review"):
+            config = smoke._client_config()
+        self.assertEqual(
+            json.loads(config), opencode_client._opencode_config(smoke.PROBE_MODEL, None)
+        )
+
+    def test_probe_replaces_only_the_clients_config_builder(self) -> None:
+        """The bootstrap's stand-in must match the builder `run()` calls."""
+        self.assertIn("opencode_client._opencode_config = lambda", smoke.CLIENT_WITH_CONFIG)
+        self.assertIn("opencode_client.main()", smoke.CLIENT_WITH_CONFIG)
+        self.assertEqual(
+            list(inspect.signature(opencode_client._opencode_config).parameters),
+            ["model", "effort"],
+        )
 
     def test_wrapper_denies_egress_and_mounts_the_checkout_driver(self) -> None:
         text = WRAPPER.read_text(encoding="utf-8")
