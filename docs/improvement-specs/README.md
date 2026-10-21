@@ -47,8 +47,8 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S03, S10, S17, N01, N06, N07, N08, N09, N12, N13, N15, N16, N18, N19, N20.
-- **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
+- **Done:** S01, S02, S03, S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N18, N19, N20.
+- **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
   decoder, deleted on
   2026-10-18), S18, S19.
@@ -137,7 +137,8 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
    [#222](https://github.com/seanleecoder/code-tribunal/pull/222)).
 7. Done: per-seat output codecs (N06) and OpenCode launched from Python (N07).
 8. Done: the S03 Python mock switch and seat setup in the registry (N08).
-9. The typed configuration object (N05), before the S04 knob removal.
+9. Done: the frozen typed configuration object and centralized defaults (N05).
+   S04's knob removal stays in the next major release.
 10. The `input_bundle` revision cleanup (N17).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -294,8 +295,13 @@ class ConsensusIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config = load_config(self._mini_config(root))
-            modified = copy.deepcopy(config)
-            modified["reviewers"]["claude"]["max_findings"] = 1
+            modified = replace(
+                config,
+                reviewers={
+                    **config.reviewers,
+                    "claude": replace(config.reviewers["claude"], max_findings=1),
+                },
+            )
             self.assertNotEqual(
                 effective_config_digest(config),
                 effective_config_digest(modified),
@@ -305,9 +311,12 @@ class ConsensusIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config = load_config(self._mini_config(root))
-            modified = copy.deepcopy(config)
-            modified["critique"]["blind_reviewer_identity"] = not bool(
-                modified["critique"].get("blind_reviewer_identity", True)
+            modified = replace(
+                config,
+                critique=replace(
+                    config.critique,
+                    blind_reviewer_identity=not config.critique.blind_reviewer_identity,
+                ),
             )
             self.assertNotEqual(
                 effective_config_digest(config),

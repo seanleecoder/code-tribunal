@@ -98,8 +98,8 @@ class PackagedBaseImageTests(unittest.TestCase):
 
         config = load_config(trusted_runtime_root() / "config" / "review.yaml")
 
-        self.assertEqual(config["schema_version"], CONFIG_SCHEMA_VERSION)
-        self.assertTrue(config["reviewers"])
+        self.assertEqual(config.schema_version, CONFIG_SCHEMA_VERSION)
+        self.assertTrue(config.reviewers)
 
     def test_tmp_is_writable_for_adapter_scratch_space(self) -> None:
         """Every stage needs a writable temp mount: prompts, snapshots, scratch dirs.

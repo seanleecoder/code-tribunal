@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, get_args
 
 from .anchors import is_sha256
@@ -85,72 +88,12 @@ V3_REMOVED_CONFIG_KEYS = {
 
 RETIRED_CONFIG_SCHEMA_VERSIONS = ("review_config.v1", "review_config.v2")
 
-TOP_LEVEL_KEYS = {
-    "schema_version",
-    "reviewers",
-    "panel",
-    "critique",
-    "posting",
-    "state",
-    "limits",
-    "security",
-}
-
-REVIEWER_REQUIRED_KEYS = {
-    "enabled",
-    "model",
-    "timeout_seconds",
-    "max_findings",
-}
-REVIEWER_ALLOWED_KEYS = REVIEWER_REQUIRED_KEYS | {"effort", "critique_timeout_seconds"}
 # Critique budget when a reviewer does not state one. The critique CI job's outer
 # ceiling is 20 minutes and reserves 300 seconds outside the adapter process, so
 # this must stay below it. A flat default, deliberately: the previous behavior
 # reinterpreted `timeout_seconds` as the critique budget and then capped it here,
 # which made one field silently mean two different things.
 DEFAULT_CRITIQUE_TIMEOUT_SECONDS = 900
-# Absence-based cross-run thread resolution is the only thing panel size still
-# governs. Surfacing is decided by independent support, which is a product
-# invariant rather than an operator setting.
-PANEL_KEYS = {"min_successful_reviewers_for_resolution"}
-CRITIQUE_KEYS = {
-    "enabled",
-    "blind_reviewer_identity",
-    "allow_severity_downgrade",
-}
-POSTING_KEYS = {
-    "mode",
-    "v1_inline_sides",
-    "inline_multiline",
-    "fyi_mode",
-    "stale_head_guard",
-}
-STATE_KEYS = {
-    "recover_from_discussion_markers",
-    "checksum_required",
-    "retention",
-    "fail_closed_on_load_error",
-}
-STATE_RETENTION_KEYS = {
-    "keep_open",
-    "keep_wontfix",
-    "keep_resolved_records",
-    "keep_stale_records",
-    "max_records",
-    "max_state_bytes",
-}
-# max_fyi_findings stays while max_posted_surface_findings goes: the FYI cap
-# truncates a list that is already summary-only and renders a visible "more"
-# trailer, whereas the surface cap silently reclassified a finding from thread to
-# summary. Sibling names, different defects.
-LIMIT_KEYS = {
-    "max_diff_bytes",
-    "max_files",
-    "max_fyi_findings",
-    "max_prompt_bytes",
-}
-SECURITY_KEYS = {"allow_external_fork_secrets"}
-
 # GitLab project/group variables outlive template revisions, so a removed name
 # must fail loudly rather than become a silent no-op.
 # Reviewer tombstones: AI_REVIEW_CLAUDE_ENABLED, AI_REVIEW_CODEX_ENABLED,
@@ -189,7 +132,7 @@ RETIRED_ENV_OVERRIDES = {
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
 # Diff sides `posting.v1_inline_sides` may name, from the anchor vocabulary.
-INLINE_SIDES: tuple[str, ...] = get_args(AnchorSide.__value__)
+INLINE_SIDES: tuple[AnchorSide, ...] = get_args(AnchorSide.__value__)
 
 # Smallest panel a v3 deployment may run, on every path: the shipped YAML,
 # AI_REVIEW_REVIEWERS after all overrides are applied. Three, not two, for two
@@ -207,6 +150,125 @@ INLINE_SIDES: tuple[str, ...] = get_args(AnchorSide.__value__)
 # The shipped configuration already enables exactly three seats, so this is not a
 # default change. It does reject two-seat deployments that were valid under v2.
 _MINIMUM_PANEL_REVIEWERS = 3
+
+
+@dataclass(frozen=True)
+class ReviewerConfig:
+    enabled: bool
+    model: str
+    timeout_seconds: int
+    max_findings: int | None
+    critique_timeout_seconds: int = DEFAULT_CRITIQUE_TIMEOUT_SECONDS
+    effort: str | None = None
+
+    def timeout_for(self, stage: str) -> int:
+        if stage == "review":
+            return self.timeout_seconds
+        if stage == "critique":
+            return self.critique_timeout_seconds
+        raise ConfigError(f"unsupported reviewer stage: {stage}")
+
+
+# Absence-based cross-run thread resolution is the only thing panel size still
+# governs. Surfacing is decided by independent support, which is a product
+# invariant rather than an operator setting.
+@dataclass(frozen=True)
+class PanelConfig:
+    min_successful_reviewers_for_resolution: int
+
+
+@dataclass(frozen=True)
+class CritiqueConfig:
+    enabled: bool = False
+    blind_reviewer_identity: bool = True
+    allow_severity_downgrade: bool = False
+
+
+@dataclass(frozen=True)
+class PostingConfig:
+    mode: str = "gitlab_discussions"
+    v1_inline_sides: tuple[AnchorSide, ...] = INLINE_SIDES
+    inline_multiline: bool = True
+    fyi_mode: str = "summary_comment"
+    stale_head_guard: bool = True
+
+
+@dataclass(frozen=True)
+class StateRetention:
+    keep_open: bool = True
+    keep_wontfix: bool = True
+    keep_resolved_records: int = 5
+    keep_stale_records: int = 2
+    max_records: int = 200
+    max_state_bytes: int = 50000
+
+
+@dataclass(frozen=True)
+class StateConfig:
+    recover_from_discussion_markers: bool = True
+    checksum_required: bool = True
+    fail_closed_on_load_error: bool = False
+    retention: StateRetention = field(default_factory=StateRetention)
+
+
+@dataclass(frozen=True)
+class LimitsConfig:
+    max_diff_bytes: int = 250000
+    max_files: int = 200
+    max_fyi_findings: int = 50
+    max_prompt_bytes: int = 500000
+
+
+@dataclass(frozen=True)
+class SecurityConfig:
+    allow_external_fork_secrets: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewConfig:
+    reviewers: Mapping[str, ReviewerConfig]
+    panel: PanelConfig
+    critique: CritiqueConfig = field(default_factory=CritiqueConfig)
+    posting: PostingConfig = field(default_factory=PostingConfig)
+    state: StateConfig = field(default_factory=StateConfig)
+    limits: LimitsConfig = field(default_factory=LimitsConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
+    schema_version: str = CONFIG_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        # Copy before freezing: callers cannot mutate the roster through an alias.
+        object.__setattr__(self, "reviewers", MappingProxyType(dict(self.reviewers)))
+
+    def to_dict(self) -> dict[str, Any]:
+        """A detached JSON document for the existing manifest/config contract."""
+        document: dict[str, Any] = {
+            item.name: asdict(getattr(self, item.name))
+            for item in fields(self)
+            if item.name not in {"reviewers", "schema_version"}
+        }
+        document["schema_version"] = self.schema_version
+        document["reviewers"] = {}
+        for name, reviewer in self.reviewers.items():
+            values = asdict(reviewer)
+            if reviewer.effort is None:
+                del values["effort"]
+            document["reviewers"][name] = values
+        document["posting"]["v1_inline_sides"] = list(self.posting.v1_inline_sides)
+        return document
+
+
+# The runtime types own the accepted keys as well as their defaults. Validation
+# below still owns value constraints and the registered migration diagnostics.
+TOP_LEVEL_KEYS = {item.name for item in fields(ReviewConfig)}
+REVIEWER_ALLOWED_KEYS = {item.name for item in fields(ReviewerConfig)}
+REVIEWER_REQUIRED_KEYS = {item.name for item in fields(ReviewerConfig) if item.default is MISSING}
+PANEL_KEYS = {item.name for item in fields(PanelConfig)}
+CRITIQUE_KEYS = {item.name for item in fields(CritiqueConfig)}
+POSTING_KEYS = {item.name for item in fields(PostingConfig)}
+STATE_KEYS = {item.name for item in fields(StateConfig)}
+STATE_RETENTION_KEYS = {item.name for item in fields(StateRetention)}
+LIMIT_KEYS = {item.name for item in fields(LimitsConfig)}
+SECURITY_KEYS = {item.name for item in fields(SecurityConfig)}
 
 
 def _reject_unknown_keys(
@@ -401,44 +463,20 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
             posting["mode"] = posting_mode_env.strip()
 
 
-
-def resolve_reviewer_timeout_seconds(
-    reviewer_config: dict[str, Any], stage: str
-) -> int:
-    """Resolve the review or critique budget before the runner's reserve.
-
-    Critique uses its own key and defaults to 900 seconds.
-    """
-    if stage == "review":
-        timeout_key = "timeout_seconds"
-        configured_timeout = reviewer_config.get(timeout_key)
-    elif stage == "critique":
-        timeout_key = "critique_timeout_seconds"
-        configured_timeout = reviewer_config.get(
-            timeout_key, DEFAULT_CRITIQUE_TIMEOUT_SECONDS
-        )
-    else:
-        raise ConfigError(f"unsupported reviewer stage: {stage}")
-
-    if type(configured_timeout) is not int or configured_timeout <= 0:
-        raise ConfigError(f"reviewer {timeout_key} must be a positive integer")
-    return configured_timeout
-
-
-def effective_config_digest(config: dict[str, Any]) -> str:
+def effective_config_digest(config: ReviewConfig) -> str:
     """Canonical SHA-256 of the whole validated config, for cross-stage binding.
 
     The config holds no credentials (they live only in the environment), so
     prepare records the config itself in the manifest's ``effective_config``
     and every key, including one a later change adds, is bound automatically.
     """
-    return stable_json_hash(config)
+    return stable_json_hash(config.to_dict())
 
 
-def effective_config_binding(config: dict[str, Any]) -> dict[str, Any]:
+def effective_config_binding(config: ReviewConfig) -> dict[str, Any]:
     """The manifest fields prepare records and later stages must reproduce."""
     return {
-        "effective_config": config,
+        "effective_config": config.to_dict(),
         "effective_config_sha256": effective_config_digest(config),
     }
 
@@ -449,7 +487,7 @@ def recorded_effective_config_digest(manifest: Any) -> str | None:
     return str(digest) if is_sha256(digest) else None
 
 
-def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> str:
+def require_effective_config_binding(config: ReviewConfig, manifest: Any) -> str:
     """Return this stage's config digest once it matches the prepare manifest.
 
     Every stage after prepare calls this before consequential work: review and
@@ -470,8 +508,9 @@ def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> s
     divergent: list[str] = []
     recorded = manifest.get("effective_config")
     if isinstance(recorded, dict):
+        current = config.to_dict()
         divergent = sorted(
-            key for key in set(recorded) | set(config) if recorded.get(key) != config.get(key)
+            key for key in set(recorded) | set(current) if recorded.get(key) != current.get(key)
         )
     raise EffectiveConfigMismatch(
         "effective config differs from the prepare manifest — AI_REVIEW_* "
@@ -482,23 +521,15 @@ def require_effective_config_binding(config: dict[str, Any], manifest: Any) -> s
     )
 
 
-def load_config(path: str | Path) -> dict[str, Any]:
+def load_config(path: str | Path) -> ReviewConfig:
     path = Path(path)
     config = load_yaml_subset(path.read_text(encoding="utf-8"))
     apply_env_overrides(config)
-    validate_config(config)
-    return config
+    return validate_config(config)
 
 
-def enabled_reviewers(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    reviewers = config.get("reviewers", {})
-    if not isinstance(reviewers, dict):
-        raise ConfigError("reviewers must be a mapping")
-    return {
-        name: value
-        for name, value in reviewers.items()
-        if isinstance(value, dict) and value.get("enabled") is True
-    }
+def enabled_reviewers(config: ReviewConfig) -> dict[str, ReviewerConfig]:
+    return {name: value for name, value in config.reviewers.items() if value.enabled}
 
 
 def _validate_posting(config: dict[str, Any]) -> None:
@@ -506,15 +537,15 @@ def _validate_posting(config: dict[str, Any]) -> None:
     if not isinstance(posting, dict):
         raise ConfigError("posting must be a mapping")
     _reject_unknown_keys(posting, POSTING_KEYS, "posting")
-    mode = posting.setdefault("mode", "gitlab_discussions")
+    mode = posting.setdefault("mode", PostingConfig.mode)
     if mode not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
-    if not isinstance(posting.setdefault("inline_multiline", True), bool):
+    if not isinstance(posting.setdefault("inline_multiline", PostingConfig.inline_multiline), bool):
         raise ConfigError("posting.inline_multiline must be a boolean")
     inline_sides = posting.setdefault("v1_inline_sides", list(INLINE_SIDES))
     if not isinstance(inline_sides, list) or any(side not in INLINE_SIDES for side in inline_sides):
         raise ConfigError(f"posting.v1_inline_sides must be a list of {', '.join(INLINE_SIDES)}")
-    if posting.setdefault("fyi_mode", "summary_comment") != "summary_comment":
+    if posting.setdefault("fyi_mode", PostingConfig.fyi_mode) != "summary_comment":
         raise ConfigError(
             "posting.fyi_mode must be summary_comment; "
             "remove the setting or set it to summary_comment"
@@ -538,10 +569,11 @@ def _validate_state(config: dict[str, Any]) -> None:
         state["fail_closed_on_load_error"], bool
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
-    state.setdefault("fail_closed_on_load_error", False)
+    state.setdefault("fail_closed_on_load_error", StateConfig.fail_closed_on_load_error)
 
 
-def validate_config(config: dict[str, Any]) -> None:
+def validate_config(config: dict[str, Any]) -> ReviewConfig:
+    """Validate the document boundary and resolve immutable runtime settings."""
     declared_version = config.get("schema_version")
     if declared_version in RETIRED_CONFIG_SCHEMA_VERSIONS:
         # COMPAT-002: targeted v1/v2-to-v3 diagnostic. v1 is what every tagged 1.x
@@ -574,8 +606,7 @@ def validate_config(config: dict[str, Any]) -> None:
         if unknown_reviewers:
             details.append(f"unknown {unknown_reviewers}")
         raise ConfigError(
-            "reviewer keys must equal the first-party reviewer registry: "
-            + ", ".join(details)
+            "reviewer keys must equal the first-party reviewer registry: " + ", ".join(details)
         )
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
@@ -591,9 +622,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ConfigError(f"reviewer {name} missing keys: {sorted(missing_keys)}")
         timeout_seconds = reviewer.get("timeout_seconds")
         if type(timeout_seconds) is not int or timeout_seconds <= 0:
-            raise ConfigError(
-                f"reviewer {name} timeout_seconds must be a positive integer"
-            )
+            raise ConfigError(f"reviewer {name} timeout_seconds must be a positive integer")
         critique_timeout_seconds = reviewer.get("critique_timeout_seconds")
         if "critique_timeout_seconds" in reviewer and (
             type(critique_timeout_seconds) is not int or critique_timeout_seconds <= 0
@@ -615,9 +644,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(critique, dict):
         raise ConfigError("critique must be a mapping")
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
-    critique.setdefault("enabled", False)
-    critique.setdefault("blind_reviewer_identity", True)
-    critique.setdefault("allow_severity_downgrade", False)
+    for flag in CRITIQUE_KEYS:
+        critique.setdefault(flag, getattr(CritiqueConfig, flag))
     # All three, not just `enabled`: the other two were read with bool() and
     # accepted any truthy value, so the string "false" silently enabled them.
     for flag in sorted(CRITIQUE_KEYS):
@@ -636,7 +664,7 @@ def validate_config(config: dict[str, Any]) -> None:
     # roster override — the per-seat AI_REVIEW_<NAME>_ENABLED flags are retired
     # and rejected via RETIRED_ENV_OVERRIDES.
     configured_count = len(reviewers)
-    enabled_count = len(enabled_reviewers(config))
+    enabled_count = sum(reviewer.get("enabled") is True for reviewer in reviewers.values())
     if enabled_count < _MINIMUM_PANEL_REVIEWERS:
         raise ConfigError(
             f"at least {_MINIMUM_PANEL_REVIEWERS} reviewers must be enabled, got "
@@ -652,9 +680,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
     def _resolve_threshold(value: Any, minimum: int, path: str) -> int:
         if type(value) is not int or not (minimum <= value <= configured_count):
-            raise ConfigError(
-                f"{path} must be between {minimum} and configured reviewers"
-            )
+            raise ConfigError(f"{path} must be between {minimum} and configured reviewers")
         effective = min(value, clamp_to)
         if effective > enabled_count:
             raise ConfigError(
@@ -676,3 +702,44 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(security, dict):
         raise ConfigError("security must be a mapping")
     _reject_unknown_keys(security, SECURITY_KEYS, "security")
+    state = config["state"]
+    retention = state.get("retention", {})
+    resolved_retention: dict[str, Any] = {
+        key: bool(value) if key in {"keep_open", "keep_wontfix"} else int(value)
+        for key, value in retention.items()
+    }
+    posting = config["posting"]
+    return ReviewConfig(
+        reviewers={
+            name: ReviewerConfig(
+                enabled=reviewer["enabled"] is True,
+                model=str(reviewer["model"]),
+                timeout_seconds=reviewer["timeout_seconds"],
+                critique_timeout_seconds=reviewer.get(
+                    "critique_timeout_seconds", DEFAULT_CRITIQUE_TIMEOUT_SECONDS
+                ),
+                max_findings=(
+                    int(reviewer["max_findings"]) if reviewer["max_findings"] is not None else None
+                ),
+                effort=reviewer.get("effort"),
+            )
+            for name, reviewer in reviewers.items()
+        },
+        panel=PanelConfig(**panel),
+        critique=CritiqueConfig(**critique),
+        posting=PostingConfig(
+            **{
+                **posting,
+                "v1_inline_sides": tuple(posting["v1_inline_sides"]),
+                "stale_head_guard": bool(
+                    posting.get("stale_head_guard", PostingConfig.stale_head_guard)
+                ),
+            }
+        ),
+        state=StateConfig(
+            **{key: bool(value) for key, value in state.items() if key != "retention"},
+            retention=StateRetention(**resolved_retention),
+        ),
+        limits=LimitsConfig(**{key: int(value) for key, value in limits.items()}),
+        security=SecurityConfig(**{key: bool(value) for key, value in security.items()}),
+    )

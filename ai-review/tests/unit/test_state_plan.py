@@ -1,7 +1,7 @@
 """Posting state transitions, driven with no platform client constructed.
 
 This file is the direct proof of the SPEC-39 acceptance criterion: every case
-below drives ``plan_state`` from plain dictionaries. Nothing here builds a
+below drives ``plan_state`` from frozen settings and plain data artifacts. Nothing here builds a
 ``ReviewPlatform``, a fake client, or a transport double — before Milestone B
 that was impossible, because planning and mutation lived in one module.
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ai_review.anchors import title_fingerprint
+from ai_review.config import ReviewConfig
 from ai_review.memory import find_matching_record
 from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
 
@@ -34,8 +35,8 @@ def _manifest() -> dict[str, str]:
 
 def _config(
     *, min_resolution: int = 1, retention: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """A validated config — still a plain dict, still no platform client."""
+) -> ReviewConfig:
+    """Frozen runtime settings, with no platform client."""
 
     def mutate(config: dict[str, Any]) -> None:
         config["panel"]["min_successful_reviewers_for_resolution"] = min_resolution
@@ -105,7 +106,7 @@ def _state(records: list[dict[str, Any]]) -> Any:
 
 def _plan(
     *,
-    config: dict[str, Any] | None = None,
+    config: ReviewConfig | None = None,
     consensus: dict[str, Any] | None = None,
     persisted: list[dict[str, Any]] | None = None,
     inline: list[dict[str, Any]] | None = None,

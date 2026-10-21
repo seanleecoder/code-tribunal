@@ -6,6 +6,11 @@ are rejected at every active mapping. Environment overrides are applied before
 validation; set them at repository/project scope so every job derives the same
 effective configuration.
 
+Each job resolves these settings once into an immutable runtime configuration.
+The manifest records all resolved defaults explicitly, including an omitted
+critique timeout and state, posting, limit, or security settings. Credentials stay
+in the environment and are never part of that configuration.
+
 ## YAML keys
 
 Defaults below are the shipped defaults. A custom configuration

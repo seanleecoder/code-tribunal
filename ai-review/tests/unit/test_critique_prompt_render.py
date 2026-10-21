@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
+from ai_review.config import CritiqueConfig, ReviewConfig
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
 from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import load_json_file, write_canonical_json
@@ -15,15 +17,8 @@ _SHIPPED_CRITIQUE_PROMPT = (_IMAGE / "prompts" / "critique.md").read_text(encodi
 _SHIPPED_RULES = (_IMAGE / "rules" / "README.md").read_text(encoding="utf-8")
 
 
-def _full_config() -> dict:
-    config = _config()
-    config["critique"] = {
-        "enabled": True,
-        "blind_reviewer_identity": True,
-        "allow_advisory_escalation": False,
-        "allow_severity_downgrade": False,
-    }
-    return config
+def _full_config() -> ReviewConfig:
+    return replace(_config(), critique=CritiqueConfig(enabled=True))
 
 
 class CritiquePromptRenderTests(unittest.TestCase):

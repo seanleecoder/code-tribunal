@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from .anchors import remap_anchor
 from .commands import collect_human_commands
+from .config import ReviewConfig
 from .memory import (
     encode_state_note,
     newest_valid_state_from_notes,
@@ -62,7 +63,7 @@ def _list_state_notes(
 
 def load_persisted_state(
     client: ReviewPlatform,
-    config: dict[str, Any],
+    config: ReviewConfig,
     manifest: dict[str, Any],
     *,
     bot_author_id: int,
@@ -74,7 +75,6 @@ def load_persisted_state(
     discussion-marker recovery branch unreachable, so absence stays visible at
     this boundary and ``prepare_post_context`` decides what to put in its place.
     """
-    state_config = config.get("state", {})
     notes = _list_state_notes(
         client,
         manifest["project_id"],
@@ -82,7 +82,7 @@ def load_persisted_state(
     )
     state, warnings = newest_valid_state_from_notes(
         notes,
-        checksum_required=bool(state_config.get("checksum_required", True)),
+        checksum_required=config.state.checksum_required,
         expected_author_id=bot_author_id,
     )
     if state is None:
@@ -681,7 +681,7 @@ class PostContext:
 
 def prepare_post_context(
     client: ReviewPlatform,
-    config: dict[str, Any],
+    config: ReviewConfig,
     manifest: dict[str, Any],
     result: PostResult,
     *,
@@ -710,14 +710,13 @@ def prepare_post_context(
         # scan would be wasted on a discarded result.
         # Normalizing `None` yields the same empty document the recovery-off
         # path wants, so the two only differ in what they hand to normalize.
-        state_config = config.get("state", {})
         recovered = (
             state_from_existing_discussions(
                 index_ai_review_discussions(raw_discussions),
                 current_head_sha=manifest["head_sha"],
                 expected_author_id=bot_author_id,
             )
-            if state_config.get("recover_from_discussion_markers", True)
+            if config.state.recover_from_discussion_markers
             else None
         )
         persisted_state = normalize_state(
@@ -744,15 +743,15 @@ def prepare_post_context(
 
 def post_consensus(
     client: ReviewPlatform,
-    config: dict[str, Any],
+    config: ReviewConfig,
     manifest: dict[str, Any],
     consensus: Consensus,
     *,
     dry_run: bool = False,
     diff_text: str | None = None,
 ) -> PostResult:
-    posting = config.get("posting", {})
-    posting_mode = str(posting.get("mode", "gitlab_discussions"))
+    posting = config.posting
+    posting_mode = posting.mode
     # Fail fast on unsupported modes before fetching or mutating platform state.
     platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
@@ -764,14 +763,13 @@ def post_consensus(
         manifest=manifest,
         current_head_sha=current_head_sha,
     )
-    limits = config.get("limits", {})
-    if posting.get("stale_head_guard", True) and current_head_sha != manifest["head_sha"]:
+    if posting.stale_head_guard and current_head_sha != manifest["head_sha"]:
         result["status"] = "stale_head"
         return result
 
-    inline_multiline = posting["inline_multiline"]
-    inline_sides = set(posting["v1_inline_sides"])
-    max_fyi = int(limits.get("max_fyi_findings", 50))
+    inline_multiline = posting.inline_multiline
+    inline_sides = set(posting.v1_inline_sides)
+    max_fyi = config.limits.max_fyi_findings
     context = prepare_post_context(
         client,
         config,

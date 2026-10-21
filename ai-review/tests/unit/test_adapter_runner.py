@@ -18,7 +18,7 @@ from ai_review.adapter_process import (
     _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
+from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig
 from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
@@ -67,10 +67,7 @@ class AdapterModelIdValidationTests(unittest.TestCase):
 
 class AdapterTimeoutSelectionTests(unittest.TestCase):
     def test_review_and_critique_use_separate_effective_budgets(self) -> None:
-        reviewer_config = {
-            "timeout_seconds": 1800,
-            "critique_timeout_seconds": 900,
-        }
+        reviewer_config = ReviewerConfig(True, "model", 1800, 50)
 
         self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "review"), 1795)
         self.assertEqual(
@@ -88,20 +85,14 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
             with self.subTest(timeout_seconds=review_budget):
                 self.assertEqual(
                     _effective_adapter_timeout_seconds(
-                        {"timeout_seconds": review_budget}, "critique"
+                        ReviewerConfig(True, "model", review_budget, 50), "critique"
                     ),
                     DEFAULT_CRITIQUE_TIMEOUT_SECONDS - 5,
                 )
 
-    def test_non_positive_critique_budget_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigError, r"reviewer critique_timeout_seconds"):
-            _effective_adapter_timeout_seconds(
-                {"timeout_seconds": 1800, "critique_timeout_seconds": 0}, "critique"
-            )
-
-    def test_non_positive_review_budget_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigError, r"reviewer timeout_seconds"):
-            _effective_adapter_timeout_seconds({"timeout_seconds": 0}, "review")
+    def test_short_budget_keeps_a_positive_process_timeout(self) -> None:
+        config = ReviewerConfig(True, "model", 3, 50)
+        self.assertEqual(_effective_adapter_timeout_seconds(config, "review"), 1)
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):

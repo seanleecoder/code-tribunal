@@ -7,6 +7,7 @@ import unittest
 from typing import Any
 
 from ai_review.anchors import context_hash_from_unified_diff
+from ai_review.config import ReviewConfig
 from ai_review.memory import attach_state_hash
 from ai_review.render import render_body
 
@@ -169,7 +170,7 @@ class PostCase(unittest.TestCase):
             "notes": [note],
         }
 
-    def _config(self, **overrides: Any) -> dict[str, Any]:
+    def _config(self, **overrides: Any) -> ReviewConfig:
         """A validated runtime config with posting/state/limits overrides.
 
         There is one config shape now: persistent state is always active, so a

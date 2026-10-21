@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Any
 
+from ..config import ReviewConfig
 from .base import ReviewPlatform
 from .github import GitHubReviewPlatform
 from .gitlab import GitLabReviewPlatform
@@ -16,15 +16,14 @@ class PlatformRuntimeError(RuntimeError):
 
 
 def create_runtime_platform(
-    config: Mapping[str, Any],
+    config: ReviewConfig,
     *,
     env: Mapping[str, str] | None = None,
     allow_dry_run_defaults: bool = False,
 ) -> ReviewPlatform:
     """Construct the configured adapter from trusted runtime environment values."""
     runtime_env = os.environ if env is None else env
-    posting = config.get("posting", {})
-    mode = posting.get("mode", "gitlab_discussions") if isinstance(posting, Mapping) else None
+    mode = config.posting.mode
 
     if mode == "github_reviews":
         token = runtime_env.get("GITHUB_TOKEN") or runtime_env.get("GH_TOKEN")

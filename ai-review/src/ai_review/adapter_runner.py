@@ -149,15 +149,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
         # credentials. A mismatch is an EffectiveConfigMismatch config_error. The
         # returned digest equals prepare's; assigning it narrows the type to str.
         config_digest = require_effective_config_binding(config, manifest)
-        reviewer_config = config["reviewers"].get(reviewer)
-        if not isinstance(reviewer_config, dict):
-            raise ConfigError(f"unknown reviewer: {reviewer}")
-        model = str(reviewer_config.get("model", "unknown-model"))
-        if reviewer_config.get("enabled") is not True:
+        reviewer_config = config.reviewers[reviewer]
+        model = reviewer_config.model
+        if not reviewer_config.enabled:
             return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
-        critique_config = config.get("critique", {})
-        if stage == "critique" and critique_config.get("enabled") is not True:
+        if stage == "critique" and not config.critique.enabled:
             return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
         if (validation_error := _model_id_validation_error(model)) is not None:
@@ -252,7 +249,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             if stage == "review":
                 if not isinstance(raw.get("findings"), list):
                     raise SchemaValidationError("adapter output findings must be an array")
-                max_findings = reviewer_config.get("max_findings")
                 finalized = finalize_finding_batch(
                     raw,
                     reviewer=reviewer,
@@ -261,7 +257,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     started_at=started_at,
                     effective_config_sha256=config_digest,
                     input_dir=input_dir,
-                    max_findings=int(max_findings) if max_findings is not None else None,
+                    max_findings=reviewer_config.max_findings,
                 )
                 validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":

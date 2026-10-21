@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import sha256_hex
-from .config import effective_config_binding, load_config
+from .config import ReviewConfig, effective_config_binding, load_config
 from .memory import (
     empty_state,
     newest_valid_state_from_notes,
@@ -341,16 +341,15 @@ def copy_repo_snapshot(
     return Path(dest_root)
 
 
-def _enforce_diff_limits(diff_text: str, config: dict[str, Any]) -> None:
+def _enforce_diff_limits(diff_text: str, config: ReviewConfig) -> None:
     """Reject oversized diffs before they are sent to reviewer models.
 
     Mirrors the ``max_prompt_bytes`` guard in prompt_render: a diff that exceeds
     ``limits.max_diff_bytes`` or ``limits.max_files`` is rejected early rather than
     inflating token cost or timing out the reviewer adapters downstream.
     """
-    limits = config.get("limits", {}) if isinstance(config, dict) else {}
-    max_diff_bytes = int(limits.get("max_diff_bytes", 250000))
-    max_files = int(limits.get("max_files", 200))
+    max_diff_bytes = config.limits.max_diff_bytes
+    max_files = config.limits.max_files
     diff_bytes = len(diff_text.encode("utf-8"))
     if diff_bytes > max_diff_bytes:
         raise BundleError(
@@ -406,11 +405,11 @@ def _publish_staged_bundle(staging_path: Path, out_path: Path) -> None:
 def _prepare_bound_bundle(
     bound: _BoundRevision,
     *,
-    config_dict: dict[str, Any],
+    config: ReviewConfig,
     out_path: Path,
 ) -> Path:
     """Build every input bundle through the same revision-bound artifact path."""
-    _enforce_diff_limits(bound.diff_text, config_dict)
+    _enforce_diff_limits(bound.diff_text, config)
     out_created = not out_path.exists()
     out_path.mkdir(parents=True, exist_ok=True)
     # A manifest makes every sibling artifact consumable. Invalidate any prior
@@ -457,7 +456,7 @@ def _prepare_bound_bundle(
                 **bound.manifest_extensions,
                 "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
                 "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
-                **effective_config_binding(config_dict),
+                **effective_config_binding(config),
                 "created_at": now_iso(),
             }
             bound.revalidate()
@@ -471,14 +470,13 @@ def _prepare_bound_bundle(
 
 
 def prepare_local_bundle(
-    config: str | Path,
+    config: ReviewConfig,
     diff: str | Path,
     repo: str | Path,
     out: str | Path,
 ) -> Path:
     diff_path = Path(diff)
     out_path = Path(out)
-    config_dict = load_config(config)
     diff_text = diff_path.read_text(encoding="utf-8")
     bound = _BoundRevision(
         project_id="local",
@@ -496,18 +494,17 @@ def prepare_local_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_dict=config_dict,
+        config=config,
         out_path=out_path,
     )
 
 
-def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
+def _external_fork_secrets_blocked(config: ReviewConfig) -> str | None:
     source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
     project_id = os.environ.get("CI_PROJECT_ID")
     if not source_project_id or not project_id or source_project_id == project_id:
         return None
-    security = config.get("security", {}) if isinstance(config, dict) else {}
-    if bool(security.get("allow_external_fork_secrets", False)):
+    if config.security.allow_external_fork_secrets:
         return None
     return (
         "external fork MR secret-bearing prepare path is disabled because "
@@ -518,7 +515,7 @@ def _external_fork_secrets_blocked(config: dict[str, Any]) -> str | None:
 
 def _load_platform_state(
     client: Any,
-    config: dict[str, Any],
+    config: ReviewConfig,
     default_state: dict[str, Any],
     *,
     project_id: str,
@@ -533,7 +530,6 @@ def _load_platform_state(
     successful lookup that finds no valid note is not a failure and returns the
     same default.
     """
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
     try:
         bot_author_id = client.current_user_id()
         if bot_author_id is None:
@@ -544,14 +540,14 @@ def _load_platform_state(
         notes = client.list_state_notes(project_id, change_id)
         loaded, warnings = newest_valid_state_from_notes(
             notes,
-            checksum_required=bool(state_config.get("checksum_required", True)),
+            checksum_required=config.state.checksum_required,
             expected_author_id=bot_author_id,
         )
         for warning in warnings:
             print(f"ai-review prepare: {warning}")
         return loaded if loaded is not None else default_state
     except Exception as exc:
-        if state_config.get("fail_closed_on_load_error") is True:
+        if config.state.fail_closed_on_load_error:
             raise
         print(f"ai-review prepare: state load failed: {exc}")
         return default_state
@@ -717,7 +713,7 @@ def _require_github_revision(
 
 
 def prepare_github_bundle(
-    config: str | Path,
+    config: ReviewConfig,
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
@@ -729,9 +725,8 @@ def prepare_github_bundle(
     checkout_head_sha = _github_checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
-    config_dict = load_config(config)
     try:
-        client = create_runtime_platform(config_dict)
+        client = create_runtime_platform(config)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     if not isinstance(client, ComparisonDiffPlatform):
@@ -765,7 +760,7 @@ def prepare_github_bundle(
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
             client,
-            config_dict,
+            config,
             default_state,
             project_id=repo,
             change_id=pr_number,
@@ -807,13 +802,13 @@ def prepare_github_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_dict=config_dict,
+        config=config,
         out_path=out_path,
     )
 
 
 def prepare_gitlab_bundle(
-    config: str | Path,
+    config: ReviewConfig,
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
@@ -821,12 +816,11 @@ def prepare_gitlab_bundle(
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    config_dict = load_config(config)
-    fork_block_reason = _external_fork_secrets_blocked(config_dict)
+    fork_block_reason = _external_fork_secrets_blocked(config)
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
     try:
-        client = create_runtime_platform(config_dict)
+        client = create_runtime_platform(config)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
     version = client.fetch_version(project_id, mr_iid)
@@ -839,7 +833,7 @@ def prepare_gitlab_bundle(
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
             client,
-            config_dict,
+            config,
             default_state,
             project_id=str(project_id),
             change_id=str(mr_iid),
@@ -880,7 +874,7 @@ def prepare_gitlab_bundle(
     )
     return _prepare_bound_bundle(
         bound,
-        config_dict=config_dict,
+        config=config,
         out_path=out_path,
     )
 
@@ -900,15 +894,14 @@ def cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "local":
-        prepare_local_bundle(args.config, args.diff, args.repo, args.out)
+        prepare_local_bundle(load_config(args.config), args.diff, args.repo, args.out)
         return 0
     if args.command == "prepare":
-        config_dict = load_config(args.config)
-        posting = config_dict.get("posting", {}) if isinstance(config_dict, dict) else {}
-        if posting.get("mode") == "github_reviews":
-            prepare_github_bundle(args.config, args.out)
+        config = load_config(args.config)
+        if config.posting.mode == "github_reviews":
+            prepare_github_bundle(config, args.out)
         else:
-            prepare_gitlab_bundle(args.config, args.out)
+            prepare_gitlab_bundle(config, args.out)
         return 0
     raise AssertionError(args.command)
 

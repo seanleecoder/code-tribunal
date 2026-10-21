@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter_process import _build_adapter_env
+from .config import ReviewerConfig
 from .reviewers import ReviewerDefinition, get_reviewer_definition
 from .schema import load_json_file, schema_dir
 
@@ -112,7 +113,8 @@ def main() -> int:
             env = _build_adapter_env(
                 reviewer="claude", stage=stage, model="claude-haiku-5.5",
                 input_dir=work / "inputs", output_dir=work / stage,
-                reviewer_config={"effort": "medium"}, prompt_tmp=prompt,
+                reviewer_config=ReviewerConfig(True, "claude-haiku-5.5", 30, 50, effort="medium"),
+                prompt_tmp=prompt,
                 reviewer_definition=definition,
             )
             # This probe must exercise the auth-error path even if invoked from

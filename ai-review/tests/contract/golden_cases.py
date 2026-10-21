@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from ai_review.config import CritiqueConfig, PanelConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus
 from ai_review.schema import adapter_status_artifact, empty_critique_batch, empty_finding_batch
 
 
-def _config() -> dict:
-    return {
-        "reviewers": {
-            "opencode": {"enabled": True, "model": "model", "timeout_seconds": 600},
-            "claude": {"enabled": True, "model": "model", "timeout_seconds": 600},
-            "codex": {"enabled": True, "model": "model", "timeout_seconds": 600},
+def _config() -> ReviewConfig:
+    return ReviewConfig(
+        reviewers={
+            name: ReviewerConfig(True, "model", 600, 50) for name in ("opencode", "claude", "codex")
         },
-        # The reducer reads nothing else from config on this path. Surfacing is
-        # decided by independent support, which is not configurable.
-        "panel": {"min_successful_reviewers_for_resolution": 2},
-    }
+        panel=PanelConfig(2),
+    )
 
 
 def _manifest() -> dict:
@@ -210,17 +209,18 @@ def degraded_run_health_inputs() -> tuple[list[dict], list[dict], dict]:
     return [claude, codex, opencode], critiques, statuses
 
 
-def degraded_run_health_config() -> dict:
+def degraded_run_health_config() -> ReviewConfig:
     config = _config()
-    for reviewer in config["reviewers"].values():
-        reviewer["timeout_seconds"] = 1800
-    config["reviewers"]["claude"]["effort"] = "medium"
-    config["critique"] = {
-        "enabled": True,
-        "blind_reviewer_identity": True,
-        "allow_severity_downgrade": False,
-    }
-    return config
+    return replace(
+        config,
+        reviewers={
+            name: replace(
+                reviewer, timeout_seconds=1800, effort="medium" if name == "claude" else None
+            )
+            for name, reviewer in config.reviewers.items()
+        },
+        critique=CritiqueConfig(enabled=True),
+    )
 
 
 def degraded_run_health_consensus(

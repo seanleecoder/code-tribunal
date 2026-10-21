@@ -5,11 +5,12 @@ import importlib
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from ai_review.anchors import context_hash_from_unified_diff
-from ai_review.config import load_config
+from ai_review.config import ReviewConfig, load_config, validate_config
 from ai_review.consensus import build_consensus
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
@@ -66,7 +67,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def test_github_reviews_posts_inline_and_exits_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
-            config["posting"]["mode"] = "github_reviews"
+            config = replace(config, posting=replace(config.posting, mode="github_reviews"))
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -84,7 +85,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def test_github_fyi_summary_updates_on_rerun(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
-            config["posting"]["mode"] = "github_reviews"
+            config = replace(config, posting=replace(config.posting, mode="github_reviews"))
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._fyi_batches(), config)
@@ -104,7 +105,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def test_github_rerun_with_unchanged_state_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config, manifest, diff_text = self._prepare_bundle(Path(tmp))
-            config["posting"]["mode"] = "github_reviews"
+            config = replace(config, posting=replace(config.posting, mode="github_reviews"))
             manifest = dict(manifest, project_id="octo-org/octo-repo", merge_request_iid="17")
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
@@ -136,7 +137,7 @@ class PublishEndToEndTests(unittest.TestCase):
                     finding["suggestion"] = "```python\nreturn records[0]\n"
 
                 if posting_mode == "github_reviews":
-                    config["posting"]["mode"] = posting_mode
+                    config = replace(config, posting=replace(config.posting, mode=posting_mode))
                     manifest = dict(
                         manifest,
                         project_id="octo-org/octo-repo",
@@ -175,7 +176,7 @@ class PublishEndToEndTests(unittest.TestCase):
                 config, manifest, diff_text = self._prepare_bundle(Path(tmp))
                 client: Any
                 if posting_mode == "github_reviews":
-                    config["posting"]["mode"] = posting_mode
+                    config = replace(config, posting=replace(config.posting, mode=posting_mode))
                     manifest = dict(
                         manifest, project_id="octo-org/octo-repo", merge_request_iid="17"
                     )
@@ -236,9 +237,9 @@ class PublishEndToEndTests(unittest.TestCase):
             validate_instance(post_result, "post_result.schema.json")
             return client, consensus, post_result, exit_code_for_status(post_result["status"])
 
-    def _prepare_bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
+    def _prepare_bundle(self, tmp: Path) -> tuple[ReviewConfig, dict[str, Any], str]:
         bundle = prepare_simple_bundle(tmp)
-        config = load_config(SHIPPED_CONFIG_PATH)
+        config = load_config(SHIPPED_CONFIG_PATH).to_dict()
         config["critique"]["enabled"] = False
         config["posting"]["inline_multiline"] = False
         config["posting"]["v1_inline_sides"] = ["new"]
@@ -246,7 +247,7 @@ class PublishEndToEndTests(unittest.TestCase):
         config["state"]["retention"] = {"max_records": 200, "max_state_bytes": 50000}
         manifest = load_json_file(bundle / "manifest.json")
         diff_text = (bundle / "mr.diff").read_text(encoding="utf-8")
-        return config, manifest, diff_text
+        return validate_config(config), manifest, diff_text
 
     def _blocking_batches(self) -> list[dict[str, Any]]:
         first = self._finding(

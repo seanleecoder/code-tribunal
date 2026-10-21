@@ -5,6 +5,7 @@ import re
 import unittest
 
 from ai_review.canonical import canonical_json_text, sha256_hex
+from ai_review.config import StateRetention
 from ai_review.memory import (
     attach_state_hash,
     compact_state,
@@ -159,7 +160,7 @@ class StateHashTests(unittest.TestCase):
                 ],
             }
         )
-        compacted = compact_state(state, {"keep_stale_records": 2})
+        compacted = compact_state(state, StateRetention(keep_stale_records=2))
         self.assertEqual(
             [record["last_matched_run_id"] for record in compacted["records"]],
             ["gl-3-1", "gl-2-1"],
@@ -201,7 +202,7 @@ class StateHashTests(unittest.TestCase):
                 "records": [record("a", "gl-9-1"), record("b", "gl-100-1")],
             }
         )
-        compacted = compact_state(state, {"keep_resolved_records": 1})
+        compacted = compact_state(state, StateRetention(keep_resolved_records=1))
         self.assertEqual(compacted["records"][0]["last_matched_run_id"], "gl-100-1")
 
 

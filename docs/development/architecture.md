@@ -37,6 +37,7 @@ from the package at all.
 
 | Module | Owns | Platform access |
 |---|---|---|
+| `config.py` | Configuration parsing, defaults, frozen runtime settings, and the full-config digest | no |
 | `post.py` | `python -m ai_review.post` entry point only | via `posting` |
 | `posting.py` | Mutation orchestration: the one network layer for posting | yes |
 | `state_plan.py` | Pure state planning and record transitions | **never** |
@@ -57,6 +58,11 @@ from the package at all.
 
 These rules are worth stating because breaking them is silent:
 
+- Each entry point resolves YAML and environment overrides once into
+  `ReviewConfig`. Runtime consumers read its frozen sections and reviewer roster;
+  only manifest serialization creates a mutable copy. Each job still checks its
+  resolved config against prepare before consequential work, so overrides scoped
+  to only some jobs fail as configuration drift.
 - The reviewer registry selects each seat's launcher (a shell adapter, or a
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and

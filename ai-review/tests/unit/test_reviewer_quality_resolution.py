@@ -4,9 +4,11 @@ import contextlib
 import io
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from ai_review.config import PanelConfig
 from ai_review.consensus import build_consensus
 from ai_review.schema import finalize_finding_batch, validate_instance
 from ai_review.state_plan import _has_resolution_quorum
@@ -94,7 +96,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         self.assertEqual(consensus["resolution_eligible_reviewers"], ["claude"])
         self.assertTrue(
             _has_resolution_quorum(
-                {"panel": {"min_successful_reviewers_for_resolution": 1}},
+                replace(_config(), panel=PanelConfig(1)),
                 consensus,
             )
         )
@@ -146,7 +148,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         self.assertEqual(consensus["resolution_eligible_reviewers"], ["codex"])
         self.assertFalse(
             _has_resolution_quorum(
-                {"panel": {"min_successful_reviewers_for_resolution": 2}},
+                replace(_config(), panel=PanelConfig(2)),
                 consensus,
             )
         )
@@ -169,7 +171,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         # Explicit empty eligibility must not resolve via successful_reviewers.
         self.assertFalse(
             _has_resolution_quorum(
-                {"panel": {"min_successful_reviewers_for_resolution": 1}},
+                replace(_config(), panel=PanelConfig(1)),
                 legacy,
             )
         )
@@ -177,7 +179,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         del missing["resolution_eligible_reviewers"]
         self.assertFalse(
             _has_resolution_quorum(
-                {"panel": {"min_successful_reviewers_for_resolution": 1}},
+                replace(_config(), panel=PanelConfig(1)),
                 missing,  # type: ignore[arg-type]
             )
         )

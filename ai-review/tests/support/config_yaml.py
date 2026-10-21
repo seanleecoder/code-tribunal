@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ai_review.config import load_yaml_subset, validate_config
+from ai_review.config import ReviewConfig, load_yaml_subset, validate_config
 from ai_review.reviewers import REVIEWERS
 
 # The document an install actually ships, and the one every test that wants a
@@ -85,7 +85,7 @@ def panel_filler(*occupied_reviewers: str) -> list[str]:
 
 def runtime_config(
     mutate: Callable[[dict[str, Any]], None] | None = None,
-) -> dict[str, Any]:
+) -> ReviewConfig:
     """Return a resolved config of the only shape production ever sees.
 
     Loads the minimal document, applies ``mutate``, then runs ``validate_config``
@@ -106,5 +106,4 @@ def runtime_config(
     )
     if mutate is not None:
         mutate(config)
-    validate_config(config)
-    return config
+    return validate_config(config)

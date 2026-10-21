@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from .anchors import anchor_path_key
+from .config import ReviewConfig
 from .consensus_errors import ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
 from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
@@ -27,11 +28,6 @@ from .grouping import DuplicateLink, _duplicate_link_key
 # member of the group got `agree`. Incidental sort order is not a policy.
 _VERDICT_PRECEDENCE = {"agree": 0, "duplicate": 1, "dispute": 2, "noise": 3}
 _VERDICT_BY_PRECEDENCE = {rank: verdict for verdict, rank in _VERDICT_PRECEDENCE.items()}
-
-
-def _critique_enabled(config: dict[str, Any]) -> bool:
-    critique = config.get("critique", {})
-    return critique.get("enabled") is True
 
 
 def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, str]:
@@ -157,10 +153,10 @@ def _collapse_critiques(
 def _apply_critiques(
     groups: list[dict[str, Any]],
     critique_batches: list[dict[str, Any]] | None,
-    config: dict[str, Any],
+    config: ReviewConfig,
     valid_duplicate_links: set[DuplicateLink],
 ) -> None:
-    if not _critique_enabled(config):
+    if not config.critique.enabled:
         return
 
     source_to_group: dict[str, int] = {}
@@ -234,7 +230,7 @@ def _apply_critiques(
             key=lambda item: (str(item["critic"]), str(item["rationale"])),
         )
 
-    allow_downgrade = bool(config.get("critique", {}).get("allow_severity_downgrade", False))
+    allow_downgrade = config.critique.allow_severity_downgrade
     for index, group in enumerate(groups):
         # "Eligible" counts critics that *could* have critiqued the group, not
         # only those that did: a critic with a successful critique batch and no

@@ -4,6 +4,7 @@ import copy
 import unittest
 
 from ai_review.canonical import canonical_json, sha256_hex
+from ai_review.config import PanelConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus
 from ai_review.schema import (
     SchemaValidationError,
@@ -13,15 +14,14 @@ from ai_review.schema import (
 )
 
 
-def _config() -> dict:
-    return {
-        "reviewers": {
-            "opencode": {"enabled": True, "model": "model", "timeout_seconds": 600},
-            "claude": {"enabled": True, "model": "model", "timeout_seconds": 600},
-            "codex": {"enabled": True, "model": "model", "timeout_seconds": 600},
+def _config() -> ReviewConfig:
+    return ReviewConfig(
+        reviewers={
+            name: ReviewerConfig(True, "model", 600, 50)
+            for name in ("opencode", "claude", "codex")
         },
-        "panel": {"min_successful_reviewers_for_resolution": 2},
-    }
+        panel=PanelConfig(2),
+    )
 
 
 def _manifest() -> dict:
