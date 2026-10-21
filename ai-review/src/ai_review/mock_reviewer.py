@@ -19,9 +19,8 @@ from .reviewers import get_reviewer_definition
 # surfaces when two reviewer identities support it independently. Every seat
 # running the mock emits the identical finding, so a multi-seat lifecycle run
 # groups them and surfaces; `make consensus-local` runs one seat and lands on
-# `fyi`. The mock only runs when
-# AI_REVIEW_LOCAL_MOCK=1 and the reviewer's require-real flag is unset (see the
-# adapter shell scripts); the emitted batch is finalized by the normal adapter
+# `fyi`. The runner selects the mock only when AI_REVIEW_LOCAL_MOCK=1 and
+# AI_REVIEW_ALLOW_LOCAL_MOCK=true; the emitted batch is finalized by the normal adapter
 # pipeline, so anchors are re-resolved against the real diff exactly like a real
 # reviewer's output.
 #
@@ -219,8 +218,8 @@ def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
         batch = review_batch(args.reviewer, input_dir)
     else:
         batch = critique_batch(args.reviewer, input_dir)
-    # The documented mock CLI emits a batch. Shell adapters emit the same
-    # transport as their real CLI so the runner needs no mock parsing path.
+    # The documented mock CLI emits a batch. The runner's mock invocation emits
+    # the real seat's transport so it needs no mock parsing path.
     if adapter_output:
         codec = get_reviewer_definition(args.reviewer).output_codec
         if codec == "claude_stream_json":

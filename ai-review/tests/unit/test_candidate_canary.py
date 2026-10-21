@@ -188,9 +188,9 @@ class CandidateCanaryWorkflowTests(unittest.TestCase):
             "candidate_canary_common", ROOT / "scripts" / "candidate_canary_common.py"
         )
         environment = common.canary_stage_environment()
+        self.assertIn("AI_REVIEW_LOCAL_MOCK=0", environment)
         for reviewer, definition in REVIEWERS.items():
             self.assertIn(reviewer, common.reviewer_ids())
-            self.assertIn(f"{definition.require_real_control}=1", environment)
             effort = f"AI_REVIEW_{reviewer.upper()}_EFFORT"
             self.assertEqual(f"-u {effort}" in environment, definition.supports_effort)
 

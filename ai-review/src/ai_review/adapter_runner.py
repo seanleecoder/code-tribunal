@@ -18,10 +18,8 @@ from .adapter_output import (
     _load_adapter_json,
 )
 from .adapter_process import (
-    _adapter_exit_is_mock_allow_refusal,
     _build_adapter_env,
     _effective_adapter_timeout_seconds,
-    _local_mock_unauthorized,
     _model_id_validation_error,
     _run_adapter_process,
 )
@@ -127,8 +125,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
         return exit_code
 
     try:
-        if mock_error := _local_mock_unauthorized():
-            raise ConfigError(mock_error)
+        mock_requested = os.environ.get("AI_REVIEW_LOCAL_MOCK") == "1"
+        # GitLab project/pipeline variables can override the template's mock=0
+        # default. Keep the explicit companion guard in this single selection
+        # point; missing real prerequisites never select a mock.
+        if mock_requested and os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") != "true":
+            raise ConfigError(
+                "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
+                "(for image preflight and mock lifecycle runs only)"
+            )
         try:
             reviewer_definition = get_reviewer_definition(reviewer)
         except ReviewerRegistryError as exc:
@@ -161,10 +166,19 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 error_message=validation_error,
             )
 
-        try:
-            command = adapter_command(reviewer_definition)
-        except ReviewerRegistryError as exc:
-            raise ConfigError(str(exc)) from exc
+        if mock_requested:
+            command = [
+                sys.executable, "-P", "-c",
+                "from ai_review.mock_reviewer import cli; "
+                "raise SystemExit(cli(adapter_output=True))",
+                reviewer, stage,
+            ]
+        else:
+            try:
+                command = adapter_command(reviewer_definition)
+            except ReviewerRegistryError as exc:
+                raise ConfigError(str(exc)) from exc
+
         prompt_tmp: Path | None = None
 
         if stage == "review":
@@ -197,6 +211,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
             reviewer_definition=reviewer_definition,
             prompt_tmp=prompt_tmp,
         )
+        if mock_requested and (scenario := os.environ.get("AI_REVIEW_MOCK_SCENARIO")) is not None:
+            env["AI_REVIEW_MOCK_SCENARIO"] = scenario
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         # Opt-in live mirroring of the adapter's output to the job log; off by
@@ -212,19 +228,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
             stderr_text = result.stderr or f"adapter exited {result.returncode}"
-            # Adapters refuse mock fallback without the allow flag; that is
-            # misconfiguration, not a model failure.
-            if _adapter_exit_is_mock_allow_refusal(stderr_text):
-                exit_status = "config_error"
-                error_class = "ConfigError"
-            else:
-                exit_status = "model_error"
-                error_class = "AdapterExit"
             return _fail(
-                exit_status,
+                "model_error",
                 digest=config_digest,
                 model=model,
-                error_class=error_class,
+                error_class="AdapterExit",
                 error_message=stderr_text,
             )
 

@@ -11,9 +11,7 @@ import unittest
 from pathlib import Path
 
 import yaml
-from ai_review.adapter_process import MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR
-from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,10 +42,6 @@ _ENV_KEYS = [
     "AI_REVIEW_CONFIG",
     "AI_REVIEW_LOCAL_MOCK",
     "AI_REVIEW_ALLOW_LOCAL_MOCK",
-    "AI_REVIEW_REQUIRE_REAL_OPENROUTER",
-    "AI_REVIEW_REQUIRE_REAL_CLAUDE",
-    "AI_REVIEW_REQUIRE_REAL_OPENCODE",
-    "AI_REVIEW_REQUIRE_REAL_CURSOR",
     "AI_REVIEW_REVIEWERS",
     "AI_REVIEW_CURSOR_MODEL",
     "CURSOR_API_KEY",
@@ -90,73 +84,55 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
     stage) and `test_adapter_runner.py` (once), not restated here per provider.
     """
 
-    # The four per-seat copies of "the mock fallback produces a valid batch from a
-    # clean shell" are gone. That property is per seat and stage-independent, so it
-    # is driven from the registry in test_reviewers.py rather than restated once per
-    # provider here; a fifth seat is then covered without a fifth copy. What stays
-    # in this suite is behavior that genuinely differs between the CLIs.
-
-    def test_every_adapter_reaches_the_shared_mock_allow_refusal(self) -> None:
-        """One shell copy of the refusal, and every shell seat provably sources it.
-
-        The adapters each carried their own run_mock(). Asserting the string
-        appeared in each could not stop a new seat from omitting it; asserting
-        that each one sources common.sh, which holds the only copy, can. The
-        OpenCode module seat raises the same constant (test_opencode_client.py).
-        """
-        self.assertIn(
-            MOCK_ALLOW_REFUSAL,
-            (_ADAPTERS / "common.sh").read_text(encoding="utf-8"),
-        )
-        for script in sorted(_ADAPTERS.glob("*.sh")):
-            if script.name in {"common.sh", "run_reviewer.sh"}:
-                continue
-            with self.subTest(script=script.name):
-                text = script.read_text(encoding="utf-8")
-                self.assertIn('. "${0%/*}/common.sh"', text)
-                self.assertIn("mock_if_requested", text)
-                self.assertNotIn(
-                    MOCK_ALLOW_REFUSAL,
-                    text,
-                    "the refusal must have exactly one home, in common.sh",
+    def test_shell_adapters_fail_on_missing_cli_even_with_mock_controls(self) -> None:
+        for reviewer in ("claude", "codex", "cursor"):
+            with self.subTest(reviewer=reviewer):
+                completed = subprocess.run(
+                    ["/bin/sh", str(_ADAPTERS / f"{reviewer}.sh")],
+                    check=False, capture_output=True, text=True,
+                    env={
+                        "PATH": "",
+                        "AI_REVIEW_MODEL": "provider/test-model",
+                        "AI_REVIEW_REVIEWER": reviewer,
+                        "AI_REVIEW_STAGE": "review",
+                        "AI_REVIEW_LOCAL_MOCK": "1",
+                        "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+                    },
                 )
+                self.assertEqual(completed.returncode, 127)
+                self.assertIn("CLI is required", completed.stderr)
+                self.assertEqual(completed.stdout, "")
 
-    def test_missing_cli_mock_fallback_requires_explicit_allow(self) -> None:
-        """One representative seat: the refusal has exactly one implementation.
+    def test_shell_adapters_fail_on_missing_key_even_with_mock_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp)
+            for reviewer, cli, key in (
+                ("claude", "claude", "OPENROUTER_API_KEY"),
+                ("codex", "codex", "OPENROUTER_API_KEY"),
+                ("cursor", "cursor-agent", "CURSOR_API_KEY"),
+            ):
+                executable = bin_dir / cli
+                executable.write_text("#!/bin/sh\nexit 99\n")
+                executable.chmod(0o755)
+                with self.subTest(reviewer=reviewer):
+                    completed = subprocess.run(
+                        ["/bin/sh", str(_ADAPTERS / f"{reviewer}.sh")],
+                        check=False, capture_output=True, text=True,
+                        env={
+                            "PATH": str(bin_dir),
+                            "AI_REVIEW_MODEL": "provider/test-model",
+                            "AI_REVIEW_REVIEWER": reviewer,
+                            "AI_REVIEW_STAGE": "review",
+                            "AI_REVIEW_LOCAL_MOCK": "1",
+                            "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+                        },
+                    )
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertIn(key, completed.stderr)
+                    self.assertEqual(completed.stdout, "")
 
-        Running this over all four adapters multiplied the case without adding
-        signal -- the refusal lives only in `common.sh`, and
-        `test_every_adapter_reaches_the_shared_mock_allow_refusal` above is what
-        proves every seat reaches it and that no seat carries a second copy. That
-        structural pair covers a fifth seat too; a four-way loop would not.
-        """
-        completed = subprocess.run(
-            ["/bin/sh", str(_ADAPTERS / "claude.sh")],
-            check=False,
-            capture_output=True,
-            text=True,
-            env={
-                # Empty PATH so no host CLI can satisfy the adapter;
-                # mock fallback must still refuse without the allow flag.
-                "PATH": "",
-                "AI_REVIEW_MODEL": "provider/test-model",
-                "AI_REVIEW_REVIEWER": "claude",
-                "AI_REVIEW_STAGE": "review",
-            },
-        )
-
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn(MOCK_ALLOW_REFUSAL, completed.stderr)
-
-    def test_run_reviewer_shell_mock_refusal_is_config_error(self) -> None:
-        """End-to-end: run_reviewer.sh → real adapter shell → config_error.
-
-        What this covers is the *runner's* translation of a shell refusal exit into
-        a config_error status and empty batch, which `adapter_runner.py` does once
-        for every seat and stage. One representative seat is the whole property; the
-        per-seat half -- that each adapter reaches the refusal at all -- is asserted
-        structurally above.
-        """
+    def test_run_reviewer_missing_cli_is_model_error_without_mock_selection(self) -> None:
+        """The allow flag alone cannot replace a missing CLI with mock findings."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -171,8 +147,8 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 env={
                     "PYTHON": sys.executable,
                     "PYTHONPATH": str(_SRC),
-                    # Empty PATH: real CLIs are absent; shells refuse mock
-                    # fallback without AI_REVIEW_ALLOW_LOCAL_MOCK=true.
+                    # Empty PATH: no real CLI can satisfy the adapter.
+                    "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
                     "PATH": "",
                     "HOME": str(root / "home"),
                     "AI_REVIEW_INPUT_DIR": str(input_dir),
@@ -188,12 +164,12 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 _EXIT_ERROR,
                 msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
             )
-            self.assertIn(MOCK_ALLOW_REFUSAL, completed.stderr)
+            self.assertIn("claude CLI is required", completed.stderr)
             status = load_json_file(output_dir / "status" / "claude.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["error_class"], "ConfigError")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "AdapterExit")
             batch = load_json_file(output_dir / "findings" / "claude.json")
-            self.assertEqual(batch["adapter_status"], "config_error")
+            self.assertEqual(batch["adapter_status"], "model_error")
 
     def _write_fake_cli(self, bin_dir: Path, name: str) -> None:
         cli = bin_dir / name
@@ -377,12 +353,10 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["OPENROUTER_BASE_URL"] = "https://openrouter.ai/api/v1"
             if reviewer == "cursor":
                 os.environ["AI_REVIEW_REVIEWERS"] = "claude,codex,cursor"
-                os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
                 os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             # For opencode the runner launches the real ai_review.opencode_client,
             # which finds the fake server here. A stand-in client would make every
@@ -523,7 +497,6 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_CURSOR"] = "1"
             os.environ["CURSOR_API_KEY"] = "cursor-test-key"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
@@ -634,8 +607,6 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
@@ -713,7 +684,6 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["ANTHROPIC_API_KEY"] = "anthropic-test-key"
             os.environ["ANTHROPIC_BASE_URL"] = "https://openrouter.ai.evil.com/api"
@@ -749,8 +719,6 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(_REPO_CONFIG)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            os.environ["AI_REVIEW_REQUIRE_REAL_CLAUDE"] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             try:
@@ -1064,8 +1032,6 @@ PY
             os.environ["AI_REVIEW_OUTPUT_DIR"] = str(output_dir)
             os.environ["AI_REVIEW_CONFIG"] = str(config_path)
             os.environ["AI_REVIEW_LOCAL_MOCK"] = "0"
-            os.environ["AI_REVIEW_REQUIRE_REAL_OPENROUTER"] = "1"
-            os.environ[REVIEWERS[reviewer].require_real_control] = "1"
             os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test"
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
             for key in _REVIEWER_OVERRIDE_KEYS:
@@ -1151,7 +1117,6 @@ PY
                 "AI_REVIEW_INPUT_DIR": str(input_dir),
                 "AI_REVIEW_OUTPUT_DIR": str(output_dir),
                 "AI_REVIEW_LOCAL_MOCK": "0",
-                "AI_REVIEW_REQUIRE_REAL_CLAUDE": "1",
                 "AI_REVIEW_REVIEWER": "claude",
                 "AI_REVIEW_STAGE": "review",
                 "AI_REVIEW_MODEL": "anthropic/claude-haiku-4.5",

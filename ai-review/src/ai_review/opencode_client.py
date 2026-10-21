@@ -1,7 +1,7 @@
 """The OpenCode reviewer seat: launch the pinned server and drive its HTTP API.
 
 The runner starts this module directly (the registry's ``adapter_module``), so it
-owns everything a seat's shell adapter does elsewhere: the mock gate, pinned-binary
+owns everything a seat's shell adapter does elsewhere: pinned-binary
 resolution, the isolated home, the review root, the generated configuration and the
 scrubbed server environment. OpenCode's ``run --format json`` only selects raw
 event output and enforces no response schema, so the seat uses the pinned server
@@ -28,15 +28,12 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from .adapter_output import extract_json_text
-from .adapter_process import _OPENROUTER_BASE_URL, MOCK_ALLOW_REFUSAL, local_mock_allowed
+from .adapter_process import _OPENROUTER_BASE_URL
 from .canonical import json_loads_no_duplicates
 from .config import EFFORT_LEVELS
-from .mock_reviewer import cli as mock_reviewer_cli
 from .redact import redact_text
-from .reviewers import get_reviewer_definition
 from .schema import load_json_file, schema_dir
 
-_REVIEWER = "opencode"
 _HOST = "127.0.0.1"
 # Where the image installs the pinned CLIs. It must win over anything earlier on the
 # runner's ambient PATH: running an ambient-resolved binary would let a preceding
@@ -547,31 +544,14 @@ def _normalize_message(
     return payload, False
 
 
-def _run_mock(stage: str) -> int:
-    # This seat's copy of common.sh's mock gate; the S03 mock switch in the runner
-    # replaces both. The allow flag is deliberate: AI_REVIEW_LOCAL_MOCK alone could
-    # be set as a GitLab project variable and silently mock a production review.
-    if not local_mock_allowed():
-        raise OpenCodeClientError(MOCK_ALLOW_REFUSAL)
-    return mock_reviewer_cli([_REVIEWER, stage], adapter_output=True)
-
-
 def run() -> int:
     stage = os.environ.get("AI_REVIEW_STAGE", "")
-    require_real = (
-        os.environ.get(get_reviewer_definition(_REVIEWER).require_real_control) == "1"
-    )
-    if not require_real and os.environ.get("AI_REVIEW_LOCAL_MOCK") == "1":
-        return _run_mock(stage)
     model = os.environ.get("AI_REVIEW_MODEL", "")
     if not model:
-        # A configuration error on every seat, so it never falls back to the mock.
         raise OpenCodeClientError("AI_REVIEW_MODEL is required")
     executable = _resolve_opencode_executable()
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if executable is None or not api_key:
-        if not require_real:
-            return _run_mock(stage)
         missing = "the opencode CLI was not found" if executable is None else (
             "OPENROUTER_API_KEY was not set"
         )

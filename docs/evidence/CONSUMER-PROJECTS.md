@@ -55,7 +55,7 @@ repo's canonical template.
   load while the merge-gate override is set. The pre-#126 workflow copy still on
   `main` hard-maps that override to `'true'`, so the next adoption from a
   current `R` is what finally removes it.
-- **The mock-variable mapping is already in the workflow.** The one-time edit the
+- **The recorded mock-variable mapping is already in the workflow.** The one-time edit the
   runbook describes has been made: the review and critique steps read
   `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
   `AI_REVIEW_ALLOW_LOCAL_MOCK: … || 'false'`,
@@ -64,10 +64,12 @@ repo's canonical template.
   unset, and Chain B is driven purely by setting repository variables — no workflow
   commit, which matters because a new commit on the reviewed branch changes the diff
   and moves the mock's selected anchor.
-- **Mock variables are currently absent**, which is the intended resting state: with
-  them gone the `|| '1'` defaults restore `AI_REVIEW_REQUIRE_REAL_*=1`, so a run that
-  somehow still reached the mock adapter fails closed instead of quietly producing
-  fake "real" evidence. **Delete them again after every Chain B campaign.**
+- **Mock variables are currently absent**, which is the intended resting state.
+  **Delete them again after every Chain B campaign.** When adopting an image with
+  S03, remove the older workflow's `AI_REVIEW_REQUIRE_REAL_*` mappings: the runner
+  selects mocks only with both `AI_REVIEW_LOCAL_MOCK=1` and
+  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`; real adapters always fail on missing
+  prerequisites.
 
 **What changes per release:** the five container digest pins in the workflow (jobs
 `prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of

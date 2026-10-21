@@ -28,14 +28,12 @@ from candidate_canary_common import (
     DEMO_REPOSITORY,
     GITHUB_SECRETS,
     GITLAB_SECRETS,
-    require_real_controls,
 )
 
 MOCK_VARIABLES = frozenset({
     "AI_REVIEW_LOCAL_MOCK",
     "AI_REVIEW_ALLOW_LOCAL_MOCK",
     "AI_REVIEW_MOCK_SCENARIO",
-    *require_real_controls(),
 })
 # The resolve token is a fine-grained GitHub token, which expires, and an expired
 # one prevents thread mutations, so its age is surfaced before a run.

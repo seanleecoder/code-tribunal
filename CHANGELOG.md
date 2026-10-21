@@ -9,6 +9,12 @@ versioning.
 
 ### Changed
 
+- Mock reviews and critiques are selected only by the Python runner with
+  `AI_REVIEW_LOCAL_MOCK=1` and `AI_REVIEW_ALLOW_LOCAL_MOCK=true` (S03).
+  Real adapters always fail on a missing CLI or credential. The shell and
+  OpenCode mock fallback paths, per-seat `AI_REVIEW_REQUIRE_REAL_*` controls,
+  and refusal-text matching are removed; deterministic canary scenarios and
+  artifact formats remain the same.
 - Reviewer output parsing now uses the codec declared in the trusted reviewer
   registry (N06). The retired OpenCode CLI stream formats and stage inference
   are removed. Current answer-text fallbacks and versioned batch artifacts are

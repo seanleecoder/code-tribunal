@@ -14,7 +14,6 @@ from unittest import mock
 
 from ai_review.adapter_output import _coerce_adapter_root, _load_adapter_json
 from ai_review.adapter_process import (
-    MOCK_ALLOW_REFUSAL,
     _effective_adapter_timeout_seconds,
     _model_id_validation_error,
 )
@@ -815,26 +814,24 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 '#!/bin/sh\necho \'{"findings":[]}\'\n',
             )
             self._set_env(paths, config_path)
-            previous_mock = os.environ.get("AI_REVIEW_LOCAL_MOCK")
-            previous_allow = os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK")
-            os.environ["AI_REVIEW_LOCAL_MOCK"] = "1"
-            os.environ.pop("AI_REVIEW_ALLOW_LOCAL_MOCK", None)
-            try:
-                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
-            finally:
-                if previous_mock is None:
-                    os.environ.pop("AI_REVIEW_LOCAL_MOCK", None)
-                else:
-                    os.environ["AI_REVIEW_LOCAL_MOCK"] = previous_mock
-                if previous_allow is None:
-                    os.environ.pop("AI_REVIEW_ALLOW_LOCAL_MOCK", None)
-                else:
-                    os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = previous_allow
-
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["effective_config_sha256"], "2" * 64)
-            self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
+            for allow in (None, "false", "TRUE", "1"):
+                with (
+                    self.subTest(allow=allow),
+                    mock.patch.dict(os.environ, {"AI_REVIEW_LOCAL_MOCK": "1"}),
+                    mock.patch(
+                        "ai_review.adapter_runner._run_adapter_process",
+                        side_effect=AssertionError("unauthorized mock must not spawn"),
+                    ),
+                ):
+                    if allow is None:
+                        os.environ.pop("AI_REVIEW_ALLOW_LOCAL_MOCK", None)
+                    else:
+                        os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = allow
+                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+                    status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+                    self.assertEqual(status["status"], "config_error")
+                    self.assertEqual(status["effective_config_sha256"], "2" * 64)
+                    self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
     def test_failure_after_config_resolution_stamps_the_bound_digest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -916,28 +913,6 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertIn("re-run prepare", status["error_message_redacted"])
             # No digest to stamp, so no batch for consensus to read as a result.
             self.assertFalse((paths["output_dir"] / "findings" / "codex.json").exists())
-
-    def test_shell_mock_allow_refusal_is_config_error(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "codex")
-            _write_adapter(
-                paths["adapter_dir"],
-                "codex",
-                "#!/bin/sh\n"
-                f'echo "{MOCK_ALLOW_REFUSAL}" >&2\n'
-                "exit 2\n",
-            )
-            self._set_env(paths, config_path)
-
-            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
-
-            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
-            self.assertEqual(batch["adapter_status"], "config_error")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["error_class"], "ConfigError")
-            self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
     def test_opencode_client_failure_is_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -11,7 +11,6 @@ from unittest import mock
 
 from ai_review import opencode_client
 from ai_review.adapter_output import _load_adapter_json
-from ai_review.adapter_process import MOCK_ALLOW_REFUSAL
 from ai_review.schema import load_json_file
 
 _PINNED = "/usr/local/bin/opencode"
@@ -32,7 +31,6 @@ def _seat_env(root: Path, prompt: Path, **extra: str) -> dict[str, str]:
         "AI_REVIEW_RENDERED_PROMPT": str(prompt),
         "AI_REVIEW_INPUT_DIR": str(root / "inputs"),
         "AI_REVIEW_OUTPUT_DIR": str(root / "out"),
-        "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
         "OPENROUTER_API_KEY": "sk-or-v1-test",
         **extra,
     }
@@ -616,67 +614,28 @@ class OpenCodeClientTests(unittest.TestCase):
             ):
                 opencode_client._prepare_workspace("review", root / "absent", root / "out")
 
-    def test_mock_request_runs_the_mock_unless_a_real_cli_is_required(self) -> None:
+    def test_missing_prerequisites_fail_even_with_mock_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            env = _seat_env(
-                root,
-                root / "prompt.md",
-                AI_REVIEW_LOCAL_MOCK="1",
-                AI_REVIEW_ALLOW_LOCAL_MOCK="true",
-                AI_REVIEW_REQUIRE_REAL_OPENCODE="0",
-            )
-            with (
-                mock.patch.dict(os.environ, env, clear=True),
-                mock.patch.object(opencode_client, "_start_server") as start_server,
-                mock.patch.object(opencode_client, "mock_reviewer_cli", return_value=0) as cli,
+            for label, executable, overrides, message in (
+                ("no cli", None, {}, "CLI was not found"),
+                ("no key", _PINNED, {"OPENROUTER_API_KEY": ""}, "OPENROUTER_API_KEY was not set"),
             ):
-                self.assertEqual(opencode_client.run(), 0)
-            start_server.assert_not_called()
-            # The batch itself is the mock reviewer's, covered per seat in
-            # test_reviewers.py from a real input bundle.
-            cli.assert_called_once_with(["opencode", "review"], adapter_output=True)
-
-    def test_missing_prerequisite_falls_back_only_when_a_real_cli_is_not_required(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            prompt = root / "prompt.md"
-            for label, executable, overrides in (
-                ("no cli", None, {}),
-                ("no key", _PINNED, {"OPENROUTER_API_KEY": ""}),
-            ):
-                with self.subTest(label), mock.patch.object(
-                    opencode_client, "_resolve_opencode_executable", return_value=executable
+                for controls in (
+                    {},
+                    {"AI_REVIEW_ALLOW_LOCAL_MOCK": "true"},
+                    {"AI_REVIEW_LOCAL_MOCK": "1", "AI_REVIEW_ALLOW_LOCAL_MOCK": "true"},
                 ):
-                    required = _seat_env(root, prompt, **overrides)
+                    env = _seat_env(root, root / "prompt.md", **overrides, **controls)
                     with (
-                        mock.patch.dict(os.environ, required, clear=True),
-                        self.assertRaisesRegex(
-                            opencode_client.OpenCodeClientError, "requires it"
-                        ),
-                    ):
-                        opencode_client.run()
-                    # Without the allow flag the fallback refuses, which the runner
-                    # reports as a config_error.
-                    refused = {**required, "AI_REVIEW_REQUIRE_REAL_OPENCODE": "0"}
-                    with (
-                        mock.patch.dict(os.environ, refused, clear=True),
-                        self.assertRaisesRegex(
-                            opencode_client.OpenCodeClientError, MOCK_ALLOW_REFUSAL
-                        ),
-                    ):
-                        opencode_client.run()
-                    allowed = {**refused, "AI_REVIEW_ALLOW_LOCAL_MOCK": "true"}
-                    with (
-                        mock.patch.dict(os.environ, allowed, clear=True),
+                        self.subTest(prerequisite=label, controls=controls),
                         mock.patch.object(
-                            opencode_client, "mock_reviewer_cli", return_value=0
-                        ) as cli,
+                            opencode_client, "_resolve_opencode_executable", return_value=executable
+                        ),
+                        mock.patch.dict(os.environ, env, clear=True),
+                        self.assertRaisesRegex(opencode_client.OpenCodeClientError, message),
                     ):
-                        self.assertEqual(opencode_client.run(), 0)
-                    cli.assert_called_once_with(["opencode", "review"], adapter_output=True)
+                        opencode_client.run()
 
     def test_generated_config_is_restricted_and_maps_effort_unchanged(self) -> None:
         config = opencode_client._opencode_config("google/test-model", "xhigh")

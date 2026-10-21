@@ -74,7 +74,7 @@ PROBE_MODEL = "preflight/probe-model"
 # search ran in the review root rather than anywhere else on the filesystem.
 GREP_MARKER = "PREFLIGHT_GREP_MARKER"
 CLIENT_TIMEOUT_SECONDS = 180.0
-# Runs the shipped client end to end — mock gate, pinned-binary resolution,
+# Runs the shipped client end to end — pinned-binary resolution,
 # workspace, server environment, session — with only its generated config replaced
 # by the patched copy passed as the first argument.
 CLIENT_WITH_CONFIG = (
@@ -320,7 +320,6 @@ def _client_config() -> str:
 def _run_client(config: str, label: str) -> tuple[int, str, str]:
     """Run the shipped client as the runner would, with `config` in place of its own."""
     shipped_client()
-    from ai_review.reviewers import get_reviewer_definition  # noqa: PLC0415
 
     work = SMOKE_DIR / f"client-{label}"
     snapshot = work / "inputs" / "repo_snapshot"
@@ -337,7 +336,6 @@ def _run_client(config: str, label: str) -> tuple[int, str, str]:
         "AI_REVIEW_INPUT_DIR": str(work / "inputs"),
         "AI_REVIEW_OUTPUT_DIR": str(work / "out"),
         "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-        get_reviewer_definition("opencode").require_real_control: "1",
         "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
     }
     try:

@@ -1,14 +1,13 @@
 #!/bin/sh
 set -eu
 
-REQUIRE_REAL="${AI_REVIEW_REQUIRE_REAL_CLAUDE:-}"
 . "${0%/*}/common.sh"
 
-mock_if_requested
+require_model
 
 if ! command -v claude >/dev/null 2>&1; then
-  require_real_or_mock \
-    "claude CLI is required for this AI review job but was not found" 127
+  echo "claude CLI is required for this AI review job but was not found" >&2
+  exit 127
 fi
 
 export ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
