@@ -1,9 +1,9 @@
 """The OpenCode reviewer seat: launch the pinned server and drive its HTTP API.
 
-The runner starts this module directly (the registry's ``adapter_module``), so it
-owns everything a seat's shell adapter does elsewhere: pinned-binary
-resolution, the isolated home, the review root, the generated configuration and the
-scrubbed server environment. OpenCode's ``run --format json`` only selects raw
+The runner starts this module directly (the registry's ``adapter_module``). Shared
+setup prepares its isolated state and snapshot; this client owns pinned-binary
+resolution, generated configuration and the scrubbed server environment.
+OpenCode's ``run --format json`` only selects raw
 event output and enforces no response schema, so the seat uses the pinned server
 API instead, where the stage schema reaches OpenCode's StructuredOutput tool.
 """
@@ -32,8 +32,10 @@ from .adapter_process import _OPENROUTER_BASE_URL
 from .canonical import json_loads_no_duplicates
 from .config import EFFORT_LEVELS
 from .redact import redact_text
-from .schema import load_json_file, schema_dir
+from .reviewer_setup import prepare_workspace, state_environment, transport_schema
+from .reviewers import get_reviewer_definition
 
+_DEFINITION = get_reviewer_definition("opencode")
 _HOST = "127.0.0.1"
 # Where the image installs the pinned CLIs. It must win over anything earlier on the
 # runner's ambient PATH: running an ambient-resolved binary would let a preceding
@@ -43,28 +45,6 @@ _TRUSTED_BIN = Path("/usr/local/bin")
 # binary is not, the image is broken, and running an ambient binary instead would be
 # the same substitution by another route.
 _PINNED_OPENCODE_EVIDENCE = Path("/usr/local/lib/node_modules/opencode-ai")
-# The server's PATH is fixed rather than the runner's ambient one, so OpenCode's
-# which("rg") resolves the pinned /usr/local/bin/rg and never falls through to a
-# download or to an earlier rg. reviewer.Dockerfile's final guard proves resolution
-# on exactly this PATH.
-_SERVER_PATH = "/usr/local/bin:/usr/bin:/bin"
-# The server's disposable state, by the variable that points it there. All of it
-# lives under out/.tmp, which is never uploaded.
-_STATE_DIRS = {
-    "HOME": "opencode-home",
-    "XDG_CONFIG_HOME": "opencode-config-home",
-    "XDG_DATA_HOME": "opencode-data-home",
-    "OPENCODE_CONFIG_DIR": "opencode-config-dir",
-}
-_SERVER_HARDENING = (
-    "OPENCODE_DISABLE_AUTOUPDATE",
-    "OPENCODE_DISABLE_DEFAULT_PLUGINS",
-    "OPENCODE_DISABLE_LSP_DOWNLOAD",
-    "OPENCODE_DISABLE_CLAUDE_CODE",
-    "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
-    "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
-    "OPENCODE_DISABLE_MODELS_FETCH",
-)
 # Matches either word order, because the wording is OpenCode's, not ours: any log
 # line that mentions both downloading and ripgrep means the pinned binary lost.
 _RIPGREP_FETCH_PATTERN = re.compile(
@@ -326,45 +306,14 @@ def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
     }
 
 
-def _prepare_workspace(stage: str, input_dir: Path, output_dir: Path) -> tuple[Path, Path]:
-    """Create the disposable state directories and the review root.
-
-    Returns the scratch directory and the review root, both resolved: the root is
-    the server's cwd and the directory sent with every request, so a relative root
-    would be joined onto itself, and a root whose path differs from its realpath
-    makes every in-root path look external to OpenCode.
-    """
-    tmp_dir = (output_dir / ".tmp").resolve()
-    root = tmp_dir / f"opencode-review-root.{os.getpid()}"
-    for directory in (root, *(tmp_dir / name for name in _STATE_DIRS.values())):
-        directory.mkdir(parents=True, exist_ok=True)
-    if stage == "review":
-        # Explore a copy of the pinned snapshot, so the reviewed files sit at the
-        # root, CLI writes stay out of the shared bundle, and the input directory is
-        # off the path the CLI walks upward for project config. Prepare already
-        # dropped the agent files every CLI reads.
-        snapshot = input_dir / "repo_snapshot"
-        if not snapshot.is_dir():
-            raise OpenCodeClientError(
-                "AI review repo_snapshot is required for the opencode reviewer"
-            )
-        shutil.copytree(snapshot, root, symlinks=True, dirs_exist_ok=True)
-    # Critique reasons only over the pooled findings in the prompt, so its root
-    # stays empty: read/glob/grep remain allowed but have nothing to explore, the
-    # same net effect as claude's tools-off critique.
-    return tmp_dir, root
-
-
 def _server_env(tmp_dir: Path, *, api_key: str, config: dict[str, Any]) -> dict[str, str]:
     """The server's whole environment: nothing ambient beyond TMPDIR."""
     env = {
-        "PATH": _SERVER_PATH,
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-        **{variable: str(tmp_dir / name) for variable, name in _STATE_DIRS.items()},
+        **state_environment(_DEFINITION, tmp_dir, {}),
         "OPENCODE_CONFIG_CONTENT": json.dumps(config, ensure_ascii=False),
         "OPENROUTER_API_KEY": api_key,
     }
-    env.update(dict.fromkeys(_SERVER_HARDENING, "1"))
     return env
 
 
@@ -456,24 +405,6 @@ def _stop_server(process: subprocess.Popen[str], drain_thread: threading.Thread)
     drain_thread.join(timeout=_SERVER_STOP_TIMEOUT_SECONDS)
 
 
-def _load_transport_schema(stage: str) -> dict[str, Any]:
-    if stage == "review":
-        name = "raw_finding_batch.schema.json"
-    elif stage == "critique":
-        name = "critique_batch.schema.json"
-    else:
-        raise OpenCodeClientError(f"unsupported OpenCode stage: {stage!r}")
-    schema = load_json_file(schema_dir() / name)
-    if not isinstance(schema, dict):
-        raise OpenCodeClientError(f"OpenCode transport schema is not an object: {name}")
-    transport_schema = dict(schema)
-    # The pinned OpenCode StructuredOutput tool accepts the schema vocabulary,
-    # but rejects the draft declaration used by the repository's validator.
-    # Keep every other schema key unchanged in this transport-only copy.
-    transport_schema.pop("$schema", None)
-    return transport_schema
-
-
 def _text_from_parts(parts: Any) -> list[str]:
     if not isinstance(parts, list):
         return []
@@ -558,9 +489,10 @@ def run() -> int:
     if not prompt_path.is_file():
         raise OpenCodeClientError("AI_REVIEW_RENDERED_PROMPT is required")
     stage = os.environ.get("AI_REVIEW_STAGE", "")
-    schema = _load_transport_schema(stage)
+    schema = transport_schema(stage)
     prompt = prompt_path.read_text(encoding="utf-8")
-    tmp_dir, root = _prepare_workspace(
+    tmp_dir, root = prepare_workspace(
+        _DEFINITION,
         stage,
         Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs")),
         Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out")),
@@ -614,6 +546,7 @@ def run() -> int:
     finally:
         if process is not None and drain_thread is not None:
             _stop_server(process, drain_thread)
+        shutil.rmtree(root, ignore_errors=True)
     # After the server is stopped and its log drained, so a fetch logged late in the
     # session is still caught. Deliberately outside the try/finally: this must raise
     # instead of letting `batch` be printed.

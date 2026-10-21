@@ -124,7 +124,7 @@ def effective_wildcard_action(rules: list[Any], permission: str) -> str | None:
     return action
 
 
-def _prove_pinned_rg(pin: dict[str, str]) -> None:
+def _prove_pinned_rg(pin: dict[str, str], env: dict[str, str]) -> None:
     decoy = SMOKE_DIR / "decoy-bin"
     decoy.mkdir(parents=True, exist_ok=True)
     decoy_rg = decoy / "rg"
@@ -133,7 +133,7 @@ def _prove_pinned_rg(pin: dict[str, str]) -> None:
     ambient = f"{decoy}:/usr/bin:/bin"
     if shutil.which("rg", path=ambient) != str(decoy_rg):
         fail("negative control failed: decoy rg was not found on the ambient PATH")
-    resolved = shutil.which("rg", path=shipped_client()._SERVER_PATH)
+    resolved = shutil.which("rg", path=env["PATH"])
     if resolved != "/usr/local/bin/rg":
         fail(
             f"rg resolved to {resolved!r}; expected /usr/local/bin/rg on the "
@@ -195,7 +195,9 @@ def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
     snapshot = work / "inputs" / "repo_snapshot"
     snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "example.py").write_text("value = 1\n", encoding="utf-8")
-    tmp_dir, root = client._prepare_workspace("review", work / "inputs", work / "out")
+    tmp_dir, root = client.prepare_workspace(
+        client.get_reviewer_definition("opencode"), "review", work / "inputs", work / "out"
+    )
     config = client._opencode_config(PROBE_MODEL, None)
     return client._server_env(tmp_dir, api_key=PROBE_API_KEY, config=config), root
 
@@ -315,9 +317,9 @@ def _prove_session_permission_rules(env: dict[str, str], root: Path) -> None:
 
 def main() -> int:
     os.environ["PATH"] = FIXED_PATH
-    _prove_pinned_rg(_read_pin())
-    _prove_pinned_opencode()
     env, root = _client_server_env_and_root()
+    _prove_pinned_rg(_read_pin(), env)
+    _prove_pinned_opencode()
     _prove_effective_permissions(env, root)
     _prove_session_permission_rules(env, root)
     print("opencode search-tool preflight smoke passed")

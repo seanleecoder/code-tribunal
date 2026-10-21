@@ -9,6 +9,10 @@ versioning.
 
 ### Changed
 
+- Reviewer workspace, isolated-home, environment, CLI argument and schema setup
+  is declared in the trusted registry and shared in Python (N08). Claude now has
+  an isolated home, and its image-build probes use the runtime invocation. The
+  remaining shell adapters only check prerequisites and invoke their CLI.
 - Mock reviews and critiques are selected only by the Python runner with
   `AI_REVIEW_LOCAL_MOCK=1` and `AI_REVIEW_ALLOW_LOCAL_MOCK=true` (S03).
   Real adapters always fail on a missing CLI or credential. The shell and

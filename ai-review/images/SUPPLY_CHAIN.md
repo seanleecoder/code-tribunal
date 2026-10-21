@@ -32,7 +32,7 @@ The base image installs Debian `ca-certificates` and `git` from the Trixie apt r
 
 ## Cursor CLI egress exception
 
-Cursor CLI cannot use OpenRouter or a custom base URL in agent mode. The default config keeps `reviewers.cursor.enabled: false`; when operators opt in, prompts, MR diffs, and readable repo-snapshot content are sent to Cursor's backend and billed through the Cursor account associated with `CURSOR_API_KEY`. The runner injects only the reviewer's declared credential and `adapters/cursor.sh` runs under `env -i`, so `OPENROUTER_API_KEY` is not forwarded to Cursor.
+Cursor CLI cannot use OpenRouter or a custom base URL in agent mode. The default config keeps `reviewers.cursor.enabled: false`; when operators opt in, prompts, MR diffs, and readable repo-snapshot content are sent to Cursor's backend and billed through the Cursor account associated with `CURSOR_API_KEY`. The runner builds an allowlisted environment with only the reviewer's declared credential before the shared setup adds its isolated home, so `OPENROUTER_API_KEY` is not forwarded to Cursor.
 
 ## Cursor sandbox exception
 

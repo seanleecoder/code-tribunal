@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -31,6 +32,7 @@ from .config import (
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
+from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
     adapter_command,
@@ -208,12 +210,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp=prompt_tmp,
             mock=mock_requested,
         )
+        workspace: Path | None = None
+        if not mock_requested and reviewer_definition.adapter_path is not None:
+            arguments, workspace = prepare_shell_adapter(reviewer_definition, stage, env)
+            command.extend(arguments)
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         # Opt-in live mirroring of the adapter's output to the job log; off by
         # default to avoid large stream-json/--verbose dumps and log truncation.
         mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
-        result = _run_adapter_process(command, env, timeout_seconds, mirror_logs=mirror_logs)
+        try:
+            result = _run_adapter_process(
+                command, env, timeout_seconds, mirror_logs=mirror_logs, cwd=workspace
+            )
+        finally:
+            # The runner created the workspace, so it removes it, even after a
+            # timeout kill that no shell trap would survive.
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
         # When not mirroring live, still surface the adapter's stderr after it
         # exits (adapters like codex narrate progress there) — matching the
         # pre-streaming behavior. When mirroring, it was already echoed live.

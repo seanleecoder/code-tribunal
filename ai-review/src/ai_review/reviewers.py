@@ -31,6 +31,13 @@ class ReviewerDefinition:
     output_codec: OutputCodec
     supports_effort: bool
     supported_stages: frozenset[ReviewerStage]
+    cli_arguments: tuple[str, ...]
+    review_arguments: tuple[str, ...]
+    critique_arguments: tuple[str, ...]
+    effort_arguments: tuple[str, ...]
+    state_directories: tuple[tuple[str, str], ...]
+    environment: tuple[tuple[str, str], ...]
+    home_files: tuple[tuple[str, str], ...]
 
 
 _ALL_STAGES: frozenset[ReviewerStage] = frozenset({"review", "critique"})
@@ -45,6 +52,13 @@ def _definition(
     adapter_module: str | None = None,
     supports_effort: bool = True,
     credential_variables: frozenset[str] = _OPENROUTER_CREDENTIALS,
+    cli_arguments: tuple[str, ...] = (),
+    review_arguments: tuple[str, ...] = (),
+    critique_arguments: tuple[str, ...] = (),
+    effort_arguments: tuple[str, ...] = (),
+    state_directories: tuple[tuple[str, str], ...] | None = None,
+    environment: tuple[tuple[str, str], ...] = (),
+    home_files: tuple[tuple[str, str], ...] = (),
 ) -> ReviewerDefinition:
     return ReviewerDefinition(
         reviewer_id=reviewer_id,
@@ -55,6 +69,13 @@ def _definition(
         output_codec=output_codec,
         supports_effort=supports_effort,
         supported_stages=_ALL_STAGES,
+        cli_arguments=cli_arguments,
+        review_arguments=review_arguments,
+        critique_arguments=critique_arguments,
+        effort_arguments=effort_arguments,
+        state_directories=state_directories or (("HOME", f"{reviewer_id}-home"),),
+        environment=environment,
+        home_files=home_files,
     )
 
 
@@ -64,17 +85,59 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "claude",
             "anthropic_openrouter",
             output_codec="claude_stream_json",
+            cli_arguments=(
+                "-p", "--safe-mode", "--model", "{model}", "--no-session-persistence",
+                "--output-format", "stream-json", "--verbose", "--json-schema", "{schema_json}",
+            ),
+            review_arguments=("--add-dir", "{root}", "--tools", "Read,Grep,Glob"),
+            critique_arguments=("--tools", ""),
+            # --bare cannot authenticate through OpenRouter's Anthropic route.
+            # The safe-mode flag and explicit stage tool lists are intentional.
+            effort_arguments=("--effort", "{effort}"),
+            environment=(
+                ("ANTHROPIC_AUTH_TOKEN", "{OPENROUTER_API_KEY}"),
+                ("ANTHROPIC_MODEL", "{model}"),
+            ),
         ),
         "codex": _definition(
             "codex",
             "openrouter",
             output_codec="batch_json",
+            cli_arguments=(
+                "exec", "--cd", "{root}", "--ephemeral", "--skip-git-repo-check",
+                "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
+                "--model", "{model}", "--config", 'model_provider="openrouter"',
+                "--config", 'model_providers.openrouter.name="OpenRouter"',
+                "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
+                "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
+                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}", "-",
+            ),
+            effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
+            state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),
         ),
         "opencode": _definition(
             "opencode",
             "openrouter",
             output_codec="batch_json",
             adapter_module="ai_review.opencode_client",
+            state_directories=(
+                ("HOME", "opencode-home"),
+                ("XDG_CONFIG_HOME", "opencode-config-home"),
+                ("XDG_DATA_HOME", "opencode-data-home"),
+                ("OPENCODE_CONFIG_DIR", "opencode-config-dir"),
+            ),
+            environment=(
+                # which("rg") must find the image's pinned binary before any
+                # ambient executable or OpenCode's download fallback.
+                ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+                ("OPENCODE_DISABLE_AUTOUPDATE", "1"),
+                ("OPENCODE_DISABLE_DEFAULT_PLUGINS", "1"),
+                ("OPENCODE_DISABLE_LSP_DOWNLOAD", "1"),
+                ("OPENCODE_DISABLE_CLAUDE_CODE", "1"),
+                ("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT", "1"),
+                ("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", "1"),
+                ("OPENCODE_DISABLE_MODELS_FETCH", "1"),
+            ),
         ),
         "cursor": _definition(
             "cursor",
@@ -82,6 +145,15 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             output_codec="cursor_json",
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
+            cli_arguments=(
+                "-p", "--output-format", "json", "--trust", "--sandbox", "disabled",
+                "--mode", "ask", "--model", "{model}",
+            ),
+            home_files=((
+                ".cursor/cli-config.json",
+                '{"permissions":{"allow":["Read(**)"],'
+                '"deny":["Write(**)","Write(/**)","Shell(*)"]}}',
+            ),),
         ),
     }
 )

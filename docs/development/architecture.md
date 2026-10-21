@@ -51,8 +51,9 @@ from the package at all.
 | `adapter_runner.py` | `python -m ai_review.adapter_runner`; `run_adapter` | no |
 | `adapter_output.py` | Reviewer output parsing and root normalization | no |
 | `adapter_process.py` | Adapter subprocess lifecycle and environment | no |
+| `reviewer_setup.py` | Registry-declared CLI arguments, isolated state, snapshot workspaces, schema transport, and Claude's build-time acceptance probe | no |
 | `adapter_artifacts.py` | Status and debug artifact writing | no |
-| `opencode_client.py` | The OpenCode seat, launched by the runner as a module: workspace, generated config, server environment and the loopback server client | no |
+| `opencode_client.py` | The OpenCode seat, launched by the runner as a module: generated config, server environment and the loopback server client | no |
 
 These rules are worth stating because breaking them is silent:
 
@@ -61,6 +62,12 @@ These rules are worth stating because breaking them is silent:
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
   another reviewer's transport from stdout.
+- The same registry declares CLI arguments, effort flags, schema transport,
+  isolated state directories and environment settings. `reviewer_setup` prepares
+  them for the shell seats and OpenCode; review receives a copied snapshot and
+  critique an empty working root. The shell adapters only check prerequisites
+  and invoke the CLI. Claude's image-build acceptance probe uses the runtime
+  argument builder, so it cannot drift to a different flag or schema combination.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`

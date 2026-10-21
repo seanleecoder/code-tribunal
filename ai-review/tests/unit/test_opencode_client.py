@@ -307,11 +307,13 @@ class OpenCodeClientTests(unittest.TestCase):
             process.poll.return_value = None
             thread = mock.Mock()
             directories: list[object] = []
+            snapshot_copied: list[bool] = []
 
             def start_server(
                 server_root: Path, _executable: str, _env: dict[str, str]
             ) -> tuple[object, str, opencode_client._ServerLog, object]:
                 directories.append(server_root)
+                snapshot_copied.append((server_root / "reviewed.py").is_file())
                 return process, "http://127.0.0.1:43123/", opencode_client._ServerLog(), thread
 
             def request(
@@ -349,23 +351,14 @@ class OpenCodeClientTests(unittest.TestCase):
                 os.chdir(cwd)
 
             # The server cwd and every request directory: absolute, and the same
-            # single copy of the root path, which holds the snapshot.
+            # single copy of the root path, which holds the snapshot while the
+            # server runs and is removed after it stops.
             self.assertGreaterEqual(len(directories), 3)
             for seen in directories:
                 self.assertEqual(Path(str(seen)), root)
                 self.assertTrue(Path(str(seen)).is_absolute())
-            self.assertTrue((root / "reviewed.py").is_file())
-
-    def test_critique_transport_uses_critique_schema(self) -> None:
-        schema = opencode_client._load_transport_schema("critique")
-        expected = load_json_file(
-            Path(__file__).resolve().parents[2] / "schemas" / "critique_batch.schema.json"
-        )
-        assert isinstance(expected, dict)
-        expected.pop("$schema")
-
-        self.assertEqual(schema, expected)
-        self.assertNotIn("$schema", schema)
+            self.assertEqual(snapshot_copied, [True])
+            self.assertFalse(root.exists())
 
     def test_start_server_is_pinned_to_loopback_and_random_port(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -567,6 +560,12 @@ class OpenCodeClientTests(unittest.TestCase):
 
     def test_server_environment_is_fixed_and_carries_no_ambient_value(self) -> None:
         """Nothing from the runner's environment reaches the server but TMPDIR."""
+        hardening = {
+            "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+            "OPENCODE_DISABLE_LSP_DOWNLOAD", "OPENCODE_DISABLE_CLAUDE_CODE",
+            "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT", "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
+            "OPENCODE_DISABLE_MODELS_FETCH",
+        }
         with mock.patch.dict(
             os.environ,
             {"TMPDIR": "/scratch", "PATH": "/hostile:/usr/bin", "GITLAB_TOKEN": "secret"},
@@ -586,33 +585,15 @@ class OpenCodeClientTests(unittest.TestCase):
                 "OPENCODE_CONFIG_DIR",
                 "OPENCODE_CONFIG_CONTENT",
                 "OPENROUTER_API_KEY",
-                *opencode_client._SERVER_HARDENING,
+                *hardening,
             },
         )
         self.assertEqual(env["PATH"], "/usr/local/bin:/usr/bin:/bin")
         self.assertEqual(env["TMPDIR"], "/scratch")
         self.assertEqual(env["HOME"], "/work/out/.tmp/opencode-home")
         self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"]), {"lsp": False})
-        for name in opencode_client._SERVER_HARDENING:
+        for name in hardening:
             self.assertEqual(env[name], "1")
-
-    def test_review_root_holds_the_snapshot_and_critique_root_is_empty(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            _write_snapshot(root)
-            for stage, expected in (("review", ["reviewed.py"]), ("critique", [])):
-                with self.subTest(stage=stage):
-                    output = root / stage
-                    _tmp_dir, review_root = opencode_client._prepare_workspace(
-                        stage, root / "inputs", output
-                    )
-                    self.assertEqual(
-                        sorted(path.name for path in review_root.iterdir()), expected
-                    )
-            with self.assertRaisesRegex(
-                opencode_client.OpenCodeClientError, "repo_snapshot is required"
-            ):
-                opencode_client._prepare_workspace("review", root / "absent", root / "out")
 
     def test_missing_prerequisites_fail_even_with_mock_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -726,12 +707,6 @@ class OpenCodeClientTests(unittest.TestCase):
                 "INFO  downloading model list",
             )
         )
-
-    def test_unsupported_stage_is_a_client_error(self) -> None:
-        with self.assertRaisesRegex(
-            opencode_client.OpenCodeClientError, "unsupported OpenCode stage"
-        ):
-            opencode_client._load_transport_schema("")
 
 
 if __name__ == "__main__":

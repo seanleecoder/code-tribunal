@@ -540,7 +540,7 @@ class EffortEnvTests(unittest.TestCase):
             adapter_dir = project / "adapters"
             input_dir = root / "inputs"
             output_dir = root / "out"
-            for path in [config_dir, adapter_dir, input_dir]:
+            for path in [config_dir, adapter_dir, input_dir / "repo_snapshot"]:
                 path.mkdir(parents=True, exist_ok=True)
             (input_dir / "mr.diff").write_text("", encoding="utf-8")
             write_canonical_json(
@@ -644,7 +644,7 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
     adapter_dir = project / "adapters"
     input_dir = root / "inputs"
     output_dir = root / "out"
-    for path in [config_dir, adapter_dir, input_dir]:
+    for path in [config_dir, adapter_dir, input_dir / "repo_snapshot"]:
         path.mkdir(parents=True, exist_ok=True)
     (input_dir / "mr.diff").write_text("", encoding="utf-8")
     write_canonical_json(
