@@ -14,7 +14,7 @@ from unittest import mock
 
 from ai_review.adapter_output import _coerce_adapter_root, _load_adapter_json
 from ai_review.adapter_process import (
-    _SHELL_MOCK_ALLOW_REFUSAL,
+    MOCK_ALLOW_REFUSAL,
     _effective_adapter_timeout_seconds,
     _model_id_validation_error,
 )
@@ -925,7 +925,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 paths["adapter_dir"],
                 "codex",
                 "#!/bin/sh\n"
-                f'echo "{_SHELL_MOCK_ALLOW_REFUSAL}" >&2\n'
+                f'echo "{MOCK_ALLOW_REFUSAL}" >&2\n'
                 "exit 2\n",
             )
             self._set_env(paths, config_path)

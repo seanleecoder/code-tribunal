@@ -95,6 +95,7 @@ class ProbeContractTests(unittest.TestCase):
         # The config and server environment are the client's, not restated here.
         self.assertIn("client._opencode_config(PROBE_MODEL, None)", text)
         self.assertIn("client._server_env(", text)
+        self.assertNotIn('"HOME": str(', text)
 
     def test_wrapper_mounts_the_pin_and_driver_the_probe_reads(self) -> None:
         """Neither file ships in the image (N20), so the wrapper must mount both."""

@@ -49,6 +49,7 @@ rather than in a probe that has to move it.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import subprocess
@@ -56,6 +57,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
 from typing import Any, NoReturn
 
 # The image layout, matching scripts/smoke_opencode_search_tools.py: module
@@ -86,6 +88,15 @@ CLIENT_WITH_CONFIG = (
 
 def python_path() -> str:
     return str(INSTALL_ROOT / "src")
+
+
+@functools.cache
+def shipped_client() -> ModuleType:
+    """The image's own `ai_review.opencode_client`, not a copy of its logic."""
+    sys.path.insert(0, python_path())
+    from ai_review import opencode_client  # noqa: PLC0415
+
+    return opencode_client
 
 
 def fail(message: str) -> NoReturn:
@@ -303,14 +314,14 @@ def _client_config() -> str:
     Restating the config here would make the probe blind to the drift it exists to
     catch — the permission block under test is the client's, not a copy of it.
     """
-    sys.path.insert(0, python_path())
-    from ai_review import opencode_client  # noqa: PLC0415
-
-    return json.dumps(opencode_client._opencode_config(PROBE_MODEL, None))
+    return json.dumps(shipped_client()._opencode_config(PROBE_MODEL, None))
 
 
 def _run_client(config: str, label: str) -> tuple[int, str, str]:
     """Run the shipped client as the runner would, with `config` in place of its own."""
+    shipped_client()
+    from ai_review.reviewers import get_reviewer_definition  # noqa: PLC0415
+
     work = SMOKE_DIR / f"client-{label}"
     snapshot = work / "inputs" / "repo_snapshot"
     snapshot.mkdir(parents=True, exist_ok=True)
@@ -326,7 +337,7 @@ def _run_client(config: str, label: str) -> tuple[int, str, str]:
         "AI_REVIEW_INPUT_DIR": str(work / "inputs"),
         "AI_REVIEW_OUTPUT_DIR": str(work / "out"),
         "AI_REVIEW_RENDERED_PROMPT": str(prompt),
-        "AI_REVIEW_REQUIRE_REAL_OPENCODE": "1",
+        get_reviewer_definition("opencode").require_real_control: "1",
         "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
     }
     try:

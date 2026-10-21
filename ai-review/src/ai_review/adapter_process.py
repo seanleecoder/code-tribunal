@@ -26,7 +26,6 @@ from .reviewers import ReviewerDefinition, adapter_python_path
 _ADAPTER_RUNTIME_ENV = {
     "PATH",
     "PYTHON",
-    "PYTHONPATH",
     "TMPDIR",
     "TEMP",
     "TMP",
@@ -107,10 +106,10 @@ def _build_adapter_env(
     for credential_variable in reviewer_definition.credential_variables:
         if (credential := os.environ.get(credential_variable)) is not None:
             env[credential_variable] = credential
-    if reviewer_definition.adapter_module is not None:
-        # A module seat imports from the package the runner itself was loaded from,
-        # never from an ambient PYTHONPATH entry that could shadow it.
-        env["PYTHONPATH"] = adapter_python_path()
+    # Every seat imports from the package the runner itself was loaded from (the
+    # module seats, and the mock and probes the shell seats run), never from an
+    # ambient PYTHONPATH entry that could shadow it.
+    env["PYTHONPATH"] = adapter_python_path()
 
     env["AI_REVIEW_REVIEWER"] = reviewer
     env["AI_REVIEW_STAGE"] = stage
@@ -255,9 +254,14 @@ def _effective_adapter_timeout_seconds(
     return max(1, configured_timeout - 5)
 
 
-_SHELL_MOCK_ALLOW_REFUSAL = (
+MOCK_ALLOW_REFUSAL = (
     "mock reviewer fallback requires AI_REVIEW_ALLOW_LOCAL_MOCK=true"
 )
+
+
+def local_mock_allowed() -> bool:
+    """Whether the exact companion allow flag for every mock path is set."""
+    return os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") == "true"
 
 
 def _local_mock_unauthorized() -> str | None:
@@ -268,9 +272,7 @@ def _local_mock_unauthorized() -> str | None:
     companion allow flag so mock findings cannot silently replace real
     reviewers in a consumer project.
     """
-    if os.environ.get("AI_REVIEW_LOCAL_MOCK") != "1":
-        return None
-    if os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") == "true":
+    if os.environ.get("AI_REVIEW_LOCAL_MOCK") != "1" or local_mock_allowed():
         return None
     return (
         "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
@@ -279,5 +281,5 @@ def _local_mock_unauthorized() -> str | None:
 
 
 def _adapter_exit_is_mock_allow_refusal(stderr: str) -> bool:
-    """Shell adapters refuse all mock paths without the allow flag (exit 2)."""
-    return _SHELL_MOCK_ALLOW_REFUSAL in stderr
+    """Adapters refuse every mock path without the allow flag."""
+    return MOCK_ALLOW_REFUSAL in stderr

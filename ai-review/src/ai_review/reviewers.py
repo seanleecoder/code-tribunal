@@ -136,7 +136,7 @@ def adapter_command(definition: ReviewerDefinition) -> list[str]:
 
     A module seat runs under the runner's own interpreter, which is the trusted one
     by construction, with ``-P`` so the job's working directory cannot shadow the
-    package; ``adapter_python_path`` pins the import root to match.
+    package; ``adapter_python_path`` pins the import root for every seat.
     """
     if definition.adapter_module is not None:
         return [sys.executable, "-P", "-m", definition.adapter_module]
@@ -144,5 +144,5 @@ def adapter_command(definition: ReviewerDefinition) -> list[str]:
 
 
 def adapter_python_path() -> str:
-    """The import root a module seat runs from: this installed package's own."""
-    return str(Path(__file__).resolve().parents[1])
+    """The import root every seat runs from: this installed package's own."""
+    return str(trusted_runtime_root() / "src")

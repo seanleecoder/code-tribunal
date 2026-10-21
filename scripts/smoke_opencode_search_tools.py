@@ -37,6 +37,7 @@ canary (SPEC-51) is that a real model produces a batch the runner accepts.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -58,6 +59,7 @@ INSTALL_ROOT = Path("/opt/ai-review")
 # Not part of the image: the wrapper mounts this driver and ripgrep.pin here.
 PROBE_ROOT = Path("/probe")
 PROBE_MODEL = "preflight/probe-model"
+PROBE_API_KEY = "sk-or-v1-preflight-probe"
 
 
 def ripgrep_pin_path() -> Path:
@@ -68,6 +70,7 @@ def python_path() -> str:
     return str(INSTALL_ROOT / "src")
 
 
+@functools.cache
 def shipped_client() -> ModuleType:
     """The image's own `ai_review.opencode_client`, not a copy of its logic."""
     sys.path.insert(0, python_path())
@@ -130,7 +133,7 @@ def _prove_pinned_rg(pin: dict[str, str]) -> None:
     ambient = f"{decoy}:/usr/bin:/bin"
     if shutil.which("rg", path=ambient) != str(decoy_rg):
         fail("negative control failed: decoy rg was not found on the ambient PATH")
-    resolved = shutil.which("rg", path=FIXED_PATH)
+    resolved = shutil.which("rg", path=shipped_client()._SERVER_PATH)
     if resolved != "/usr/local/bin/rg":
         fail(
             f"rg resolved to {resolved!r}; expected /usr/local/bin/rg on the "
@@ -181,8 +184,8 @@ def _prove_pinned_opencode() -> None:
         )
 
 
-def _client_config_and_root() -> tuple[str, Path, Path]:
-    """The config the client generates, plus its scratch directory and review root.
+def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
+    """The server environment the client builds, config included, and its review root.
 
     Both come from the functions `run()` itself calls. Restating the config here
     would make the probe blind to exactly the drift it exists to catch.
@@ -193,10 +196,11 @@ def _client_config_and_root() -> tuple[str, Path, Path]:
     snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "example.py").write_text("value = 1\n", encoding="utf-8")
     tmp_dir, root = client._prepare_workspace("review", work / "inputs", work / "out")
-    return json.dumps(client._opencode_config(PROBE_MODEL, None)), tmp_dir, root
+    config = client._opencode_config(PROBE_MODEL, None)
+    return client._server_env(tmp_dir, api_key=PROBE_API_KEY, config=config), root
 
 
-def _prove_effective_permissions(config: str, root: Path) -> None:
+def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     """Read the effective permissions out of OpenCode's own resolver.
 
     `external_directory` is a permission key of its own, so the config's
@@ -206,20 +210,9 @@ def _prove_effective_permissions(config: str, root: Path) -> None:
     generated JSON alone cannot show that OpenCode agrees; this runs the pinned
     binary against the client's config and reads what it resolves.
     """
-    opencode = shutil.which("opencode", path=FIXED_PATH)
+    opencode = shutil.which("opencode", path=env["PATH"])
     if opencode is None:
         fail("pinned opencode was not found on the server's fixed trusted PATH")
-    debug_home = SMOKE_DIR / "debug-home"
-    debug_home.mkdir(parents=True, exist_ok=True)
-    env = {
-        "PATH": FIXED_PATH,
-        "HOME": str(debug_home),
-        "XDG_CONFIG_HOME": str(debug_home / "config"),
-        "XDG_DATA_HOME": str(debug_home / "data"),
-        "OPENCODE_CONFIG_CONTENT": config,
-        "OPENROUTER_API_KEY": "sk-or-v1-preflight-probe",
-    }
-    env.update(dict.fromkeys(shipped_client()._SERVER_HARDENING, "1"))
     completed = subprocess.run(
         [str(opencode), "--pure", "debug", "agent", "ai-reviewer"],
         env=env,
@@ -259,7 +252,7 @@ def _prove_effective_permissions(config: str, root: Path) -> None:
             )
 
 
-def _prove_session_permission_rules(config: str, tmp_dir: Path, root: Path) -> None:
+def _prove_session_permission_rules(env: dict[str, str], root: Path) -> None:
     """Show the pinned server accepts and retains the client's permission rules.
 
     Session-create returning an id proves only tolerance, so this also reads the
@@ -278,17 +271,11 @@ def _prove_session_permission_rules(config: str, tmp_dir: Path, root: Path) -> N
     model, i.e. a provider.
     """
     client = shipped_client()
-    _request_json = client._request_json
-    _response_data = client._response_data
-    # The seat's own server environment and config, as `run()` builds them.
-    env = client._server_env(
-        tmp_dir, api_key="sk-or-v1-preflight-probe", config=json.loads(config)
-    )
     process, base_url, _logs, drain_thread = client._start_server(
         root, "/usr/local/bin/opencode", env
     )
     try:
-        session = _request_json(
+        session = client._request_json(
             base_url,
             "POST",
             "session",
@@ -296,7 +283,7 @@ def _prove_session_permission_rules(config: str, tmp_dir: Path, root: Path) -> N
             body={"title": "ai-review-search-smoke", "permission": client._PERMISSION_RULES},
             timeout=30.0,
         )
-        session_data = _response_data(session)
+        session_data = client._response_data(session)
         if not (
             isinstance(session_data, dict)
             and isinstance(session_data.get("id"), str)
@@ -306,8 +293,8 @@ def _prove_session_permission_rules(config: str, tmp_dir: Path, root: Path) -> N
                 "session-create rejected or mis-parsed the client's permission "
                 f"rules: {session!r}"
             )
-        stored = _response_data(
-            _request_json(
+        stored = client._response_data(
+            client._request_json(
                 base_url,
                 "GET",
                 f"session/{session_data['id']}",
@@ -330,9 +317,9 @@ def main() -> int:
     os.environ["PATH"] = FIXED_PATH
     _prove_pinned_rg(_read_pin())
     _prove_pinned_opencode()
-    config, tmp_dir, root = _client_config_and_root()
-    _prove_effective_permissions(config, root)
-    _prove_session_permission_rules(config, tmp_dir, root)
+    env, root = _client_server_env_and_root()
+    _prove_effective_permissions(env, root)
+    _prove_session_permission_rules(env, root)
     print("opencode search-tool preflight smoke passed")
     return 0
 

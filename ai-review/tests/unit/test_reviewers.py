@@ -72,8 +72,8 @@ class ReviewerRegistryTests(unittest.TestCase):
                 self.assertTrue(resolved.is_file())
                 self.assertTrue(resolved.stat().st_mode & stat.S_IXUSR)
 
-    def test_module_seats_import_from_the_runner_package_only(self) -> None:
-        """An ambient PYTHONPATH entry must not shadow the seat's module."""
+    def test_every_seat_imports_from_the_runner_package_only(self) -> None:
+        """An ambient PYTHONPATH entry must not shadow the package a seat runs."""
         with mock.patch.dict(os.environ, {"PYTHONPATH": "/tmp/hostile"}, clear=True):
             for reviewer_id, definition in REVIEWERS.items():
                 with self.subTest(reviewer=reviewer_id):
@@ -87,10 +87,7 @@ class ReviewerRegistryTests(unittest.TestCase):
                         reviewer_definition=definition,
                         prompt_tmp=None,
                     )
-                    if definition.adapter_module is None:
-                        self.assertEqual(env["PYTHONPATH"], "/tmp/hostile")
-                    else:
-                        self.assertEqual(env["PYTHONPATH"], str(_AI_REVIEW_ROOT / "src"))
+                    self.assertEqual(env["PYTHONPATH"], str(_AI_REVIEW_ROOT / "src"))
 
     def test_absolute_and_escaping_registry_paths_are_rejected(self) -> None:
         definition = REVIEWERS["codex"]

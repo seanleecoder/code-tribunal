@@ -11,17 +11,21 @@ from unittest import mock
 
 from ai_review import opencode_client
 from ai_review.adapter_output import _load_adapter_json
-from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
+from ai_review.adapter_process import MOCK_ALLOW_REFUSAL
 from ai_review.schema import load_json_file
 
 _PINNED = "/usr/local/bin/opencode"
 
 
-def _seat_env(root: Path, prompt: Path, **extra: str) -> dict[str, str]:
-    """The environment the runner hands the seat, with a one-file snapshot."""
+def _write_snapshot(root: Path) -> None:
     snapshot = root / "inputs" / "repo_snapshot"
     snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "reviewed.py").write_text("value = 1\n", encoding="utf-8")
+
+
+def _seat_env(root: Path, prompt: Path, **extra: str) -> dict[str, str]:
+    """The environment the runner hands the seat, with a one-file snapshot."""
+    _write_snapshot(root)
     return {
         "AI_REVIEW_STAGE": "review",
         "AI_REVIEW_MODEL": "google/test-model",
@@ -597,7 +601,7 @@ class OpenCodeClientTests(unittest.TestCase):
     def test_review_root_holds_the_snapshot_and_critique_root_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _seat_env(root, root / "prompt.md")
+            _write_snapshot(root)
             for stage, expected in (("review", ["reviewed.py"]), ("critique", [])):
                 with self.subTest(stage=stage):
                     output = root / stage
@@ -639,11 +643,10 @@ class OpenCodeClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             prompt = root / "prompt.md"
-            for label, overrides in (
-                ("no cli", {}),
-                ("no key", {"OPENROUTER_API_KEY": ""}),
+            for label, executable, overrides in (
+                ("no cli", None, {}),
+                ("no key", _PINNED, {"OPENROUTER_API_KEY": ""}),
             ):
-                executable = None if label == "no cli" else _PINNED
                 with self.subTest(label), mock.patch.object(
                     opencode_client, "_resolve_opencode_executable", return_value=executable
                 ):
@@ -661,7 +664,7 @@ class OpenCodeClientTests(unittest.TestCase):
                     with (
                         mock.patch.dict(os.environ, refused, clear=True),
                         self.assertRaisesRegex(
-                            opencode_client.OpenCodeClientError, _SHELL_MOCK_ALLOW_REFUSAL
+                            opencode_client.OpenCodeClientError, MOCK_ALLOW_REFUSAL
                         ),
                     ):
                         opencode_client.run()

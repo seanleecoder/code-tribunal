@@ -17,7 +17,9 @@ versioning.
   under its own interpreter, and `adapters/opencode.sh` is deleted (N07). The
   OpenCode server's environment now carries only its own settings, and an image
   that shipped a pinned `opencode` but lost it fails instead of falling back to
-  the mock. Configuration, prompts, requests and output are unchanged.
+  the mock. The runner also pins every seat's `PYTHONPATH` to its own package
+  instead of forwarding the ambient value. Configuration, prompts, requests and
+  output are unchanged.
 
 ## [2.1.0] - 2026-10-19
 

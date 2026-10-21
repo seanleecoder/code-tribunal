@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 import yaml
-from ai_review.adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
+from ai_review.adapter_process import MOCK_ALLOW_REFUSAL
 from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import load_json_file
@@ -105,7 +105,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
         OpenCode module seat raises the same constant (test_opencode_client.py).
         """
         self.assertIn(
-            _SHELL_MOCK_ALLOW_REFUSAL,
+            MOCK_ALLOW_REFUSAL,
             (_ADAPTERS / "common.sh").read_text(encoding="utf-8"),
         )
         for script in sorted(_ADAPTERS.glob("*.sh")):
@@ -116,7 +116,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 self.assertIn('. "${0%/*}/common.sh"', text)
                 self.assertIn("mock_if_requested", text)
                 self.assertNotIn(
-                    _SHELL_MOCK_ALLOW_REFUSAL,
+                    MOCK_ALLOW_REFUSAL,
                     text,
                     "the refusal must have exactly one home, in common.sh",
                 )
@@ -146,7 +146,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
         )
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+        self.assertIn(MOCK_ALLOW_REFUSAL, completed.stderr)
 
     def test_run_reviewer_shell_mock_refusal_is_config_error(self) -> None:
         """End-to-end: run_reviewer.sh → real adapter shell → config_error.
@@ -188,7 +188,7 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 _EXIT_ERROR,
                 msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
             )
-            self.assertIn(_SHELL_MOCK_ALLOW_REFUSAL, completed.stderr)
+            self.assertIn(MOCK_ALLOW_REFUSAL, completed.stderr)
             status = load_json_file(output_dir / "status" / "claude.json")
             self.assertEqual(status["status"], "config_error")
             self.assertEqual(status["error_class"], "ConfigError")

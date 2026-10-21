@@ -28,8 +28,9 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from .adapter_output import extract_json_text
-from .adapter_process import _SHELL_MOCK_ALLOW_REFUSAL
+from .adapter_process import _OPENROUTER_BASE_URL, MOCK_ALLOW_REFUSAL, local_mock_allowed
 from .canonical import json_loads_no_duplicates
+from .config import EFFORT_LEVELS
 from .mock_reviewer import cli as mock_reviewer_cli
 from .redact import redact_text
 from .reviewers import get_reviewer_definition
@@ -50,6 +51,14 @@ _PINNED_OPENCODE_EVIDENCE = Path("/usr/local/lib/node_modules/opencode-ai")
 # download or to an earlier rg. reviewer.Dockerfile's final guard proves resolution
 # on exactly this PATH.
 _SERVER_PATH = "/usr/local/bin:/usr/bin:/bin"
+# The server's disposable state, by the variable that points it there. All of it
+# lives under out/.tmp, which is never uploaded.
+_STATE_DIRS = {
+    "HOME": "opencode-home",
+    "XDG_CONFIG_HOME": "opencode-config-home",
+    "XDG_DATA_HOME": "opencode-data-home",
+    "OPENCODE_CONFIG_DIR": "opencode-config-dir",
+}
 _SERVER_HARDENING = (
     "OPENCODE_DISABLE_AUTOUPDATE",
     "OPENCODE_DISABLE_DEFAULT_PLUGINS",
@@ -59,10 +68,6 @@ _SERVER_HARDENING = (
     "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
     "OPENCODE_DISABLE_MODELS_FETCH",
 )
-# Supported reviewer efforts map onto reasoningEffort unchanged. A provider- or
-# model-specific rejection stays visible rather than silently falling back to a
-# different effort or the provider default.
-_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 # Matches either word order, because the wording is OpenCode's, not ours: any log
 # line that mentions both downloading and ripgrep means the pinned binary lost.
 _RIPGREP_FETCH_PATTERN = re.compile(
@@ -292,7 +297,10 @@ def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
     """The restricted configuration the server loads from OPENCODE_CONFIG_CONTENT.
 
     The API key stays an `{env:…}` template the server expands, and the OpenRouter
-    endpoint is a literal: OpenCode reads no endpoint variable.
+    endpoint is the runner's pinned constant: OpenCode reads no endpoint variable.
+    Every supported effort maps onto reasoningEffort unchanged, so a provider- or
+    model-specific rejection stays visible rather than silently falling back to a
+    different effort or the provider default.
     """
     agent: dict[str, Any] = {
         "description": "Read-only AI code reviewer",
@@ -300,7 +308,7 @@ def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
         "permission": _CONFIG_PERMISSIONS,
         "tools": dict.fromkeys(_DISABLED_TOOLS, False),
     }
-    if effort in _REASONING_EFFORTS:
+    if effort in EFFORT_LEVELS:
         agent["reasoningEffort"] = effort
     return {
         "$schema": "https://opencode.ai/config.json",
@@ -310,7 +318,7 @@ def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
             "openrouter": {
                 "options": {
                     "apiKey": "{env:OPENROUTER_API_KEY}",
-                    "baseURL": "https://openrouter.ai/api/v1",
+                    "baseURL": _OPENROUTER_BASE_URL,
                 },
                 "models": {model: {}},
             }
@@ -331,13 +339,7 @@ def _prepare_workspace(stage: str, input_dir: Path, output_dir: Path) -> tuple[P
     """
     tmp_dir = (output_dir / ".tmp").resolve()
     root = tmp_dir / f"opencode-review-root.{os.getpid()}"
-    for directory in (
-        root,
-        tmp_dir / "opencode-home",
-        tmp_dir / "opencode-config-home",
-        tmp_dir / "opencode-data-home",
-        tmp_dir / "opencode-config-dir",
-    ):
+    for directory in (root, *(tmp_dir / name for name in _STATE_DIRS.values())):
         directory.mkdir(parents=True, exist_ok=True)
     if stage == "review":
         # Explore a copy of the pinned snapshot, so the reviewed files sit at the
@@ -361,10 +363,7 @@ def _server_env(tmp_dir: Path, *, api_key: str, config: dict[str, Any]) -> dict[
     env = {
         "PATH": _SERVER_PATH,
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-        "HOME": str(tmp_dir / "opencode-home"),
-        "XDG_CONFIG_HOME": str(tmp_dir / "opencode-config-home"),
-        "XDG_DATA_HOME": str(tmp_dir / "opencode-data-home"),
-        "OPENCODE_CONFIG_DIR": str(tmp_dir / "opencode-config-dir"),
+        **{variable: str(tmp_dir / name) for variable, name in _STATE_DIRS.items()},
         "OPENCODE_CONFIG_CONTENT": json.dumps(config, ensure_ascii=False),
         "OPENROUTER_API_KEY": api_key,
     }
@@ -549,10 +548,11 @@ def _normalize_message(
 
 
 def _run_mock(stage: str) -> int:
-    # The second gate is deliberate: AI_REVIEW_LOCAL_MOCK alone could be set as a
-    # GitLab project variable, which would silently mock a production review.
-    if os.environ.get("AI_REVIEW_ALLOW_LOCAL_MOCK") != "true":
-        raise OpenCodeClientError(_SHELL_MOCK_ALLOW_REFUSAL)
+    # This seat's copy of common.sh's mock gate; the S03 mock switch in the runner
+    # replaces both. The allow flag is deliberate: AI_REVIEW_LOCAL_MOCK alone could
+    # be set as a GitLab project variable and silently mock a production review.
+    if not local_mock_allowed():
+        raise OpenCodeClientError(MOCK_ALLOW_REFUSAL)
     return mock_reviewer_cli([_REVIEWER, stage], adapter_output=True)
 
 

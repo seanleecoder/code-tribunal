@@ -399,14 +399,14 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_STAGE` | `review` or `critique` inside dispatch. |
 | `AI_REVIEW_MODEL` | Effective model passed to one adapter. |
 | `ANTHROPIC_BASE_URL` | Pinned Claude egress route, set by the runner to `https://openrouter.ai/api` (OpenRouter's Anthropic-compatible base — the Claude CLI has no other endpoint knob). Not read from the environment; an ambient value is overridden. |
-| `OPENROUTER_BASE_URL` | Pinned Codex and OpenCode egress route, set by the runner to `https://openrouter.ai/api/v1`. Not read from the environment; an ambient value is overridden. Cursor receives no endpoint variable — its CLI exposes none to pin. |
+| `OPENROUTER_BASE_URL` | Pinned Codex egress route, set by the runner to `https://openrouter.ai/api/v1`. Not read from the environment; an ambient value is overridden. OpenCode reads no endpoint variable: the same constant is a literal in its generated configuration. Cursor receives no endpoint variable — its CLI exposes none to pin. |
 | `AI_REVIEW_EFFORT` | Effective effort passed to one adapter. |
 | `AI_REVIEW_RENDERED_PROMPT` | Prompt file path passed to one adapter. |
 | `AI_REVIEW_STREAM_ADAPTER_LOGS` | Internal diagnostic streaming switch; avoid in shared logs. |
-| `XDG_CONFIG_HOME` | Disposable OpenCode configuration home created by the adapter. |
-| `XDG_DATA_HOME` | Disposable OpenCode data home created by the adapter. |
-| `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory. |
-| `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON. |
+| `XDG_CONFIG_HOME` | Disposable OpenCode configuration home, set by the OpenCode client for its server. |
+| `XDG_DATA_HOME` | Disposable OpenCode data home, set by the OpenCode client for its server. |
+| `OPENCODE_CONFIG_DIR` | Disposable trusted OpenCode configuration directory, set by the OpenCode client for its server. |
+| `OPENCODE_CONFIG_CONTENT` | Generated, restricted OpenCode configuration JSON, set by the OpenCode client for its server. |
 
 Each seat has exactly one control name, declared in the trusted reviewer registry,
 and the runner forwards only that name to that seat's adapter. Setting any other
