@@ -1008,11 +1008,10 @@ PY
         *,
         extra_env: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        """Drive one seat down the model_error path with a real CLI on PATH.
+        """Drive one seat down the model_error path with a fake CLI on PATH.
 
-        `reviewer` stays a parameter because the fake CLI and the seat's
-        require-real control are seat-specific; the control itself comes off the
-        registry, so this works for any seat without a per-seat branch.
+        The reviewer selects the fake CLI. Invalid configuration must fail
+        before the adapter invokes it.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
