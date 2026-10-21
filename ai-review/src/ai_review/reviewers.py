@@ -136,6 +136,19 @@ def adapter_command(definition: ReviewerDefinition) -> list[str]:
     return [str(resolve_adapter_path(definition))]
 
 
+def mock_adapter_command(reviewer_id: str, stage: str) -> list[str]:
+    """The argv for the deterministic mock standing in for one seat.
+
+    It runs under the same trusted interpreter and ``-P`` rule as a module seat and
+    emits that seat's transport, so the runner parses it like the real seat.
+    """
+    return [
+        sys.executable, "-P", "-c",
+        "from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))",
+        reviewer_id, stage,
+    ]
+
+
 def adapter_python_path() -> str:
     """The import root every seat runs from: this installed package's own."""
     return str(trusted_runtime_root() / "src")

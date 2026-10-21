@@ -134,18 +134,21 @@ class ReviewerRegistryTests(unittest.TestCase):
             "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
             "AI_REVIEW_MOCK_SCENARIO": "blocking",
         }
-        with mock.patch.dict(os.environ, controls, clear=True):
-            env = _build_adapter_env(
-                reviewer="codex",
-                stage="review",
-                model="model",
-                input_dir=Path("inputs"),
-                output_dir=Path("out"),
-                reviewer_config={},
-                reviewer_definition=REVIEWERS["codex"],
-                prompt_tmp=None,
-            )
-        self.assertTrue(set(controls).isdisjoint(env))
+        for selected in (False, True):
+            with self.subTest(mock=selected), mock.patch.dict(os.environ, controls, clear=True):
+                env = _build_adapter_env(
+                    reviewer="codex",
+                    stage="review",
+                    model="model",
+                    input_dir=Path("inputs"),
+                    output_dir=Path("out"),
+                    reviewer_config={},
+                    reviewer_definition=REVIEWERS["codex"],
+                    prompt_tmp=None,
+                    mock=selected,
+                )
+                forwarded = {"AI_REVIEW_MOCK_SCENARIO": "blocking"} if selected else {}
+                self.assertEqual({k: env[k] for k in set(controls) & set(env)}, forwarded)
 
     def test_endpoint_is_injected_from_the_registry_endpoint_kind(self) -> None:
         """The endpoint is supplied by the runner, never read from the caller.

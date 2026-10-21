@@ -35,6 +35,7 @@ from .reviewers import (
     ReviewerRegistryError,
     adapter_command,
     get_reviewer_definition,
+    mock_adapter_command,
 )
 from .schema import (
     AdapterModelError,
@@ -167,12 +168,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
 
         if mock_requested:
-            command = [
-                sys.executable, "-P", "-c",
-                "from ai_review.mock_reviewer import cli; "
-                "raise SystemExit(cli(adapter_output=True))",
-                reviewer, stage,
-            ]
+            command = mock_adapter_command(reviewer, stage)
         else:
             try:
                 command = adapter_command(reviewer_definition)
@@ -210,9 +206,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
             reviewer_config=reviewer_config,
             reviewer_definition=reviewer_definition,
             prompt_tmp=prompt_tmp,
+            mock=mock_requested,
         )
-        if mock_requested and (scenario := os.environ.get("AI_REVIEW_MOCK_SCENARIO")) is not None:
-            env["AI_REVIEW_MOCK_SCENARIO"] = scenario
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         # Opt-in live mirroring of the adapter's output to the job log; off by

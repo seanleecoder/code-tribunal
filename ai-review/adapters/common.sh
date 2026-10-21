@@ -6,6 +6,15 @@
 # checks still run under a stripped PATH.
 AI_REVIEW_ROOT_DIR="$(CDPATH= cd -- "${0%/*}/.." && pwd)"
 
+# Fail with exit 127 when the seat's CLI is not on PATH.
+#   require_cli <command>
+require_cli() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
+    exit 127
+  fi
+}
+
 # Reject an empty AI_REVIEW_MODEL.
 require_model() {
   if [ -z "${AI_REVIEW_MODEL:-}" ]; then

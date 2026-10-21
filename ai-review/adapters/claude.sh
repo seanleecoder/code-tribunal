@@ -5,10 +5,7 @@ set -eu
 
 require_model
 
-if ! command -v claude >/dev/null 2>&1; then
-  echo "claude CLI is required for this AI review job but was not found" >&2
-  exit 127
-fi
+require_cli claude
 
 export ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
 if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then

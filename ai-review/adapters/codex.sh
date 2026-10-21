@@ -9,10 +9,7 @@ set -eu
 # endpoint_kind, so a non-canonical value cannot reach this adapter.
 require_model
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "codex CLI is required for the $AI_REVIEW_REVIEWER reviewer but was not found" >&2
-  exit 127
-fi
+require_cli codex
 
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   echo "OPENROUTER_API_KEY is required for the $AI_REVIEW_REVIEWER reviewer but was not set" >&2

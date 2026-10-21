@@ -545,20 +545,19 @@ def _normalize_message(
 
 
 def run() -> int:
-    stage = os.environ.get("AI_REVIEW_STAGE", "")
     model = os.environ.get("AI_REVIEW_MODEL", "")
     if not model:
         raise OpenCodeClientError("AI_REVIEW_MODEL is required")
     executable = _resolve_opencode_executable()
+    if executable is None:
+        raise OpenCodeClientError("the opencode CLI was not found")
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
-    if executable is None or not api_key:
-        missing = "the opencode CLI was not found" if executable is None else (
-            "OPENROUTER_API_KEY was not set"
-        )
-        raise OpenCodeClientError(f"{missing}, and the opencode reviewer requires it")
+    if not api_key:
+        raise OpenCodeClientError("OPENROUTER_API_KEY was not set")
     prompt_path = Path(os.environ.get("AI_REVIEW_RENDERED_PROMPT", ""))
     if not prompt_path.is_file():
         raise OpenCodeClientError("AI_REVIEW_RENDERED_PROMPT is required")
+    stage = os.environ.get("AI_REVIEW_STAGE", "")
     schema = _load_transport_schema(stage)
     prompt = prompt_path.read_text(encoding="utf-8")
     tmp_dir, root = _prepare_workspace(

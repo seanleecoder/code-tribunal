@@ -61,6 +61,7 @@ def _build_adapter_env(
     reviewer_config: dict[str, Any],
     prompt_tmp: Path | None,
     reviewer_definition: ReviewerDefinition,
+    mock: bool = False,
 ) -> dict[str, str]:
     env = {key: value for key in _ADAPTER_RUNTIME_ENV if (value := os.environ.get(key)) is not None}
     # The provider endpoint is an image-owned constant, not configuration: each
@@ -104,6 +105,9 @@ def _build_adapter_env(
         env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp)
+    # Only the runner-selected mock reads its scenario; real seats never see it.
+    if mock and (scenario := os.environ.get("AI_REVIEW_MOCK_SCENARIO")) is not None:
+        env["AI_REVIEW_MOCK_SCENARIO"] = scenario
     return env
 
 
