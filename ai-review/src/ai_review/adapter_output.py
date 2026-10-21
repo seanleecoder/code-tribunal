@@ -160,6 +160,9 @@ def extract_json_text(value: str, *, stage: str) -> str:
     return text
 
 
+_BATCH_FIELDS = {"review": "findings", "critique": "critiques"}
+
+
 def _decode_stringified_structured_output(payload: dict[str, Any], *, stage: str) -> dict[str, Any]:
     """Decode one layer of stringified structured output for the active stage.
 
@@ -169,7 +172,7 @@ def _decode_stringified_structured_output(payload: dict[str, Any], *, stage: str
     strings that decode to another string stay untouched and fail closed during
     finalization. Duplicate keys are rejected at both decode boundaries.
     """
-    field = {"review": "findings", "critique": "critiques"}[stage]
+    field = _BATCH_FIELDS[stage]
     if payload.get("adapter_status", "success") != "success":
         return payload
     value = payload.get(field)
@@ -212,22 +215,15 @@ def _decode_stringified_structured_output(payload: dict[str, Any], *, stage: str
     return normalized
 
 
-def _coerce_root_shape(raw: Any, *, stage: str) -> dict[str, Any]:
-    """Coerce the supported object and critique-array root shapes."""
-    if isinstance(raw, dict):
-        return raw
-    if not isinstance(raw, list):
-        raise SchemaValidationError("adapter output root must be an object")
-    if stage == "critique":
-        return {"critiques": raw}
-    raise SchemaValidationError("adapter output root must be an object")
-
-
 def _coerce_adapter_root(raw: Any, *, stage: str) -> dict[str, Any]:
-    """Coerce supported reviewer roots, then decode structured string values."""
-    if stage not in {"review", "critique"}:
+    """Coerce the object and critique-array roots, then decode structured string values."""
+    if stage not in _BATCH_FIELDS:
         raise SchemaValidationError(f"unsupported adapter stage: {stage}")
-    return _decode_stringified_structured_output(_coerce_root_shape(raw, stage=stage), stage=stage)
+    if isinstance(raw, list) and stage == "critique":
+        raw = {"critiques": raw}
+    if not isinstance(raw, dict):
+        raise SchemaValidationError("adapter output root must be an object")
+    return _decode_stringified_structured_output(raw, stage=stage)
 
 
 def _load_answer_json(text: str, *, stage: str) -> Any:
@@ -252,7 +248,6 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     event_types: list[str] = []
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
-    saw_result_event = False
     nonanswer_types: set[str] = set()
     for line in stdout.splitlines():
         if not line.strip():
@@ -278,7 +273,6 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
                         nonanswer_types.add(str(part.get("type")))
         if event["type"] != "result":
             continue
-        saw_result_event = True
         if event.get("is_error") is True:
             stream_error = _json_preview(_terminal_error_detail(event))
             continue
@@ -290,7 +284,7 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     if structured_result is not None:
         sys.stderr.write(redact_text(f"ai-review: {stage} adapter used structured_output\n"))
         return structured_result
-    if saw_result_event and stream_error is None:
+    if "result" in event_types and stream_error is None:
         sys.stderr.write(
             redact_text(
                 f"ai-review: {stage} adapter result event carried no "

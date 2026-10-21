@@ -454,12 +454,11 @@ def run() -> int:
     # Mirror the Claude codec's two structured-output wordings so job
     # logs stay comparable across reviewers, and so the canary can tell the
     # schema transport from the text fallback.
-    stage_label = stage or "review"
     if used_structured:
-        message = f"ai-review: {stage_label} adapter used structured_output\n"
+        message = f"ai-review: {stage} adapter used structured_output\n"
     else:
         message = (
-            f"ai-review: {stage_label} adapter response carried no "
+            f"ai-review: {stage} adapter response carried no "
             "structured_output; parsed answer text\n"
         )
     sys.stderr.write(redact_text(message))
