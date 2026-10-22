@@ -9,6 +9,16 @@ versioning.
 
 ### Changed
 
+- Input preparation resolves GitHub revision metadata through the platform
+  client and checks the revision before collection and manifest publication
+  (N17). The workflow's JavaScript resolver is removed; automatic runs check out
+  their event SHA and manual runs pass the checked-out PR head SHA for validation
+  against the API, including on the currently pinned image. Prepare uses
+  `python -P` with the trusted image's import path to prevent checkout packages
+  from running before the fork check. Forks remain refused before input
+  collection. The manifest no longer writes the unread `diff_sha256` and
+  `repo_snapshot_sha256` fields; effective-config and whole-manifest bindings
+  remain.
 - Configuration is resolved into frozen typed settings and shared through each
   runtime stage (N05). Defaults are centralized, and prepare no longer loads the
   configuration twice. The public YAML options and environment-drift checks

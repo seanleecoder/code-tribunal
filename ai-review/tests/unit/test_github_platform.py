@@ -4,6 +4,7 @@ import json
 from typing import Any
 from unittest import mock
 
+import pytest
 from ai_review.memory import encode_state_note
 from ai_review.platform.github import (
     STATE_MARKER,
@@ -65,7 +66,11 @@ class Session:
                 200,
                 {
                     "number": 7,
-                    "head": {"sha": "1" * 40, "ref": "feature"},
+                    "head": {
+                        "sha": "1" * 40,
+                        "ref": "feature",
+                        "repo": {"full_name": "octo/repo"},
+                    },
                     "base": {"sha": "0" * 40, "ref": "main"},
                 },
             )
@@ -243,13 +248,59 @@ def test_fetch_comparison_diff_406_fails_closed() -> None:
         raise AssertionError("oversized immutable comparison diff was accepted")
 
 
-def test_fetch_pull_request_returns_metadata() -> None:
+def test_fetch_version_validates_and_returns_revision_metadata() -> None:
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=Session())
 
-    pull_request = platform.fetch_pull_request("octo/repo", 7)
+    version = platform.fetch_version("octo/repo", 7)
 
-    assert pull_request["number"] == 7
-    assert pull_request["head"]["ref"] == "feature"
+    assert version.base_sha == "0" * 40
+    assert version.head_sha == "1" * 40
+    assert version.source_branch == "feature"
+    assert version.target_branch == "main"
+
+
+@pytest.mark.parametrize("number", ["", "0", "-1", "7/head", "1\n", "1" * 11])
+def test_fetch_version_rejects_invalid_numbers_before_request(number: str) -> None:
+    session = Session()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    with pytest.raises(GitHubReviewPlatformError, match="positive integer"):
+        platform.fetch_version("octo/repo", number)
+    assert not session.calls
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ([], "not an object"),
+        ({"number": 32}, "does not match"),
+        ({"number": 7, "head": []}, "valid base.sha and head.sha"),
+        ({"number": 7, "head": {}, "base": {}}, "external fork"),
+        (
+            {"number": 7, "head": {"repo": {"full_name": "someone/fork"}}, "base": {}},
+            "external fork",
+        ),
+        (
+            {"number": 7, "head": {"repo": {"full_name": "octo/repo"}}, "base": {}},
+            "valid base.sha and head.sha",
+        ),
+        (
+            {
+                "number": 7,
+                "head": {"sha": "not-a-sha", "repo": {"full_name": "octo/repo"}},
+                "base": {"sha": "0" * 40},
+            },
+            "valid base.sha and head.sha",
+        ),
+    ],
+)
+def test_fetch_version_refuses_unbound_or_fork_metadata(payload: Any, message: str) -> None:
+    session = mock.Mock()
+    session.request.return_value = Response(200, payload)
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+
+    with pytest.raises(GitHubReviewPlatformError, match=message):
+        platform.fetch_version("octo/repo", "7")
 
 
 def test_state_write_requires_configured_bot_to_be_actual_author() -> None:

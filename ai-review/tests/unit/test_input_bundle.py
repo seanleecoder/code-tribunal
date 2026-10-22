@@ -12,20 +12,16 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
-from ai_review.canonical import sha256_hex
 from ai_review.config import ReviewConfig, load_config
 from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
-    _directory_sha256,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
     _git_command,
     _github_checkout_head,
-    _github_pull_request_version,
     _load_platform_state,
     _publish_staged_bundle,
-    _resolve_github_pull_request,
     copy_repo_snapshot,
     prepare_github_bundle,
     prepare_gitlab_bundle,
@@ -33,7 +29,7 @@ from ai_review.input_bundle import (
 )
 from ai_review.memory import empty_state, encode_state_note
 from ai_review.platform import ReviewPlatformError
-from ai_review.platform.github import GitHubReviewPlatform
+from ai_review.platform.github import GitHubReviewPlatform, PullRequestVersion
 from ai_review.platform.gitlab import MergeRequestVersion
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,6 +40,10 @@ _REPO_CONFIG = SHIPPED_CONFIG_PATH
 
 def _github_platform_mock() -> mock.Mock:
     return mock.Mock(spec=GitHubReviewPlatform)
+
+
+def _pr_version(*, head_sha: str = "1" * 40, base_sha: str = "0" * 40) -> PullRequestVersion:
+    return PullRequestVersion(base_sha, head_sha, source_branch="feature", target_branch="main")
 
 
 def _diff_with_files(count: int) -> str:
@@ -140,7 +140,6 @@ class InputBundleLimitTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "current_user"),
         ):
             prepare_gitlab_bundle(config, Path(tmpdir))
@@ -209,7 +208,6 @@ class InputBundleLimitTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "version changed during diff collection"),
         ):
             prepare_gitlab_bundle(runtime_config(), Path(tmpdir))
@@ -295,7 +293,7 @@ class PrepareStateLoadTests(unittest.TestCase):
 
 
 class BundlePublicationTests(unittest.TestCase):
-    def test_reprepare_removes_deleted_snapshot_file_and_updates_digest(self) -> None:
+    def test_reprepare_removes_deleted_snapshot_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
@@ -309,22 +307,13 @@ class BundlePublicationTests(unittest.TestCase):
             out = root / "inputs"
 
             prepare_local_bundle(load_config(_REPO_CONFIG), diff, repo, out)
-            first_manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             deleted.unlink()
 
             prepare_local_bundle(load_config(_REPO_CONFIG), diff, repo, out)
-            second_manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
             snapshot = out / "repo_snapshot"
             self.assertFalse((snapshot / "deleted.txt").exists())
-            self.assertEqual(
-                second_manifest["repo_snapshot_sha256"],
-                _directory_sha256(snapshot),
-            )
-            self.assertNotEqual(
-                first_manifest["repo_snapshot_sha256"],
-                second_manifest["repo_snapshot_sha256"],
-            )
+            self.assertEqual((snapshot / "retained.txt").read_text(), "retained\n")
 
     def test_publish_cleanly_replaces_generated_entry_types_and_contents(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -441,55 +430,10 @@ class BundlePublicationTests(unittest.TestCase):
             self.assertEqual(published[-1], "manifest.json")
 
 
-class GitHubPullRequestResolutionTests(unittest.TestCase):
-    @staticmethod
-    def _pull_request(*, number: int = 7, source_repo: str = "octo/repo") -> dict[str, object]:
-        return {
-            "number": number,
-            "head": {
-                "ref": "feature",
-                "sha": "1" * 40,
-                "repo": {"full_name": source_repo},
-            },
-            "base": {"ref": "main", "sha": "0" * 40},
-        }
-
-    def test_automatic_handoff_fetches_current_api_metadata(self) -> None:
-        client = mock.Mock()
-        expected = self._pull_request()
-        client.fetch_pull_request.return_value = expected
-        with mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "7"}, clear=True):
-            actual = _resolve_github_pull_request(client, "octo/repo")
-
-        self.assertEqual(actual, expected)
-        client.fetch_pull_request.assert_called_once_with("octo/repo", "7")
-
-    def test_manual_dispatch_fetches_requested_pull_request(self) -> None:
-        client = mock.Mock()
-        expected = self._pull_request(number=32)
-        client.fetch_pull_request.return_value = expected
-        with mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True):
-            actual = _resolve_github_pull_request(client, "octo/repo")
-
-        self.assertEqual(actual, expected)
-        client.fetch_pull_request.assert_called_once_with("octo/repo", "32")
-
-    def test_version_is_built_from_resolved_pull_request_metadata(self) -> None:
-        version = _github_pull_request_version(self._pull_request())
-
-        self.assertEqual(version.base_sha, "0" * 40)
-        self.assertEqual(version.head_sha, "1" * 40)
-
-    def test_version_requires_both_endpoint_shas(self) -> None:
-        pull_request = self._pull_request()
-        pull_request["head"] = {"repo": {"full_name": "octo/repo"}}
-
-        with self.assertRaisesRegex(BundleError, "base.sha and head.sha"):
-            _github_pull_request_version(pull_request)
-
+class GitHubPrepareTests(unittest.TestCase):
     def test_manual_prepare_uses_immutable_diff_and_records_revision_fields(self) -> None:
         client = _github_platform_mock()
-        client.fetch_pull_request.return_value = self._pull_request(number=32)
+        client.fetch_version.return_value = _pr_version()
         client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
         with (
             tempfile.TemporaryDirectory() as tmpdir,
@@ -512,42 +456,50 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
         ):
             out = Path(tmpdir) / "inputs"
             prepare_github_bundle(runtime_config(), out)
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(client.fetch_pull_request.call_count, 3)
-        client.fetch_pull_request.assert_has_calls([mock.call("octo/repo", "32")] * 3)
-        client.fetch_version.assert_not_called()
+        self.assertEqual(client.fetch_version.call_count, 2)
+        client.fetch_version.assert_has_calls([mock.call("octo/repo", "32")] * 2)
         client.fetch_diff.assert_not_called()
         client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, "1" * 40)
         self.assertEqual(manifest["base_sha"], "0" * 40)
         self.assertEqual(manifest["head_sha"], "1" * 40)
         self.assertEqual(manifest["selected_head_sha"], "1" * 40)
         self.assertEqual(manifest["checkout_head_sha"], "1" * 40)
-        self.assertEqual(manifest["diff_sha256"], sha256_hex("diff --git a/f.py b/f.py\n"))
+        self.assertEqual(manifest["source_branch"], "feature")
+        self.assertEqual(manifest["target_branch"], "main")
 
-    def test_manual_dispatch_requires_numeric_pull_request(self) -> None:
+    def test_fork_is_rejected_before_diff_state_or_snapshot_collection(self) -> None:
+        session = mock.Mock()
+        response = session.request.return_value
+        response.status_code = 200
+        response.text = "{}"
+        response.json.return_value = {
+            "number": 7,
+            "head": {"sha": "1" * 40, "repo": {"full_name": "someone/fork"}},
+            "base": {"sha": "0" * 40},
+        }
+        client = GitHubReviewPlatform("https://api.github.test", "token", session=session)
         with (
+            tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
-                "os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "not-a-number"}, clear=True
+                "os.environ",
+                {"GITHUB_REPOSITORY": "octo/repo", "AI_REVIEW_GITHUB_PR_NUMBER": "7"},
+                clear=True,
             ),
-            self.assertRaisesRegex(SystemExit, "numeric AI_REVIEW_GITHUB_PR_NUMBER"),
+            mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+            mock.patch("ai_review.input_bundle._github_checkout_head") as checkout,
+            mock.patch("ai_review.input_bundle._prepare_bound_bundle") as package,
         ):
-            _resolve_github_pull_request(mock.Mock(), "octo/repo")
+            with self.assertRaisesRegex(ReviewPlatformError, "external fork"):
+                prepare_github_bundle(runtime_config(), Path(tmpdir) / "inputs")
 
-    def test_external_fork_pull_request_is_rejected(self) -> None:
-        client = _github_platform_mock()
-        client.fetch_pull_request.return_value = self._pull_request(
-            number=32, source_repo="someone/fork"
-        )
-        with (
-            mock.patch.dict("os.environ", {"AI_REVIEW_GITHUB_PR_NUMBER": "32"}, clear=True),
-            self.assertRaisesRegex(SystemExit, "external fork PR secret-bearing path"),
-        ):
-            _resolve_github_pull_request(client, "octo/repo")
+            self.assertEqual(session.request.call_count, 1)
+            checkout.assert_not_called()
+            package.assert_not_called()
 
     def test_git_command_trusts_only_the_resolved_checkout_for_the_invocation(self) -> None:
         with tempfile.TemporaryDirectory(prefix="checkout with spaces ") as tmpdir:
@@ -719,12 +671,12 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
     def _prepare_with_versions(
         self,
         tmpdir: str,
-        versions: list[dict[str, object]],
+        versions: list[PullRequestVersion],
         *,
         diff_error: Exception | None = None,
     ) -> tuple[mock.Mock, Path]:
         client = _github_platform_mock()
-        client.fetch_pull_request.side_effect = versions
+        client.fetch_version.side_effect = versions
         if diff_error is None:
             client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
         else:
@@ -750,7 +702,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-            mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
         )
         with ExitStack() as stack:
             for patcher in patches:
@@ -784,17 +735,9 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             selected = self._init_git_repo(repo)
-            pull_request = {
-                "number": 7,
-                "head": {
-                    "ref": "feature",
-                    "sha": selected,
-                    "repo": {"full_name": "octo/repo"},
-                },
-                "base": {"ref": "main", "sha": "0" * 40},
-            }
+            pull_request = _pr_version(head_sha=selected)
             client = _github_platform_mock()
-            client.fetch_pull_request.return_value = pull_request
+            client.fetch_version.return_value = pull_request
             client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
             out = Path(tmpdir) / "outside-inputs"
             with (
@@ -808,27 +751,32 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                     clear=True,
                 ),
                 mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
-                mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform", return_value=client
+                ),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
                     side_effect=lambda _client, _config, state, **_kwargs: state,
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
-                mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
             ):
                 prepare_github_bundle(runtime_config(), out)
 
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["selected_head_sha"], selected)
             self.assertEqual(manifest["checkout_head_sha"], selected)
-            client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, selected)
+            client.fetch_comparison_diff.assert_called_once_with(
+                "octo/repo", "0" * 40, selected
+            )
 
     def test_prepare_rejects_real_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             selected = self._init_git_repo(repo)
             (repo / "generated.cache").write_text("hidden\n", encoding="utf-8")
+            client = _github_platform_mock()
+            client.fetch_version.return_value = _pr_version(head_sha=selected)
             out = Path(tmpdir) / "outside-inputs"
             with (
                 mock.patch.dict(
@@ -841,6 +789,10 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                     clear=True,
                 ),
                 mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
+                mock.patch(
+                    "ai_review.input_bundle.create_runtime_platform",
+                    return_value=client,
+                ),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snapshot,
                 self.assertRaisesRegex(BundleError, "ignored input"),
             ):
@@ -849,67 +801,83 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             snapshot.assert_not_called()
             self.assertFalse((out / "repo_snapshot").exists())
 
-    def test_head_change_before_diff_fails_as_stale_input(self) -> None:
-        changed = self._pull_request()
-        changed["head"] = {
-            "ref": "feature",
-            "sha": "2" * 40,
-            "repo": {"full_name": "octo/repo"},
-        }
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            self.assertRaisesRegex(BundleError, "before diff collection"),
-        ):
-            self._prepare_with_versions(tmpdir, [changed])
-
-    def test_base_change_during_diff_collection_fails_before_diff_write(self) -> None:
-        initial = self._pull_request()
-        changed = self._pull_request()
-        changed["base"] = {"ref": "main", "sha": "a" * 40}
+    def test_manual_prepare_rejects_a_checkout_that_no_longer_matches_the_pr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            client = _github_platform_mock()
+            client.fetch_version.return_value = _pr_version(head_sha="2" * 40)
             out = Path(tmpdir) / "inputs"
-            with self.assertRaisesRegex(BundleError, "after diff collection"):
-                self._prepare_with_versions(tmpdir, [initial, changed])
-            self.assertFalse((out / "mr.diff").exists())
-            self.assertFalse((out / "manifest.json").exists())
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": selected,
+                    },
+                    clear=True,
+                ),
+                mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
+                mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+                self.assertRaisesRegex(BundleError, "before diff collection"),
+            ):
+                prepare_github_bundle(runtime_config(), out)
 
-    def test_head_change_during_diff_collection_fails_before_diff_write(self) -> None:
-        initial = self._pull_request()
-        changed = self._pull_request()
-        changed["head"] = {
-            "ref": "feature",
-            "sha": "2" * 40,
-            "repo": {"full_name": "octo/repo"},
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out = Path(tmpdir) / "inputs"
-            with self.assertRaisesRegex(BundleError, "after diff collection"):
-                self._prepare_with_versions(tmpdir, [initial, changed])
-            self.assertFalse((out / "mr.diff").exists())
-            self.assertFalse((out / "manifest.json").exists())
-
-    def test_head_change_at_manifest_finalization_fails(self) -> None:
-        initial = self._pull_request()
-        changed = self._pull_request()
-        changed["head"] = {
-            "ref": "feature",
-            "sha": "2" * 40,
-            "repo": {"full_name": "octo/repo"},
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out = Path(tmpdir) / "inputs"
-            with self.assertRaisesRegex(BundleError, "manifest finalization"):
-                self._prepare_with_versions(tmpdir, [initial, initial, changed])
+            client.fetch_comparison_diff.assert_not_called()
             self.assertFalse(out.exists())
 
+    def test_checkout_change_during_snapshot_prevents_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            selected = self._init_git_repo(repo)
+            client = _github_platform_mock()
+            client.fetch_version.return_value = _pr_version(head_sha=selected)
+            client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
+            out = Path(tmpdir) / "inputs"
+
+            def mutate_checkout(*args: object, **kwargs: object) -> None:
+                (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITHUB_REPOSITORY": "octo/repo",
+                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                        "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": selected,
+                    },
+                    clear=True,
+                ),
+                mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
+                mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
+                mock.patch(
+                    "ai_review.input_bundle.copy_repo_snapshot", side_effect=mutate_checkout
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                ),
+                self.assertRaisesRegex(BundleError, "uncommitted or ignored input"),
+            ):
+                prepare_github_bundle(runtime_config(), out)
+
+            self.assertFalse(out.exists())
+
+    def test_revision_change_during_prepare_never_publishes_bundle(self) -> None:
+        for changed in (
+            _pr_version(base_sha="a" * 40),
+            _pr_version(head_sha="2" * 40),
+        ):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as tmpdir:
+                out = Path(tmpdir) / "inputs"
+                with self.assertRaisesRegex(BundleError, "manifest finalization"):
+                    self._prepare_with_versions(tmpdir, [_pr_version(), changed])
+                self.assertFalse(out.exists())
+
     def test_manifest_revalidation_failure_preserves_preexisting_output(self) -> None:
-        initial = self._pull_request()
-        changed = self._pull_request()
-        changed["head"] = {
-            "ref": "feature",
-            "sha": "2" * 40,
-            "repo": {"full_name": "octo/repo"},
-        }
+        initial = _pr_version()
+        changed = _pr_version(head_sha="2" * 40)
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             out.mkdir()
@@ -925,13 +893,13 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             marker = out / "user-owned.txt"
             marker.write_text("keep\n", encoding="utf-8")
             with self.assertRaisesRegex(BundleError, "manifest finalization"):
-                self._prepare_with_versions(tmpdir, [initial, initial, changed])
+                self._prepare_with_versions(tmpdir, [initial, changed])
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep\n")
             self.assertFalse((out / "manifest.json").exists())
             self.assertEqual((out / "mr.diff").read_text(encoding="utf-8"), "old\n")
 
     def test_oversized_raw_diff_error_fails_closed(self) -> None:
-        initial = self._pull_request()
+        initial = _pr_version()
         error = ReviewPlatformError(
             "GitHub rejected the raw diff as oversized "
             "(HTTP 406/too_large); no review bundle was produced"
@@ -1294,15 +1262,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 return "diff --git a/f.py b/f.py\n"
 
         github_client = _github_platform_mock()
-        github_client.fetch_pull_request.return_value = {
-            "number": 9,
-            "head": {
-                "ref": "feature",
-                "sha": "1" * 40,
-                "repo": {"full_name": "octo/repo"},
-            },
-            "base": {"ref": "main", "sha": "0" * 40},
-        }
+        github_client.fetch_version.return_value = _pr_version()
         github_client.fetch_comparison_diff.return_value = "diff --git a/f.py b/f.py\n"
 
         gitlab_client = GitLabReviewPlatform()
@@ -1331,7 +1291,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
-                mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
             ):
                 prepare_github_bundle(runtime_config(), out)
             snap.assert_called_once()
@@ -1358,7 +1317,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
-                mock.patch("ai_review.input_bundle._directory_sha256", return_value="d" * 64),
             ):
                 prepare_gitlab_bundle(runtime_config(), out)
             snap.assert_called_once()

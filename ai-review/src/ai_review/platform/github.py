@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
@@ -21,7 +22,13 @@ class GitHubReviewPlatformError(ReviewPlatformError):
 class PullRequestVersion:
     base_sha: str
     head_sha: str
+    # Branch names are display metadata; equality is the base/head revision.
+    source_branch: str = field(compare=False)
+    target_branch: str = field(compare=False)
 
+
+_PULL_NUMBER_RE = re.compile(r"[1-9][0-9]{0,9}")
+_GIT_OBJECT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 
 STATE_MARKER = "<!-- ai-review-state:v1 github-pr-comment -->"
 
@@ -230,16 +237,36 @@ class GitHubReviewPlatform:
     def fetch_version(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> PullRequestVersion:
-        pr = self.fetch_pull_request(project_id_or_path, change_id)
-        return PullRequestVersion(base_sha=str(pr["base"]["sha"]), head_sha=str(pr["head"]["sha"]))
-
-    def fetch_pull_request(
-        self, project_id_or_path: str | int, change_id: str | int
-    ) -> dict[str, Any]:
+        if not _PULL_NUMBER_RE.fullmatch(str(change_id)):
+            raise GitHubReviewPlatformError(
+                "pull request number must be a positive integer of at most 10 digits"
+            )
         pr = self._request("GET", f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}")
         if not isinstance(pr, dict):
             raise GitHubReviewPlatformError("pull request response was not an object")
-        return pr
+        if str(pr.get("number") or "") != str(change_id):
+            raise GitHubReviewPlatformError(
+                "fetched pull request number does not match the selected number"
+            )
+        head = pr.get("head")
+        base = pr.get("base")
+        if not isinstance(head, dict) or not isinstance(base, dict):
+            raise GitHubReviewPlatformError("pull request requires valid base.sha and head.sha")
+        head_repo = head.get("repo")
+        # GitHub's secret-bearing path always refuses forks. The configurable
+        # allow_external_fork_secrets exception applies only to GitLab.
+        if not isinstance(head_repo, dict) or head_repo.get("full_name") != str(project_id_or_path):
+            raise GitHubReviewPlatformError("external fork PR secret-bearing path is disabled")
+        base_sha = str(base.get("sha") or "")
+        head_sha = str(head.get("sha") or "")
+        if not all(_GIT_OBJECT_SHA_RE.fullmatch(sha) for sha in (base_sha, head_sha)):
+            raise GitHubReviewPlatformError("pull request requires valid base.sha and head.sha")
+        return PullRequestVersion(
+            base_sha=base_sha,
+            head_sha=head_sha,
+            source_branch=str(head.get("ref") or ""),
+            target_branch=str(base.get("ref") or ""),
+        )
 
     def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
         diff = self._request(

@@ -5,7 +5,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 
 | Path | Producer | Consumer | Schema or contract |
 |---|---|---|---|
-| `inputs/manifest.json` | prepare | all later stages | revision, run ID, diff digest, and effective-config binding: the whole validated config as `effective_config` and its digest as `effective_config_sha256`, which every later stage must reproduce |
+| `inputs/manifest.json` | prepare | all later stages | revision, run ID, and effective-config binding: the whole validated config as `effective_config` and its digest as `effective_config_sha256`, which every later stage must reproduce |
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring, post | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
