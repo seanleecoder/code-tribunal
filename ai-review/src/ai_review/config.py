@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, get_args
+from typing import Any, get_args, get_origin, get_type_hints
 
 from .anchors import is_sha256
 from .canonical import stable_json_hash
@@ -152,7 +152,7 @@ INLINE_SIDES: tuple[AnchorSide, ...] = get_args(AnchorSide.__value__)
 _MINIMUM_PANEL_REVIEWERS = 3
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ReviewerConfig:
     enabled: bool
     model: str
@@ -257,8 +257,9 @@ class ReviewConfig:
         return document
 
 
-# The runtime types own the accepted keys as well as their defaults. Validation
-# below still owns value constraints and the registered migration diagnostics.
+# The runtime types own the accepted keys, their defaults, and the type each value
+# resolves to. Validation below owns value constraints and the registered
+# migration diagnostics.
 TOP_LEVEL_KEYS = {item.name for item in fields(ReviewConfig)}
 REVIEWER_ALLOWED_KEYS = {item.name for item in fields(ReviewerConfig)}
 REVIEWER_REQUIRED_KEYS = {item.name for item in fields(ReviewerConfig) if item.default is MISSING}
@@ -475,9 +476,10 @@ def effective_config_digest(config: ReviewConfig) -> str:
 
 def effective_config_binding(config: ReviewConfig) -> dict[str, Any]:
     """The manifest fields prepare records and later stages must reproduce."""
+    document = config.to_dict()
     return {
-        "effective_config": config.to_dict(),
-        "effective_config_sha256": effective_config_digest(config),
+        "effective_config": document,
+        "effective_config_sha256": stable_json_hash(document),
     }
 
 
@@ -532,32 +534,33 @@ def enabled_reviewers(config: ReviewConfig) -> dict[str, ReviewerConfig]:
     return {name: value for name, value in config.reviewers.items() if value.enabled}
 
 
-def _validate_posting(config: dict[str, Any]) -> None:
-    posting = config.setdefault("posting", {})
+def _validate_posting(config: dict[str, Any]) -> dict[str, Any]:
+    # Only present keys are checked: an absent key takes its dataclass default.
+    posting = config.get("posting", {})
     if not isinstance(posting, dict):
         raise ConfigError("posting must be a mapping")
     _reject_unknown_keys(posting, POSTING_KEYS, "posting")
-    mode = posting.setdefault("mode", PostingConfig.mode)
-    if mode not in {"gitlab_discussions", "github_reviews"}:
+    if "mode" in posting and posting["mode"] not in {"gitlab_discussions", "github_reviews"}:
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
-    if not isinstance(posting.setdefault("inline_multiline", PostingConfig.inline_multiline), bool):
+    if "inline_multiline" in posting and not isinstance(posting["inline_multiline"], bool):
         raise ConfigError("posting.inline_multiline must be a boolean")
-    inline_sides = posting.setdefault("v1_inline_sides", list(INLINE_SIDES))
+    inline_sides = posting.get("v1_inline_sides", [])
     if not isinstance(inline_sides, list) or any(side not in INLINE_SIDES for side in inline_sides):
         raise ConfigError(f"posting.v1_inline_sides must be a list of {', '.join(INLINE_SIDES)}")
-    if posting.setdefault("fyi_mode", PostingConfig.fyi_mode) != "summary_comment":
+    if "fyi_mode" in posting and posting["fyi_mode"] != "summary_comment":
         raise ConfigError(
             "posting.fyi_mode must be summary_comment; "
             "remove the setting or set it to summary_comment"
         )
+    return posting
 
 
-def _validate_state(config: dict[str, Any]) -> None:
+def _validate_state(config: dict[str, Any]) -> dict[str, Any]:
     # Independent of posting. The two were validated together only while
     # state.backend was derived from posting.mode and needed it in scope; state
     # is always on now, and posting.mode selects its storage adapter at runtime
     # rather than at config time.
-    state = config.setdefault("state", {})
+    state = config.get("state", {})
     if not isinstance(state, dict):
         raise ConfigError("state must be a mapping")
     _reject_unknown_keys(state, STATE_KEYS, "state")
@@ -569,7 +572,7 @@ def _validate_state(config: dict[str, Any]) -> None:
         state["fail_closed_on_load_error"], bool
     ):
         raise ConfigError("state.fail_closed_on_load_error must be a boolean")
-    state.setdefault("fail_closed_on_load_error", StateConfig.fail_closed_on_load_error)
+    return state
 
 
 def _resolve_integer(value: Any, path: str) -> int:
@@ -577,6 +580,33 @@ def _resolve_integer(value: Any, path: str) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ConfigError(f"{path} must resolve to an integer") from exc
+
+
+def _resolve_value(hint: Any, value: Any, path: str) -> Any:
+    """Convert one validated value by its field's declared type."""
+    if isinstance(hint, type) and is_dataclass(hint):
+        return _resolve_section(hint, value, path)
+    if type(None) in get_args(hint):
+        if value is None:
+            return None
+        hint = next(arg for arg in get_args(hint) if arg is not type(None))
+    if hint is bool:
+        return bool(value)
+    if hint is int:
+        return _resolve_integer(value, path)
+    if hint is str:
+        return str(value)
+    if get_origin(hint) is tuple:
+        return tuple(value)
+    raise TypeError(f"no resolver for {path}: {hint!r}")
+
+
+def _resolve_section[S](section: type[S], values: Mapping[str, Any], path: str) -> S:
+    """Build one settings section; absent keys take the dataclass default."""
+    hints = get_type_hints(section)
+    return section(
+        **{key: _resolve_value(hints[key], value, f"{path}.{key}") for key, value in values.items()}
+    )
 
 
 def validate_config(config: dict[str, Any]) -> ReviewConfig:
@@ -598,8 +628,8 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
     if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
-    _validate_posting(config)
-    _validate_state(config)
+    posting = _validate_posting(config)
+    state = _validate_state(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict):
         raise ConfigError("reviewers must be a mapping")
@@ -615,6 +645,7 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
         raise ConfigError(
             "reviewer keys must equal the first-party reviewer registry: " + ", ".join(details)
         )
+    resolved_reviewers: dict[str, ReviewerConfig] = {}
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
             raise ConfigError(f"reviewer {name} must be a mapping")
@@ -647,16 +678,19 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
             raise ConfigError(
                 f"reviewer {name} effort must be one of {sorted(EFFORT_LEVELS)}, got {effort!r}"
             )
-    critique = config.setdefault("critique", {})
+        # Only a literal `true` enables a seat, so enabled is not bool()-coerced.
+        enabled = reviewer["enabled"] is True
+        resolved_reviewers[name] = _resolve_section(
+            ReviewerConfig, {**reviewer, "enabled": enabled}, f"reviewers.{name}"
+        )
+    critique = config.get("critique", {})
     if not isinstance(critique, dict):
         raise ConfigError("critique must be a mapping")
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
-    for flag in CRITIQUE_KEYS:
-        critique.setdefault(flag, getattr(CritiqueConfig, flag))
     # All three, not just `enabled`: the other two were read with bool() and
     # accepted any truthy value, so the string "false" silently enabled them.
     for flag in sorted(CRITIQUE_KEYS):
-        if not isinstance(critique.get(flag), bool):
+        if flag in critique and not isinstance(critique[flag], bool):
             raise ConfigError(f"critique.{flag} must be a boolean")
     # The resolution threshold is authored against the *configured* seat count
     # and takes effect against the *enabled* count. The two bounds answer
@@ -671,7 +705,7 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     # roster override — the per-seat AI_REVIEW_<NAME>_ENABLED flags are retired
     # and rejected via RETIRED_ENV_OVERRIDES.
     configured_count = len(reviewers)
-    enabled_count = sum(reviewer.get("enabled") is True for reviewer in reviewers.values())
+    enabled_count = sum(reviewer.enabled for reviewer in resolved_reviewers.values())
     if enabled_count < _MINIMUM_PANEL_REVIEWERS:
         raise ConfigError(
             f"at least {_MINIMUM_PANEL_REVIEWERS} reviewers must be enabled, got "
@@ -696,10 +730,12 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
             )
         return effective
 
-    panel["min_successful_reviewers_for_resolution"] = _resolve_threshold(
-        panel.get("min_successful_reviewers_for_resolution"),
-        1,
-        "panel.min_successful_reviewers_for_resolution",
+    panel_config = PanelConfig(
+        min_successful_reviewers_for_resolution=_resolve_threshold(
+            panel.get("min_successful_reviewers_for_resolution"),
+            1,
+            "panel.min_successful_reviewers_for_resolution",
+        )
     )
     limits = config.get("limits", {})
     if not isinstance(limits, dict):
@@ -709,52 +745,12 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     if not isinstance(security, dict):
         raise ConfigError("security must be a mapping")
     _reject_unknown_keys(security, SECURITY_KEYS, "security")
-    state = config["state"]
-    retention = state.get("retention", {})
-    resolved_retention: dict[str, Any] = {
-        key: (
-            bool(value)
-            if key in {"keep_open", "keep_wontfix"}
-            else _resolve_integer(value, f"state.retention.{key}")
-        )
-        for key, value in retention.items()
-    }
-    posting = config["posting"]
     return ReviewConfig(
-        reviewers={
-            name: ReviewerConfig(
-                enabled=reviewer["enabled"] is True,
-                model=str(reviewer["model"]),
-                timeout_seconds=reviewer["timeout_seconds"],
-                critique_timeout_seconds=reviewer.get(
-                    "critique_timeout_seconds", DEFAULT_CRITIQUE_TIMEOUT_SECONDS
-                ),
-                max_findings=(
-                    _resolve_integer(reviewer["max_findings"], f"reviewers.{name}.max_findings")
-                    if reviewer["max_findings"] is not None
-                    else None
-                ),
-                effort=reviewer.get("effort"),
-            )
-            for name, reviewer in reviewers.items()
-        },
-        panel=PanelConfig(**panel),
-        critique=CritiqueConfig(**critique),
-        posting=PostingConfig(
-            **{
-                **posting,
-                "v1_inline_sides": tuple(posting["v1_inline_sides"]),
-                "stale_head_guard": bool(
-                    posting.get("stale_head_guard", PostingConfig.stale_head_guard)
-                ),
-            }
-        ),
-        state=StateConfig(
-            **{key: bool(value) for key, value in state.items() if key != "retention"},
-            retention=StateRetention(**resolved_retention),
-        ),
-        limits=LimitsConfig(
-            **{key: _resolve_integer(value, f"limits.{key}") for key, value in limits.items()}
-        ),
-        security=SecurityConfig(**{key: bool(value) for key, value in security.items()}),
+        reviewers=resolved_reviewers,
+        panel=panel_config,
+        critique=_resolve_section(CritiqueConfig, critique, "critique"),
+        posting=_resolve_section(PostingConfig, posting, "posting"),
+        state=_resolve_section(StateConfig, state, "state"),
+        limits=_resolve_section(LimitsConfig, limits, "limits"),
+        security=_resolve_section(SecurityConfig, security, "security"),
     )

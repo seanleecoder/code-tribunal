@@ -656,9 +656,9 @@ class LoadConfigOverrideTests(unittest.TestCase):
         # requires editing it in lock-step.
         config = load_config(_REPO_CONFIG).to_dict()
         config["panel"]["min_successful_reviewers_for_resolution"] = 4
-        validate_config(config)
+        resolved = validate_config(config)
 
-        self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 3)
+        self.assertEqual(resolved.panel.min_successful_reviewers_for_resolution, 3)
 
     def test_shipped_threshold_is_unchanged_at_every_supported_panel_size(self) -> None:
         # The clamp must be a no-op for the shipped value, so enabling or
@@ -678,9 +678,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
         config = load_config(_REPO_CONFIG).to_dict()
         config["state"].pop("fail_closed_on_load_error")
 
-        validate_config(config)
-
-        self.assertFalse(config["state"]["fail_closed_on_load_error"])
+        self.assertFalse(validate_config(config).state.fail_closed_on_load_error)
 
     def test_effective_config_digest_binds_every_section(self) -> None:
         config = load_config(_REPO_CONFIG).to_dict()
@@ -849,9 +847,9 @@ class PostingModeConfigTests(unittest.TestCase):
                 else:
                     config["posting"].pop(omitted)
 
-                validate_config(config)
+                posting = validate_config(config).to_dict()["posting"]
 
-                self.assertEqual({key: config["posting"][key] for key in defaults}, defaults)
+                self.assertEqual({key: posting[key] for key in defaults}, defaults)
 
     def test_explicit_inline_settings_are_preserved(self) -> None:
         for key, value in (

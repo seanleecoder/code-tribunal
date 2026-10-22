@@ -56,7 +56,7 @@ def _render(stage: str, config: ReviewConfig, blocks: list[tuple[str, str]]) -> 
     Prompt text comes from the image, never from the bundle or the config file's
     location, so it cannot follow wherever AI_REVIEW_CONFIG points.
     """
-    max_prompt_bytes = int(config.limits.max_prompt_bytes)
+    max_prompt_bytes = config.limits.max_prompt_bytes
     prompt_path = trusted_runtime_root() / "prompts" / f"{stage}.md"
     system_rules = prompt_path.read_text(encoding="utf-8")
     rendered = "\n\n".join(

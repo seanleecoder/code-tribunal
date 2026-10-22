@@ -85,7 +85,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                         model="model",
                         input_dir=Path("inputs"),
                         output_dir=Path("out"),
-                        reviewer_config=ReviewerConfig(True, "model", 30, 50),
+                        reviewer_config=ReviewerConfig(
+                            enabled=True, model="model", timeout_seconds=30, max_findings=50
+                        ),
                         reviewer_definition=definition,
                         prompt_tmp=None,
                     )
@@ -123,7 +125,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                         model="model",
                         input_dir=Path("inputs"),
                         output_dir=Path("out"),
-                        reviewer_config=ReviewerConfig(True, "model", 30, 50),
+                        reviewer_config=ReviewerConfig(
+                            enabled=True, model="model", timeout_seconds=30, max_findings=50
+                        ),
                         reviewer_definition=definition,
                         prompt_tmp=None,
                     )
@@ -144,7 +148,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                     model="model",
                     input_dir=Path("inputs"),
                     output_dir=Path("out"),
-                    reviewer_config=ReviewerConfig(True, "model", 30, 50),
+                    reviewer_config=ReviewerConfig(
+                        enabled=True, model="model", timeout_seconds=30, max_findings=50
+                    ),
                     reviewer_definition=REVIEWERS["codex"],
                     prompt_tmp=None,
                     mock=selected,
@@ -181,7 +187,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                             model="model",
                             input_dir=Path("inputs"),
                             output_dir=Path("out"),
-                            reviewer_config=ReviewerConfig(True, "model", 30, 50),
+                            reviewer_config=ReviewerConfig(
+                                enabled=True, model="model", timeout_seconds=30, max_findings=50
+                            ),
                             reviewer_definition=definition,
                             prompt_tmp=None,
                         )

@@ -109,11 +109,15 @@ def main() -> int:
         (work / "inputs" / "repo_snapshot").mkdir(parents=True)
         prompt = work / "probe.md"
         prompt.write_text("probe\n", encoding="utf-8")
+        model = "claude-haiku-5.5"
+        reviewer_config = ReviewerConfig(
+            enabled=True, model=model, timeout_seconds=30, max_findings=50, effort="medium"
+        )
         for stage in ("review", "critique"):
             env = _build_adapter_env(
-                reviewer="claude", stage=stage, model="claude-haiku-5.5",
+                reviewer="claude", stage=stage, model=model,
                 input_dir=work / "inputs", output_dir=work / stage,
-                reviewer_config=ReviewerConfig(True, "claude-haiku-5.5", 30, 50, effort="medium"),
+                reviewer_config=reviewer_config,
                 prompt_tmp=prompt,
                 reviewer_definition=definition,
             )

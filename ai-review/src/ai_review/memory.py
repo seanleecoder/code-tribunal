@@ -294,10 +294,7 @@ def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"records": aliases.get("records", [])}
 
 
-def compact_state(
-    state: Mapping[str, Any], retention: StateRetention | None = None
-) -> dict[str, Any]:
-    retention = retention if retention is not None else StateRetention()
+def compact_state(state: Mapping[str, Any], retention: StateRetention) -> dict[str, Any]:
     keep_resolved_records = retention.keep_resolved_records
     keep_stale_records = retention.keep_stale_records
     records = []

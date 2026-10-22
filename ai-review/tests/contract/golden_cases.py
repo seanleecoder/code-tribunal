@@ -10,7 +10,8 @@ from ai_review.schema import adapter_status_artifact, empty_critique_batch, empt
 def _config() -> ReviewConfig:
     return ReviewConfig(
         reviewers={
-            name: ReviewerConfig(True, "model", 600, 50) for name in ("opencode", "claude", "codex")
+            name: ReviewerConfig(enabled=True, model="model", timeout_seconds=600, max_findings=50)
+            for name in ("opencode", "claude", "codex")
         },
         panel=PanelConfig(2),
     )

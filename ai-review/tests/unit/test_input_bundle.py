@@ -119,6 +119,9 @@ class InputBundleLimitTests(unittest.TestCase):
             def current_user(self) -> dict[str, object]:
                 raise RuntimeError("user lookup failed")
 
+        config = runtime_config(
+            lambda config: config["state"].update({"fail_closed_on_load_error": True})
+        )
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
@@ -132,12 +135,6 @@ class InputBundleLimitTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch(
-                f"{__name__}.load_config",
-                return_value=runtime_config(
-                    lambda config: config["state"].update({"fail_closed_on_load_error": True})
-                ),
-            ),
-            mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=BrokenUserClient(),
             ),
@@ -146,7 +143,7 @@ class InputBundleLimitTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "current_user"),
         ):
-            prepare_gitlab_bundle(load_config(Path("ai-review/config/review.yaml")), Path(tmpdir))
+            prepare_gitlab_bundle(config, Path(tmpdir))
 
     def test_prepare_surfaces_truncated_diff_as_bundle_error(self) -> None:
         class TruncatedDiffClient:
@@ -172,16 +169,12 @@ class InputBundleLimitTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch(
-                f"{__name__}.load_config",
-                return_value=runtime_config(),
-            ),
-            mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=TruncatedDiffClient(),
             ),
             self.assertRaisesRegex(BundleError, "truncated or collapsed"),
         ):
-            prepare_gitlab_bundle(load_config(Path("ai-review/config/review.yaml")), Path(tmpdir))
+            prepare_gitlab_bundle(runtime_config(), Path(tmpdir))
 
     def test_gitlab_prepare_rejects_revision_change_during_diff_collection(self) -> None:
         class MovingVersionClient:
@@ -211,10 +204,6 @@ class InputBundleLimitTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch(
-                f"{__name__}.load_config",
-                return_value=runtime_config(),
-            ),
-            mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=MovingVersionClient(),
             ),
@@ -223,7 +212,7 @@ class InputBundleLimitTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="1" * 64),
             self.assertRaisesRegex(BundleError, "version changed during diff collection"),
         ):
-            prepare_gitlab_bundle(load_config(Path("ai-review/config/review.yaml")), Path(tmpdir))
+            prepare_gitlab_bundle(runtime_config(), Path(tmpdir))
 
 
 class PrepareStateLoadTests(unittest.TestCase):
@@ -515,7 +504,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 },
                 clear=True,
             ),
-            mock.patch(f"{__name__}.load_config", return_value=runtime_config()),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
@@ -527,7 +515,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
         ):
             out = Path(tmpdir) / "inputs"
-            prepare_github_bundle(load_config(Path("ai-review/config/review.yaml")), out)
+            prepare_github_bundle(runtime_config(), out)
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(client.fetch_pull_request.call_count, 3)
@@ -754,7 +742,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 },
                 clear=True,
             ),
-            mock.patch(f"{__name__}.load_config", return_value=runtime_config()),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
@@ -768,7 +755,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
         with ExitStack() as stack:
             for patcher in patches:
                 stack.enter_context(patcher)
-            prepare_github_bundle(load_config(Path("ai-review/config/review.yaml")), out)
+            prepare_github_bundle(runtime_config(), out)
         return client, out
 
     def test_prepare_rejects_platform_without_comparison_diff_support(self) -> None:
@@ -782,7 +769,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 },
                 clear=True,
             ),
-            mock.patch(f"{__name__}.load_config", return_value=runtime_config()),
             mock.patch(
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=mock.Mock(spec=[]),
@@ -791,7 +777,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "comparison diff support"),
         ):
             prepare_github_bundle(
-                load_config(Path("ai-review/config/review.yaml")), Path(tmpdir) / "inputs"
+                runtime_config(), Path(tmpdir) / "inputs"
             )
 
     def test_prepare_uses_real_checkout_and_immutable_comparison(self) -> None:
@@ -822,7 +808,6 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                     clear=True,
                 ),
                 mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
-                mock.patch(f"{__name__}.load_config", return_value=runtime_config()),
                 mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
@@ -832,7 +817,7 @@ class GitHubPullRequestResolutionTests(unittest.TestCase):
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
                 mock.patch("ai_review.input_bundle._directory_sha256", return_value="3" * 64),
             ):
-                prepare_github_bundle(load_config(Path("ai-review/config/review.yaml")), out)
+                prepare_github_bundle(runtime_config(), out)
 
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["selected_head_sha"], selected)
@@ -1335,7 +1320,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     },
                     clear=True,
                 ),
-                mock.patch(f"{__name__}.load_config", return_value=runtime_config()),
                 mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=github_client,
@@ -1349,7 +1333,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
                 mock.patch("ai_review.input_bundle._directory_sha256", return_value="b" * 64),
             ):
-                prepare_github_bundle(load_config(Path("ai-review/config/review.yaml")), out)
+                prepare_github_bundle(runtime_config(), out)
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
             self.assertEqual(snap.call_args.args[1].name, "repo_snapshot")
@@ -1369,10 +1353,6 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     clear=True,
                 ),
                 mock.patch(
-                    f"{__name__}.load_config",
-                    return_value=runtime_config(),
-                ),
-                mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=gitlab_client,
                 ),
@@ -1380,7 +1360,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
                 mock.patch("ai_review.input_bundle._directory_sha256", return_value="d" * 64),
             ):
-                prepare_gitlab_bundle(load_config(Path("ai-review/config/review.yaml")), out)
+                prepare_gitlab_bundle(runtime_config(), out)
             snap.assert_called_once()
             self.assertEqual(snap.call_args.args[0], Path.cwd())
             self.assertEqual(snap.call_args.args[1].name, "repo_snapshot")
@@ -1402,7 +1382,6 @@ class PrepareCredentialTests(unittest.TestCase):
         never = mock.Mock(side_effect=AssertionError("constructed a platform client"))
         with (
             mock.patch.dict("os.environ", environment, clear=True),
-            mock.patch(f"{__name__}.load_config", return_value=config),
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch("ai_review.platform.runtime.GitLabReviewPlatform", never),
             mock.patch("ai_review.platform.runtime.GitHubReviewPlatform", never),

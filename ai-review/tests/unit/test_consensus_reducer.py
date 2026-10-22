@@ -36,7 +36,12 @@ def _critique_config(**overrides: object) -> ReviewConfig:
     config = _config()
     return replace(
         config,
-        reviewers={**config.reviewers, "cursor": ReviewerConfig(True, "model", 600, 50)},
+        reviewers={
+            **config.reviewers,
+            "cursor": ReviewerConfig(
+                enabled=True, model="model", timeout_seconds=600, max_findings=50
+            ),
+        },
         critique=CritiqueConfig(**{"enabled": True, **overrides}),
     )
 

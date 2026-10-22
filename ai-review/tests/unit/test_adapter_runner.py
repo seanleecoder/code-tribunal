@@ -67,7 +67,9 @@ class AdapterModelIdValidationTests(unittest.TestCase):
 
 class AdapterTimeoutSelectionTests(unittest.TestCase):
     def test_review_and_critique_use_separate_effective_budgets(self) -> None:
-        reviewer_config = ReviewerConfig(True, "model", 1800, 50)
+        reviewer_config = ReviewerConfig(
+            enabled=True, model="model", timeout_seconds=1800, max_findings=50
+        )
 
         self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "review"), 1795)
         self.assertEqual(
@@ -83,15 +85,16 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
         """
         for review_budget in (1800, 600):
             with self.subTest(timeout_seconds=review_budget):
+                reviewer_config = ReviewerConfig(
+                    enabled=True, model="model", timeout_seconds=review_budget, max_findings=50
+                )
                 self.assertEqual(
-                    _effective_adapter_timeout_seconds(
-                        ReviewerConfig(True, "model", review_budget, 50), "critique"
-                    ),
+                    _effective_adapter_timeout_seconds(reviewer_config, "critique"),
                     DEFAULT_CRITIQUE_TIMEOUT_SECONDS - 5,
                 )
 
     def test_short_budget_keeps_a_positive_process_timeout(self) -> None:
-        config = ReviewerConfig(True, "model", 3, 50)
+        config = ReviewerConfig(enabled=True, model="model", timeout_seconds=3, max_findings=50)
         self.assertEqual(_effective_adapter_timeout_seconds(config, "review"), 1)
 
 
