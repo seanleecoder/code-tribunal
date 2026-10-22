@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 from itertools import product
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,12 +21,101 @@ from ai_review.config import (
     effective_config_digest,
     enabled_reviewers,
     load_config,
+    load_yaml_subset,
     require_effective_config_binding,
-    resolve_reviewer_timeout_seconds,
     validate_config,
 )
 
 _REPO_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
+
+
+class FrozenConfigTests(unittest.TestCase):
+    def test_integer_resolution_failures_name_the_setting(self) -> None:
+        for path in (
+            ("limits", "max_fyi_findings"),
+            ("state", "retention", "keep_resolved_records"),
+            ("state", "retention", "max_state_bytes"),
+            ("reviewers", "codex", "max_findings"),
+        ):
+            for value in (None, "invalid", [], {}, float("inf"), float("nan")):
+                if path[-1] == "max_findings" and value is None:
+                    continue  # Null keeps the existing uncapped-reviewer setting.
+                with self.subTest(path=path, value=value):
+                    document = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+                    section = document
+                    for key in path[:-1]:
+                        section = section[key]
+                    section[path[-1]] = value
+                    with self.assertRaises(ConfigError) as caught:
+                        validate_config(document)
+                    self.assertIn(".".join(path), str(caught.exception))
+
+    def test_integer_resolution_keeps_valid_coercions_and_uncapped_findings(self) -> None:
+        document = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+        document["limits"]["max_fyi_findings"] = "12"
+        document["state"]["retention"]["max_records"] = "34"
+        document["reviewers"]["codex"]["max_findings"] = "56"
+        document["reviewers"]["claude"]["max_findings"] = None
+
+        config = validate_config(document)
+
+        self.assertEqual(config.limits.max_fyi_findings, 12)
+        self.assertEqual(config.state.retention.max_records, 34)
+        self.assertEqual(config.reviewers["codex"].max_findings, 56)
+        self.assertIsNone(config.reviewers["claude"].max_findings)
+
+    def test_loaded_settings_are_deeply_immutable(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        for settings, key, value in (
+            (config, "schema_version", "changed"),
+            (config.reviewers["claude"], "model", "changed"),
+            (config.posting, "v1_inline_sides", ("old",)),
+            (config.state.retention, "max_records", 0),
+            (config.limits, "max_files", 0),
+        ):
+            with self.subTest(key=key), self.assertRaises(FrozenInstanceError):
+                setattr(settings, key, value)
+        with self.assertRaises(TypeError):
+            config.reviewers["claude"] = config.reviewers["codex"]
+        self.assertIsInstance(config.posting.v1_inline_sides, tuple)
+
+    def test_mutating_source_or_serialized_document_cannot_change_the_run(self) -> None:
+        source = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+        config = validate_config(source)
+        original = effective_config_digest(config)
+        source["reviewers"]["claude"]["model"] = "changed"
+        source["posting"]["v1_inline_sides"].clear()
+        manifest = effective_config_binding(config)
+        manifest["effective_config"]["state"]["retention"]["max_records"] = 0
+        manifest["effective_config"]["reviewers"].clear()
+        self.assertEqual(effective_config_digest(config), original)
+        self.assertEqual(config.state.retention.max_records, 200)
+
+    def test_shipped_configuration_keeps_its_serialized_contract(self) -> None:
+        source = load_yaml_subset(_REPO_CONFIG.read_text(encoding="utf-8"))
+        config = validate_config(source)
+        self.assertEqual(config.to_dict(), source)
+
+    def test_omitted_defaults_and_explicit_defaults_resolve_identically(self) -> None:
+        explicit = load_config(_REPO_CONFIG)
+        document = explicit.to_dict()
+        for reviewer in document["reviewers"].values():
+            reviewer.pop("critique_timeout_seconds")
+        for section in ("posting", "state", "limits", "security"):
+            document.pop(section)
+        implicit = validate_config(document)
+        self.assertEqual(implicit, explicit)
+        self.assertEqual(effective_config_digest(implicit), effective_config_digest(explicit))
+
+    def test_environment_changes_do_not_mutate_resolved_settings_or_capture_secrets(self) -> None:
+        config = load_config(_REPO_CONFIG)
+        digest = effective_config_digest(config)
+        with mock.patch.dict(
+            "os.environ",
+            {"AI_REVIEW_CODEX_MODEL": "changed", "OPENROUTER_API_KEY": "secret-value"},
+        ):
+            self.assertEqual(effective_config_digest(config), digest)
+            self.assertNotIn("secret-value", str(load_config(_REPO_CONFIG).to_dict()))
 
 
 def _base_config() -> dict:
@@ -62,9 +152,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/other-model")
         self.assertEqual(config["reviewers"]["opencode"]["model"], "google/other-model")
         # Untouched reviewer keeps its config default.
-        self.assertEqual(
-            config["reviewers"]["claude"]["model"], "anthropic/claude-haiku-4.5"
-        )
+        self.assertEqual(config["reviewers"]["claude"]["model"], "anthropic/claude-haiku-4.5")
 
     def test_blank_model_override_is_ignored(self) -> None:
         config = _base_config()
@@ -83,7 +171,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             "AI_REVIEW_OPENCODE_EFFORT": "",
         }
         with mock.patch.dict("os.environ", blank_overrides, clear=True):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
 
         self.assertEqual(
             {
@@ -102,7 +190,7 @@ class ApplyEnvOverridesTests(unittest.TestCase):
 
     def test_shipped_reviewer_timeout_defaults_are_stage_specific(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
 
         self.assertEqual(
             {
@@ -123,13 +211,13 @@ class ApplyEnvOverridesTests(unittest.TestCase):
             if value is not None:
                 env["AI_REVIEW_CODEX_EFFORT"] = value
             with self.subTest(value=value), mock.patch.dict("os.environ", env, clear=True):
-                config = load_config(_REPO_CONFIG)
+                config = load_config(_REPO_CONFIG).to_dict()
             self.assertEqual(config["reviewers"]["codex"]["model"], "openai/other-model")
             self.assertEqual(config["reviewers"]["codex"]["effort"], "low")
 
     def test_unset_effort_matches_yaml_omission(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            base = load_config(_REPO_CONFIG)
+            base = load_config(_REPO_CONFIG).to_dict()
         for name, present, value in product(
             ("claude", "codex", "opencode"), (False, True), ("unset", "  unset\t")
         ):
@@ -150,12 +238,12 @@ class ApplyEnvOverridesTests(unittest.TestCase):
 
     def test_unset_effort_is_applied_before_load_validation(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_EFFORT": "unset"}, clear=True):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
         self.assertNotIn("effort", config["reviewers"]["codex"])
 
     def test_yaml_unset_is_not_a_provider_effort(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
         for name in ("claude", "codex", "opencode"):
             with self.subTest(name=name):
                 invalid = deepcopy(config)
@@ -257,12 +345,8 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         self.assertIn("gate job", guidance)
 
         with (
-            mock.patch.dict(
-                "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "true"}, clear=True
-            ),
-            self.assertRaisesRegex(
-                ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
-            ),
+            mock.patch.dict("os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "true"}, clear=True),
+            self.assertRaisesRegex(ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"),
         ):
             apply_env_overrides(_base_config())
 
@@ -275,33 +359,27 @@ class ApplyEnvOverridesTests(unittest.TestCase):
         """
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "review.yaml"
-            path.write_text(
-                "schema_version: review_config.v2\nreviewers: {}\n", encoding="utf-8"
-            )
+            path.write_text("schema_version: review_config.v2\nreviewers: {}\n", encoding="utf-8")
             with (
                 mock.patch.dict(
                     "os.environ", {"AI_REVIEW_MERGE_GATE_ENABLED": "false"}, clear=True
                 ),
-                self.assertRaisesRegex(
-                    ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"
-                ),
+                self.assertRaisesRegex(ConfigError, "AI_REVIEW_MERGE_GATE_ENABLED is retired"),
             ):
-                load_config(path)
+                load_config(path).to_dict()
 
 
 class LoadConfigOverrideTests(unittest.TestCase):
     def test_load_config_applies_model_override(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CODEX_MODEL": "openai/some-new-model"}):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
         self.assertEqual(config["reviewers"]["codex"]["model"], "openai/some-new-model")
 
     def test_roster_selects_an_arbitrary_panel_without_claude(self) -> None:
         # The point of the roster: no seat is structurally fixed. Claude sitting out
         # is as ordinary as cursor sitting out.
-        with mock.patch.dict(
-            "os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}
-        ):
-            config = load_config(_REPO_CONFIG)
+        with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}):
+            config = load_config(_REPO_CONFIG).to_dict()
 
         enabled = config["reviewers"]
         self.assertFalse(enabled["claude"]["enabled"])
@@ -310,10 +388,8 @@ class LoadConfigOverrideTests(unittest.TestCase):
         self.assertTrue(enabled["cursor"]["enabled"])
 
     def test_roster_selects_an_arbitrary_panel_without_codex(self) -> None:
-        with mock.patch.dict(
-            "os.environ", {"AI_REVIEW_REVIEWERS": " claude , opencode ,cursor"}
-        ):
-            config = load_config(_REPO_CONFIG)
+        with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": " claude , opencode ,cursor"}):
+            config = load_config(_REPO_CONFIG).to_dict()
 
         enabled = config["reviewers"]
         self.assertTrue(enabled["claude"]["enabled"])
@@ -328,21 +404,19 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             with self.subTest(roster=roster):
                 with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
-                    config = load_config(_REPO_CONFIG)
-                self.assertEqual(len(enabled_reviewers(config)), expected)
+                    config = load_config(_REPO_CONFIG).to_dict()
+                self.assertEqual(len(enabled_reviewers(validate_config(config))), expected)
 
     def test_roster_changes_the_digest(self) -> None:
         default = effective_config_digest(load_config(_REPO_CONFIG))
-        with mock.patch.dict(
-            "os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}
-        ):
-            config = load_config(_REPO_CONFIG)
+        with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}):
+            config = load_config(_REPO_CONFIG).to_dict()
 
         self.assertFalse(config["reviewers"]["claude"]["enabled"])
         self.assertTrue(config["reviewers"]["cursor"]["enabled"])
         # A roster scoped to only some CI jobs must surface as config drift rather
         # than a differently-sized panel per stage.
-        self.assertNotEqual(effective_config_digest(config), default)
+        self.assertNotEqual(effective_config_digest(validate_config(config)), default)
 
     def test_roster_rejects_unknown_reviewer(self) -> None:
         # A typo must not silently shrink the panel to the names it did match.
@@ -350,21 +424,21 @@ class LoadConfigOverrideTests(unittest.TestCase):
             mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "cluade,codex,opencode"}),
             self.assertRaisesRegex(ConfigError, "unknown reviewers.*cluade"),
         ):
-            load_config(_REPO_CONFIG)
+            load_config(_REPO_CONFIG).to_dict()
 
     def test_roster_rejects_duplicate_reviewer(self) -> None:
         with (
             mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": "claude,claude,codex"}),
             self.assertRaisesRegex(ConfigError, "duplicate reviewers"),
         ):
-            load_config(_REPO_CONFIG)
+            load_config(_REPO_CONFIG).to_dict()
 
     def test_roster_rejects_naming_no_reviewers(self) -> None:
         with (
             mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": " , "}),
             self.assertRaisesRegex(ConfigError, "names no reviewers"),
         ):
-            load_config(_REPO_CONFIG)
+            load_config(_REPO_CONFIG).to_dict()
 
     def test_roster_rejects_panels_below_the_v3_floor(self) -> None:
         # One seat could never reach two independent supporters. Two could, but
@@ -376,12 +450,12 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}),
                 self.assertRaisesRegex(ConfigError, "at least 3 reviewers"),
             ):
-                load_config(_REPO_CONFIG)
+                load_config(_REPO_CONFIG).to_dict()
 
     def test_unset_roster_leaves_yaml_defaults_alone(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         self.assertEqual(
-            sorted(enabled_reviewers(config)), ["claude", "codex", "opencode"]
+            sorted(enabled_reviewers(validate_config(config))), ["claude", "codex", "opencode"]
         )
 
     def test_github_platform_env_overrides_load_valid_config(self) -> None:
@@ -389,7 +463,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
             "os.environ",
             {"AI_REVIEW_POSTING_MODE": "github_reviews"},
         ):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
         self.assertEqual(config["posting"]["mode"], "github_reviews")
         # The mode is the whole platform selection; nothing derived is written
         # back into the resolved state section.
@@ -400,16 +474,16 @@ class LoadConfigOverrideTests(unittest.TestCase):
             mock.patch.dict("os.environ", {"AI_REVIEW_POSTING_MODE": "bitbucket"}),
             self.assertRaisesRegex(ConfigError, "posting.mode"),
         ):
-            load_config(_REPO_CONFIG)
+            load_config(_REPO_CONFIG).to_dict()
 
     def test_repo_config_keeps_severity_downgrade_opt_in(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
 
         self.assertTrue(config["critique"]["enabled"])
         self.assertFalse(config["critique"]["allow_severity_downgrade"])
 
     def test_legacy_reviewer_config_critique_fallback_is_capped(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         for reviewer in config["reviewers"].values():
             reviewer.pop("critique_timeout_seconds")
 
@@ -418,18 +492,21 @@ class LoadConfigOverrideTests(unittest.TestCase):
         for name, reviewer in config["reviewers"].items():
             with self.subTest(reviewer=name):
                 self.assertEqual(
-                    resolve_reviewer_timeout_seconds(reviewer, "critique"),
+                    validate_config(config).reviewers[name].timeout_for("critique"),
                     min(reviewer["timeout_seconds"], 900),
                 )
 
     def test_timeout_fields_change_the_digest(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         modified = deepcopy(config)
         modified["reviewers"]["codex"]["critique_timeout_seconds"] = 1200
-        self.assertNotEqual(effective_config_digest(config), effective_config_digest(modified))
+        self.assertNotEqual(
+            effective_config_digest(validate_config(config)),
+            effective_config_digest(validate_config(modified)),
+        )
 
     def test_timeout_fields_must_be_positive_integers(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         for field, values in {
             "timeout_seconds": (0, -1, True, 1.5, "1800"),
             "critique_timeout_seconds": (None, 0, -1, True, 1.5, "900"),
@@ -497,7 +574,7 @@ class LoadConfigOverrideTests(unittest.TestCase):
                         mock.patch.dict("os.environ", {}, clear=True),
                         self.assertRaisesRegex(ConfigError, error_path.replace(".", r"\.")),
                     ):
-                        load_config(config_path)
+                        load_config(config_path).to_dict()
 
     def test_reviewer_max_turns_is_rejected(self) -> None:
         # Turn caps were deliberately removed from the cross-adapter config
@@ -511,21 +588,21 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 mock.patch.dict("os.environ", {}, clear=True),
                 self.assertRaisesRegex(ConfigError, r"reviewers\.claude"),
             ):
-                load_config(config_path)
+                load_config(config_path).to_dict()
 
     def test_critique_flags_reject_non_boolean_values(self) -> None:
         # All three, not just `enabled`: the other two used to be read through
         # bool(), so the string "false" silently enabled them.
         for flag in ("enabled", "blind_reviewer_identity", "allow_severity_downgrade"):
             with self.subTest(flag=flag):
-                config = load_config(_REPO_CONFIG)
+                config = load_config(_REPO_CONFIG).to_dict()
                 config["critique"][flag] = "false"
                 with self.assertRaisesRegex(ConfigError, f"critique.{flag} must be a boolean"):
                     validate_config(config)
 
     def test_effort_override_applies_and_validates(self) -> None:
         with mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": "xhigh"}):
-            config = load_config(_REPO_CONFIG)
+            config = load_config(_REPO_CONFIG).to_dict()
         self.assertEqual(config["reviewers"]["claude"]["effort"], "xhigh")
 
     def test_cursor_effort_override_fails_loudly(self) -> None:
@@ -538,10 +615,10 @@ class LoadConfigOverrideTests(unittest.TestCase):
                     r"cursor does not support effort.*AI_REVIEW_CURSOR_MODEL",
                 ),
             ):
-                load_config(_REPO_CONFIG)
+                load_config(_REPO_CONFIG).to_dict()
 
     def test_cursor_effort_config_key_fails_loudly(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         config["reviewers"]["cursor"]["effort"] = "high"
 
         with self.assertRaisesRegex(
@@ -559,31 +636,29 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 mock.patch.dict("os.environ", {"AI_REVIEW_CLAUDE_EFFORT": value}),
                 self.assertRaisesRegex(ConfigError, "effort"),
             ):
-                load_config(_REPO_CONFIG)
+                load_config(_REPO_CONFIG).to_dict()
 
     def test_resolution_threshold_must_fit_configured_panel(self) -> None:
         # Out-of-range is measured against the *configured* seat count (4), not the
         # enabled count: a threshold no roster could ever satisfy is an authoring
         # error, while one merely above the current roster is clamped.
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         for value in (0, 5, True, "2"):
             with self.subTest(value=value):
                 mutated = deepcopy(config)
                 mutated["panel"]["min_successful_reviewers_for_resolution"] = value
-                with self.assertRaisesRegex(
-                    ConfigError, "min_successful_reviewers_for_resolution"
-                ):
+                with self.assertRaisesRegex(ConfigError, "min_successful_reviewers_for_resolution"):
                     validate_config(mutated)
 
     def test_resolution_threshold_clamps_to_the_enabled_panel(self) -> None:
         # An authored threshold above the enabled count is an operator running a
         # smaller panel, not a misconfiguration: clamp so a roster change never
         # requires editing it in lock-step.
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         config["panel"]["min_successful_reviewers_for_resolution"] = 4
-        validate_config(config)
+        resolved = validate_config(config)
 
-        self.assertEqual(config["panel"]["min_successful_reviewers_for_resolution"], 3)
+        self.assertEqual(resolved.panel.min_successful_reviewers_for_resolution, 3)
 
     def test_shipped_threshold_is_unchanged_at_every_supported_panel_size(self) -> None:
         # The clamp must be a no-op for the shipped value, so enabling or
@@ -595,21 +670,19 @@ class LoadConfigOverrideTests(unittest.TestCase):
         ):
             with self.subTest(roster=roster):
                 with mock.patch.dict("os.environ", {"AI_REVIEW_REVIEWERS": roster}):
-                    config = load_config(_REPO_CONFIG)
+                    config = load_config(_REPO_CONFIG).to_dict()
                 panel = config["panel"]
                 self.assertEqual(panel["min_successful_reviewers_for_resolution"], 2)
 
     def test_state_load_error_policy_defaults_false(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         config["state"].pop("fail_closed_on_load_error")
 
-        validate_config(config)
-
-        self.assertFalse(config["state"]["fail_closed_on_load_error"])
+        self.assertFalse(validate_config(config).state.fail_closed_on_load_error)
 
     def test_effective_config_digest_binds_every_section(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        default = effective_config_digest(config)
+        config = load_config(_REPO_CONFIG).to_dict()
+        default = effective_config_digest(validate_config(config))
         for section, key, value in (
             ("posting", "inline_multiline", False),
             ("state", "fail_closed_on_load_error", True),
@@ -620,36 +693,36 @@ class LoadConfigOverrideTests(unittest.TestCase):
             with self.subTest(section=section, key=key):
                 modified = deepcopy(config)
                 modified[section][key] = value
-                self.assertNotEqual(effective_config_digest(modified), default)
+                self.assertNotEqual(effective_config_digest(validate_config(modified)), default)
 
     def test_binding_accepts_the_config_prepare_recorded(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        manifest = effective_config_binding(deepcopy(config))
+        config = load_config(_REPO_CONFIG).to_dict()
+        manifest = effective_config_binding(validate_config(deepcopy(config)))
 
         self.assertEqual(
-            require_effective_config_binding(config, manifest),
-            effective_config_digest(config),
+            require_effective_config_binding(validate_config(config), manifest),
+            effective_config_digest(validate_config(config)),
         )
 
     def test_binding_names_the_divergent_top_level_keys(self) -> None:
-        config = load_config(_REPO_CONFIG)
-        manifest = effective_config_binding(deepcopy(config))
+        config = load_config(_REPO_CONFIG).to_dict()
+        manifest = effective_config_binding(validate_config(deepcopy(config)))
         with mock.patch.dict(
             "os.environ",
             {"AI_REVIEW_POSTING_MODE": "github_reviews", "AI_REVIEW_CODEX_MODEL": "x/y"},
         ):
-            drifted = load_config(_REPO_CONFIG)
+            drifted = load_config(_REPO_CONFIG).to_dict()
 
         with self.assertRaises(EffectiveConfigMismatch) as ctx:
-            require_effective_config_binding(drifted, manifest)
+            require_effective_config_binding(validate_config(drifted), manifest)
         self.assertIn("divergent=posting,reviewers ", str(ctx.exception))
 
     def test_binding_without_a_recorded_digest_asks_for_prepare(self) -> None:
-        config = load_config(_REPO_CONFIG)
+        config = load_config(_REPO_CONFIG).to_dict()
         for manifest in (None, {}, {"effective_config_sha256": "short"}):
             with self.subTest(manifest=manifest):
                 with self.assertRaises(EffectiveConfigMismatch) as ctx:
-                    require_effective_config_binding(config, manifest)
+                    require_effective_config_binding(validate_config(config), manifest)
                 self.assertIn("re-run prepare", str(ctx.exception))
 
 
@@ -667,7 +740,7 @@ class ConfigVersionMigrationTests(unittest.TestCase):
             path = Path(tmp) / "review.yaml"
             path.write_text(text, encoding="utf-8")
             with mock.patch.dict("os.environ", {}, clear=True):
-                load_config(path)
+                load_config(path).to_dict()
 
     def test_retired_versions_are_rejected_and_the_message_names_every_removed_key(self) -> None:
         # v1 is what the tagged 1.x releases shipped, so it gets the same guidance.
@@ -750,13 +823,13 @@ class ConfigVersionMigrationTests(unittest.TestCase):
             mock.patch.dict("os.environ", {"AI_REVIEW_STATE_BACKEND": "gitlab_mr_state_note"}),
             self.assertRaisesRegex(ConfigError, "AI_REVIEW_STATE_BACKEND is retired"),
         ):
-            load_config(_REPO_CONFIG)
+            load_config(_REPO_CONFIG).to_dict()
 
 
 class PostingModeConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            self.shipped = load_config(_REPO_CONFIG)
+            self.shipped = load_config(_REPO_CONFIG).to_dict()
 
     def test_omitted_posting_keys_use_documented_defaults(self) -> None:
         defaults = {
@@ -774,9 +847,9 @@ class PostingModeConfigTests(unittest.TestCase):
                 else:
                     config["posting"].pop(omitted)
 
-                validate_config(config)
+                posting = validate_config(config).to_dict()["posting"]
 
-                self.assertEqual({key: config["posting"][key] for key in defaults}, defaults)
+                self.assertEqual({key: posting[key] for key in defaults}, defaults)
 
     def test_explicit_inline_settings_are_preserved(self) -> None:
         for key, value in (
@@ -804,8 +877,16 @@ class PostingModeConfigTests(unittest.TestCase):
             (
                 "v1_inline_sides",
                 (
-                    None, "new", {"new": True}, ("new",), ["new", "olds"],
-                    [None], [False], [1], [["new"]], [{"side": "new"}],
+                    None,
+                    "new",
+                    {"new": True},
+                    ("new",),
+                    ["new", "olds"],
+                    [None],
+                    [False],
+                    [1],
+                    [["new"]],
+                    [{"side": "new"}],
                 ),
                 r"posting\.v1_inline_sides must be a list of new, old, unchanged",
             ),
@@ -833,7 +914,7 @@ class PostingModeConfigTests(unittest.TestCase):
         """
         for value in ("gitlab_mr_state_note", "github_pr_comment", "none"):
             with self.subTest(value=value):
-                config = load_config(_REPO_CONFIG)
+                config = load_config(_REPO_CONFIG).to_dict()
                 config["state"]["backend"] = value
 
                 with self.assertRaisesRegex(
@@ -845,7 +926,7 @@ class PostingModeConfigTests(unittest.TestCase):
     def test_resolved_config_carries_no_state_backend(self) -> None:
         for mode in ("gitlab_discussions", "github_reviews"):
             with self.subTest(mode=mode):
-                config = load_config(_REPO_CONFIG)
+                config = load_config(_REPO_CONFIG).to_dict()
                 config["posting"]["mode"] = mode
 
                 validate_config(config)

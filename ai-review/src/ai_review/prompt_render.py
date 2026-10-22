@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_json_text
+from .config import ReviewConfig
 from .reviewers import trusted_runtime_root
 from .schema import load_json_file, write_canonical_json
 
@@ -49,13 +50,13 @@ def _diff_stats_text(diff_text: str) -> str:
     return f"files_changed: {files}\ninsertions: {insertions}\ndeletions: {deletions}"
 
 
-def _render(stage: str, config: dict[str, Any], blocks: list[tuple[str, str]]) -> str:
+def _render(stage: str, config: ReviewConfig, blocks: list[tuple[str, str]]) -> str:
     """Render one stage prompt: the image's system rules, then tagged blocks.
 
     Prompt text comes from the image, never from the bundle or the config file's
     location, so it cannot follow wherever AI_REVIEW_CONFIG points.
     """
-    max_prompt_bytes = int(config.get("limits", {}).get("max_prompt_bytes", 500000))
+    max_prompt_bytes = config.limits.max_prompt_bytes
     prompt_path = trusted_runtime_root() / "prompts" / f"{stage}.md"
     system_rules = prompt_path.read_text(encoding="utf-8")
     rendered = "\n\n".join(
@@ -68,7 +69,7 @@ def _render(stage: str, config: dict[str, Any], blocks: list[tuple[str, str]]) -
     return rendered
 
 
-def render_review_prompt(input_dir: str | Path, config: dict[str, Any], reviewer: str) -> str:
+def render_review_prompt(input_dir: str | Path, config: ReviewConfig, reviewer: str) -> str:
     input_dir = Path(input_dir)
     manifest = load_json_file(input_dir / "manifest.json")
     prior_decisions_path = input_dir / "prior_decisions.json"
@@ -98,14 +99,14 @@ def _reviewer_aliases(reviewers: list[str]) -> dict[str, str]:
 def build_pooled_findings(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
-    config: dict[str, Any],
+    config: ReviewConfig,
     critic: str,
 ) -> dict[str, Any]:
     successful_batches = [
         batch for batch in finding_batches if batch.get("adapter_status") == "success"
     ]
     aliases = _reviewer_aliases([str(batch.get("reviewer", "")) for batch in successful_batches])
-    blind = bool(config.get("critique", {}).get("blind_reviewer_identity", True))
+    blind = config.critique.blind_reviewer_identity
     findings: list[dict[str, Any]] = []
     for batch in sorted(successful_batches, key=lambda item: str(item.get("reviewer", ""))):
         reviewer = str(batch["reviewer"])
@@ -141,7 +142,7 @@ def load_successful_finding_batches(findings_dir: str | Path) -> list[dict[str, 
 
 def render_critique_prompt(
     input_dir: str | Path,
-    config: dict[str, Any],
+    config: ReviewConfig,
     critic: str,
     findings_dir: str | Path,
     *,

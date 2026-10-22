@@ -19,7 +19,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .config import resolve_reviewer_timeout_seconds
+from .config import ReviewerConfig
 from .redact import redact_text
 from .reviewers import ReviewerDefinition, adapter_python_path
 
@@ -58,7 +58,7 @@ def _build_adapter_env(
     model: str,
     input_dir: Path,
     output_dir: Path,
-    reviewer_config: dict[str, Any],
+    reviewer_config: ReviewerConfig,
     prompt_tmp: Path | None,
     reviewer_definition: ReviewerDefinition,
     mock: bool = False,
@@ -103,8 +103,8 @@ def _build_adapter_env(
     # Sourced from reviewers.<name>.effort; the AI_REVIEW_<REVIEWER>_EFFORT
     # runtime override is already folded in at config load, and the value is
     # validated against a closed set in validate_config.
-    if reviewer_config.get("effort"):
-        env["AI_REVIEW_EFFORT"] = str(reviewer_config["effort"])
+    if reviewer_config.effort:
+        env["AI_REVIEW_EFFORT"] = reviewer_config.effort
     if prompt_tmp is not None:
         env["AI_REVIEW_RENDERED_PROMPT"] = str(prompt_tmp.resolve())
     # Only the runner-selected mock reads its scenario; real seats never see it.
@@ -238,8 +238,8 @@ def _run_adapter_process(
 
 
 def _effective_adapter_timeout_seconds(
-    reviewer_config: dict[str, Any], stage: str
+    reviewer_config: ReviewerConfig, stage: str
 ) -> int:
     """Return the stage budget after the runner's five-second reserve."""
-    configured_timeout = resolve_reviewer_timeout_seconds(reviewer_config, stage)
+    configured_timeout = reviewer_config.timeout_for(stage)
     return max(1, configured_timeout - 5)

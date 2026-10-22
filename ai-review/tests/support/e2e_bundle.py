@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ai_review.config import load_config
 from ai_review.input_bundle import prepare_local_bundle
 
 from .config_yaml import SHIPPED_CONFIG_PATH
@@ -31,7 +32,7 @@ def prepare_simple_bundle(tmp: Path) -> Path:
         encoding="utf-8",
     )
     return prepare_local_bundle(
-        SHIPPED_CONFIG_PATH,
+        load_config(SHIPPED_CONFIG_PATH),
         FIXTURE_ROOT / "diffs" / "simple.diff",
         repo,
         tmp / "bundle",

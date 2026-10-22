@@ -18,7 +18,7 @@ from ai_review.adapter_process import (
     _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ConfigError
+from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig, load_config
 from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
@@ -67,10 +67,9 @@ class AdapterModelIdValidationTests(unittest.TestCase):
 
 class AdapterTimeoutSelectionTests(unittest.TestCase):
     def test_review_and_critique_use_separate_effective_budgets(self) -> None:
-        reviewer_config = {
-            "timeout_seconds": 1800,
-            "critique_timeout_seconds": 900,
-        }
+        reviewer_config = ReviewerConfig(
+            enabled=True, model="model", timeout_seconds=1800, max_findings=50
+        )
 
         self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "review"), 1795)
         self.assertEqual(
@@ -86,22 +85,17 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
         """
         for review_budget in (1800, 600):
             with self.subTest(timeout_seconds=review_budget):
+                reviewer_config = ReviewerConfig(
+                    enabled=True, model="model", timeout_seconds=review_budget, max_findings=50
+                )
                 self.assertEqual(
-                    _effective_adapter_timeout_seconds(
-                        {"timeout_seconds": review_budget}, "critique"
-                    ),
+                    _effective_adapter_timeout_seconds(reviewer_config, "critique"),
                     DEFAULT_CRITIQUE_TIMEOUT_SECONDS - 5,
                 )
 
-    def test_non_positive_critique_budget_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigError, r"reviewer critique_timeout_seconds"):
-            _effective_adapter_timeout_seconds(
-                {"timeout_seconds": 1800, "critique_timeout_seconds": 0}, "critique"
-            )
-
-    def test_non_positive_review_budget_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigError, r"reviewer timeout_seconds"):
-            _effective_adapter_timeout_seconds({"timeout_seconds": 0}, "review")
+    def test_short_budget_keeps_a_positive_process_timeout(self) -> None:
+        config = ReviewerConfig(enabled=True, model="model", timeout_seconds=3, max_findings=50)
+        self.assertEqual(_effective_adapter_timeout_seconds(config, "review"), 1)
 
 
 class AdapterRunnerOutputTests(unittest.TestCase):
@@ -775,6 +769,26 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
+
+    def test_invalid_integer_setting_reports_config_error_before_adapter_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            sentinel = Path(tmp) / "adapter-invoked"
+            _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
+            self._set_env(paths, config_path)
+            bind_manifest_to_config(paths["input_dir"], config_path)
+            document = load_config(config_path).to_dict()
+            document["limits"]["max_fyi_findings"] = None
+            config_path.write_text(json.dumps(document), encoding="utf-8")
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            self.assertFalse(sentinel.exists())
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "config_error")
+            self.assertEqual(status["error_class"], "ConfigError")
+            self.assertIn("limits.max_fyi_findings", status["error_message_redacted"])
 
     def test_trailing_newline_model_is_rejected_before_adapter_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from .anchors import anchor_path_key, title_fingerprint
 from .canonical import canonical_json, canonical_json_text, sha256_hex
+from .config import StateRetention
 from .notes import note_author_id
 from .schema import now_iso
 from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
@@ -293,12 +294,9 @@ def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"records": aliases.get("records", [])}
 
 
-def compact_state(
-    state: Mapping[str, Any], retention: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    retention = retention or {}
-    keep_resolved_records = int(retention.get("keep_resolved_records", 5))
-    keep_stale_records = int(retention.get("keep_stale_records", 2))
+def compact_state(state: Mapping[str, Any], retention: StateRetention) -> dict[str, Any]:
+    keep_resolved_records = retention.keep_resolved_records
+    keep_stale_records = retention.keep_stale_records
     records = []
     resolved = []
     stale = []
@@ -309,11 +307,11 @@ def compact_state(
         elif status in {"stale", "stale_unverified"}:
             stale.append(record)
         elif status == "wontfix":
-            if not retention.get("keep_wontfix", True):
+            if not retention.keep_wontfix:
                 continue
             records.append(record)
         elif status == "open":
-            if not retention.get("keep_open", True):
+            if not retention.keep_open:
                 continue
             records.append(record)
         else:

@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from .canonical import CanonicalError, canonical_json
-from .config import enabled_reviewers, resolve_reviewer_timeout_seconds
-from .critique import _critique_enabled, critique_batch_succeeded
+from .config import ReviewConfig, enabled_reviewers
+from .critique import critique_batch_succeeded
 from .redact import redact_text
 from .schema import (
     SchemaValidationError,
@@ -52,12 +52,12 @@ def _one_line(value: object, limit: int) -> str | None:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _job_stages(config: dict[str, Any]) -> list[JobStage]:
-    return ["review", "critique"] if _critique_enabled(config) else ["review"]
+def _job_stages(config: ReviewConfig) -> list[JobStage]:
+    return ["review", "critique"] if config.critique.enabled else ["review"]
 
 
 def load_status_files(
-    status_dir: Path, config: dict[str, Any], run_id: str
+    status_dir: Path, config: ReviewConfig, run_id: str
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Usable ``adapter_status.v1`` files keyed by ``(stage, reviewer)``.
 
@@ -100,7 +100,7 @@ def _job_outcome(
 
 
 def build_run_health_jobs(
-    config: dict[str, Any],
+    config: ReviewConfig,
     finding_batches: list[dict[str, Any]],
     critique_batches: list[dict[str, Any]] | None,
     statuses: dict[tuple[str, str], dict[str, Any]],
@@ -113,17 +113,16 @@ def build_run_health_jobs(
     jobs: list[RunHealthJob] = []
     for stage in _job_stages(config):
         for reviewer in sorted(enabled_reviewers(config)):
-            reviewer_cfg = config["reviewers"][reviewer]
+            reviewer_cfg = config.reviewers[reviewer]
             batch = batches[stage].get(reviewer)
             status = statuses.get((stage, reviewer))
-            effort = reviewer_cfg.get("effort")
             job: RunHealthJob = {
                 "stage": stage,
                 "reviewer": reviewer,
                 "outcome": _job_outcome(stage, batch, status),
-                "model": str(reviewer_cfg["model"]),
-                "effort": str(effort) if effort is not None else None,
-                "timeout_seconds": resolve_reviewer_timeout_seconds(reviewer_cfg, stage),
+                "model": reviewer_cfg.model,
+                "effort": reviewer_cfg.effort,
+                "timeout_seconds": reviewer_cfg.timeout_for(stage),
                 "duration_ms": None,
                 "raw_finding_count": None,
                 "accepted_finding_count": None,

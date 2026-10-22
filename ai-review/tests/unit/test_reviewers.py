@@ -20,7 +20,7 @@ from ai_review.adapter_process import (
     _build_adapter_env,
 )
 from ai_review.adapter_runner import _EXIT_ERROR
-from ai_review.config import ConfigError, validate_config
+from ai_review.config import ConfigError, ReviewerConfig, validate_config
 from ai_review.reviewer_setup import main as probe_claude
 from ai_review.reviewer_setup import prepare_workspace, transport_schema
 from ai_review.reviewers import (
@@ -85,7 +85,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                         model="model",
                         input_dir=Path("inputs"),
                         output_dir=Path("out"),
-                        reviewer_config={"timeout_seconds": 30},
+                        reviewer_config=ReviewerConfig(
+                            enabled=True, model="model", timeout_seconds=30, max_findings=50
+                        ),
                         reviewer_definition=definition,
                         prompt_tmp=None,
                     )
@@ -123,7 +125,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                         model="model",
                         input_dir=Path("inputs"),
                         output_dir=Path("out"),
-                        reviewer_config={"timeout_seconds": 30},
+                        reviewer_config=ReviewerConfig(
+                            enabled=True, model="model", timeout_seconds=30, max_findings=50
+                        ),
                         reviewer_definition=definition,
                         prompt_tmp=None,
                     )
@@ -144,7 +148,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                     model="model",
                     input_dir=Path("inputs"),
                     output_dir=Path("out"),
-                    reviewer_config={},
+                    reviewer_config=ReviewerConfig(
+                        enabled=True, model="model", timeout_seconds=30, max_findings=50
+                    ),
                     reviewer_definition=REVIEWERS["codex"],
                     prompt_tmp=None,
                     mock=selected,
@@ -181,7 +187,9 @@ class ReviewerRegistryTests(unittest.TestCase):
                             model="model",
                             input_dir=Path("inputs"),
                             output_dir=Path("out"),
-                            reviewer_config={"timeout_seconds": 30},
+                            reviewer_config=ReviewerConfig(
+                                enabled=True, model="model", timeout_seconds=30, max_findings=50
+                            ),
                             reviewer_definition=definition,
                             prompt_tmp=None,
                         )

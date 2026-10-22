@@ -8,11 +8,12 @@ rather than restating the table.
 
 from __future__ import annotations
 
-import copy
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import ai_review.run_health as run_health_module
+from ai_review.config import CritiqueConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
@@ -31,16 +32,18 @@ from .test_consensus_state_matching import (
 )
 
 
-def _critique_config(**overrides: object) -> dict:
-    config = copy.deepcopy(_config())
-    config["reviewers"]["cursor"] = {"enabled": True, "model": "model", "timeout_seconds": 600}
-    config["critique"] = {
-        "enabled": True,
-        "blind_reviewer_identity": True,
-        "allow_severity_downgrade": False,
-        **overrides,
-    }
-    return config
+def _critique_config(**overrides: object) -> ReviewConfig:
+    config = _config()
+    return replace(
+        config,
+        reviewers={
+            **config.reviewers,
+            "cursor": ReviewerConfig(
+                enabled=True, model="model", timeout_seconds=600, max_findings=50
+            ),
+        },
+        critique=CritiqueConfig(**{"enabled": True, **overrides}),
+    )
 
 
 # One source finding id per reviewer, all grouping to a single issue.
@@ -59,7 +62,7 @@ def _run(
     critique_batches: list[dict] | None = None,
     severity: str = "major",
     state: dict | None = None,
-    config: dict | None = None,
+    config: ReviewConfig | None = None,
 ) -> dict:
     consensus = build_consensus(
         _manifest(),
@@ -643,7 +646,7 @@ class RunHealthTests(unittest.TestCase):
         batches: list[dict],
         critique_batches: list[dict] | None = None,
         statuses: dict | None = None,
-        config: dict | None = None,
+        config: ReviewConfig | None = None,
     ) -> dict:
         consensus = build_consensus(
             _manifest(),

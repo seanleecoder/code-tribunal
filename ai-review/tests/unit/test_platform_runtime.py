@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from ai_review.config import PanelConfig, PostingConfig, ReviewConfig
 from ai_review.platform.runtime import PlatformRuntimeError, create_runtime_platform
+
+
+def _config(mode: str) -> ReviewConfig:
+    return ReviewConfig({}, PanelConfig(2), posting=PostingConfig(mode=mode))
 
 
 class PlatformRuntimeTests(unittest.TestCase):
@@ -14,7 +19,7 @@ class PlatformRuntimeTests(unittest.TestCase):
         self.assertNotIn("access", inspect.signature(create_runtime_platform).parameters)
 
     def test_github_mode_constructs_the_github_platform(self) -> None:
-        config = {"posting": {"mode": "github_reviews"}}
+        config = _config("github_reviews")
         platform = object()
         with mock.patch(
             "ai_review.platform.runtime.GitHubReviewPlatform", return_value=platform
@@ -33,7 +38,7 @@ class PlatformRuntimeTests(unittest.TestCase):
         )
 
     def test_gitlab_mode_uses_gitlab_token(self) -> None:
-        config = {"posting": {"mode": "gitlab_discussions"}}
+        config = _config("gitlab_discussions")
         with mock.patch("ai_review.platform.runtime.GitLabReviewPlatform") as factory:
             create_runtime_platform(
                 config,
@@ -49,7 +54,7 @@ class PlatformRuntimeTests(unittest.TestCase):
     def test_gitlab_mode_ignores_legacy_split_tokens(self) -> None:
         # A retired split token is never read, and its presence must not turn the
         # missing GITLAB_TOKEN into a silent no-op.
-        config = {"posting": {"mode": "gitlab_discussions"}}
+        config = _config("gitlab_discussions")
         for legacy_name in ("GITLAB_READ_TOKEN", "GITLAB_WRITE_TOKEN"):
             with (
                 self.subTest(legacy_name=legacy_name),
@@ -68,7 +73,7 @@ class PlatformRuntimeTests(unittest.TestCase):
     def test_github_mode_passes_configured_bot_login(self) -> None:
         with mock.patch("ai_review.platform.runtime.GitHubReviewPlatform") as factory:
             create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}},
+                _config("github_reviews"),
                 env={
                     "GITHUB_TOKEN": "x",
                     "AI_REVIEW_GITHUB_BOT_LOGIN": "github-actions[bot]",
@@ -84,7 +89,7 @@ class PlatformRuntimeTests(unittest.TestCase):
     def test_github_mode_passes_dedicated_resolution_token(self) -> None:
         with mock.patch("ai_review.platform.runtime.GitHubReviewPlatform") as factory:
             create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}},
+                _config("github_reviews"),
                 env={
                     "GITHUB_TOKEN": "primary",
                     "AI_REVIEW_GITHUB_RESOLVE_TOKEN": "resolution",
@@ -102,7 +107,7 @@ class PlatformRuntimeTests(unittest.TestCase):
     def test_github_actions_requires_explicit_bot_login(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
             create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}},
+                _config("github_reviews"),
                 env={"GITHUB_TOKEN": "x", "GITHUB_ACTIONS": "true"},
             )
 
@@ -111,33 +116,33 @@ class PlatformRuntimeTests(unittest.TestCase):
         # they must not weaken bot-identity verification inside Actions.
         with self.assertRaisesRegex(PlatformRuntimeError, "AI_REVIEW_GITHUB_BOT_LOGIN"):
             create_runtime_platform(
-                {"posting": {"mode": "github_reviews"}},
+                _config("github_reviews"),
                 env={"GITHUB_ACTIONS": "true"},
                 allow_dry_run_defaults=True,
             )
 
     def test_missing_secret_fails_before_platform_io(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITHUB_TOKEN"):
-            create_runtime_platform({"posting": {"mode": "github_reviews"}}, env={})
+            create_runtime_platform(_config("github_reviews"), env={})
 
     def test_gitlab_missing_token_error_names_gitlab_token(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "GITLAB_TOKEN"):
             create_runtime_platform(
-                {"posting": {"mode": "gitlab_discussions"}},
+                _config("gitlab_discussions"),
                 env={},
             )
 
     def test_gitlab_requires_api_url_outside_dry_run(self) -> None:
         with self.assertRaisesRegex(PlatformRuntimeError, "CI_API_V4_URL"):
             create_runtime_platform(
-                {"posting": {"mode": "gitlab_discussions"}},
+                _config("gitlab_discussions"),
                 env={"GITLAB_TOKEN": "t"},
             )
 
     def test_gitlab_dry_run_allows_placeholder_defaults(self) -> None:
         with mock.patch("ai_review.platform.runtime.GitLabReviewPlatform") as factory:
             create_runtime_platform(
-                {"posting": {"mode": "gitlab_discussions"}},
+                _config("gitlab_discussions"),
                 env={},
                 allow_dry_run_defaults=True,
             )

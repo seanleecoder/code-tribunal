@@ -50,7 +50,7 @@ _MANIFEST = {
 
 
 def _reviewer_model(reviewer: str) -> str:
-    return str(_CONFIG["reviewers"][reviewer]["model"])
+    return str(_CONFIG.reviewers[reviewer].model)
 
 
 def _raw_security_blocker() -> dict[str, Any]:
@@ -207,7 +207,7 @@ class PanelDegradationTests(unittest.TestCase):
 
                 findings_dir = root / "findings"
                 for reviewer in seats:
-                    model = str(config["reviewers"][reviewer]["model"])
+                    model = str(config.reviewers[reviewer].model)
                     raw = {
                         "schema_version": "finding_batch.v1",
                         "run_id": "local-test",
@@ -238,7 +238,7 @@ class PanelDegradationTests(unittest.TestCase):
                         "claude",
                         "skipped",
                         run_id="local-test",
-                        model=str(config["reviewers"]["claude"]["model"]),
+                        model=str(config.reviewers["claude"].model),
                         started_at="2026-06-29T00:00:00Z",
                         effective_config_sha256=digest,
                     ),

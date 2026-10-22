@@ -242,8 +242,7 @@ class StatePlanningTests(PostCase):
         consensus["groups"] = []
         previous_record = self._state_record(group, discussion_id="existing-discussion")
         previous_record["status"] = "stale_unverified"
-        config = self._config()
-        config["panel"]["min_successful_reviewers_for_resolution"] = 2
+        config = self._config(panel={"min_successful_reviewers_for_resolution": 2})
 
         plan = plan_state(
             config,
@@ -264,8 +263,7 @@ class StatePlanningTests(PostCase):
         consensus = self._consensus()
         group = copy.deepcopy(consensus["groups"][0])
         state = self._state_with_records([])
-        config = self._config()
-        config["state"]["retention"]["max_records"] = 0
+        config = self._config(state={"retention": {"max_records": 0}})
 
         plan = plan_state(
             config,

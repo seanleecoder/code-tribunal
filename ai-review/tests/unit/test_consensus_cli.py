@@ -8,7 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_review.config import effective_config_binding, effective_config_digest, load_config
+from ai_review.config import (
+    ReviewConfig,
+    effective_config_binding,
+    effective_config_digest,
+    load_config,
+)
 from ai_review.consensus import cli
 from ai_review.schema import load_json_file, write_canonical_json
 
@@ -22,7 +27,7 @@ def _repo_config() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
 
-def _manifest_for_config(config: dict, *, run_id: str = "local-test") -> dict:
+def _manifest_for_config(config: ReviewConfig, *, run_id: str = "local-test") -> dict:
     return {
         "schema_version": "input_manifest.v1",
         "run_id": run_id,

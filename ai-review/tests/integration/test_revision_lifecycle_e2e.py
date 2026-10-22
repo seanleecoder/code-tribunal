@@ -9,7 +9,7 @@ from typing import Any, cast
 from unittest import mock
 
 from ai_review import mock_reviewer
-from ai_review.config import load_config
+from ai_review.config import ReviewConfig, load_config
 from ai_review.consensus import build_consensus, validate_consensus_inputs
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
@@ -71,9 +71,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         return config, manifest, diff_text, bundle
 
     def _batches(
-        self, scenario: str, input_dir: Path, manifest: dict[str, Any], config: dict[str, Any]
+        self, scenario: str, input_dir: Path, manifest: dict[str, Any], config: ReviewConfig
     ) -> list[dict[str, Any]]:
-        reviewers_cfg = config["reviewers"]
+        reviewers_cfg = config.reviewers
         with mock.patch.dict("os.environ", {"AI_REVIEW_MOCK_SCENARIO": scenario}):
             batches = []
             for reviewer in self.REVIEWERS:
@@ -84,7 +84,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
                         reviewer=reviewer,
                         # Stamp the seat's configured model so the batch matches the
                         # effective config validate_consensus_inputs checks against.
-                        model=str(reviewers_cfg[reviewer]["model"]),
+                        model=str(reviewers_cfg[reviewer].model),
                         run_id=manifest["run_id"],
                         started_at="2026-07-23T00:00:00Z",
                         effective_config_sha256=manifest["effective_config_sha256"],
@@ -133,7 +133,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         diff_file = tmp / f"{name}.diff"
         diff_file.write_text(diff_text, encoding="utf-8")
         bundle = prepare_local_bundle(
-            SHIPPED_CONFIG_PATH,
+            load_config(SHIPPED_CONFIG_PATH),
             diff_file,
             repo,
             tmp / f"{name}-bundle",
@@ -150,7 +150,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
     def _noise_critique(
         self,
-        config: dict[str, Any],
+        config: ReviewConfig,
         manifest: dict[str, Any],
         batches: list[dict[str, Any]],
     ) -> dict[str, Any]:

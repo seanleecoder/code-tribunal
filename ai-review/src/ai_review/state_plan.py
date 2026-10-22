@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from .anchors import title_fingerprint
+from .config import ReviewConfig, StateRetention
 from .memory import (
     compact_state,
     find_matching_record,
@@ -45,7 +46,7 @@ class StatePlan:
     ambiguous_issue_ids: set[str]
     pipeline_id: str
     planned_state: State
-    retention: dict[str, Any]
+    retention: StateRetention
     outcome: PlanOutcome
 
 
@@ -132,9 +133,8 @@ def _record_for_group(
     )
 
 
-def _has_resolution_quorum(config: dict[str, Any], consensus: Consensus) -> bool:
-    panel = config.get("panel", {}) if isinstance(config, dict) else {}
-    required = int(panel.get("min_successful_reviewers_for_resolution", 2))
+def _has_resolution_quorum(config: ReviewConfig, consensus: Consensus) -> bool:
+    required = config.panel.min_successful_reviewers_for_resolution
     eligible = consensus.get("resolution_eligible_reviewers")
     if not isinstance(eligible, list):
         # Older consensus artifacts without the field must not resolve by guess.
@@ -322,12 +322,6 @@ def _planned_by_issue(
     return planned_by_issue
 
 
-def _state_retention(config: dict[str, Any]) -> dict[str, Any]:
-    state_config = config.get("state", {}) if isinstance(config, dict) else {}
-    retention = state_config.get("retention", {}) if isinstance(state_config, dict) else {}
-    return retention if isinstance(retention, dict) else {}
-
-
 def _planned_state_payload(
     persisted_state: State,
     *,
@@ -349,21 +343,21 @@ def _process_state_for_persistence(
     *,
     manifest: dict[str, Any],
     pipeline_id: str,
-    retention: dict[str, Any],
+    retention: StateRetention,
 ) -> tuple[State, str | None]:
     compacted = compact_state(
         normalize_state(state, manifest=manifest, pipeline_id=pipeline_id), retention
     )
     overflow = state_overflow_reason(
         compacted,
-        max_records=int(retention.get("max_records", 200)),
-        max_state_bytes=int(retention.get("max_state_bytes", 50000)),
+        max_records=retention.max_records,
+        max_state_bytes=retention.max_state_bytes,
     )
     return cast(State, compacted), overflow
 
 
 def plan_state(
-    config: dict[str, Any],
+    config: ReviewConfig,
     manifest: dict[str, Any],
     consensus: Consensus,
     persisted_state: State,
@@ -489,7 +483,7 @@ def plan_state(
         pipeline_id=pipeline_id,
         planned_records=planned_records,
     )
-    retention = _state_retention(config)
+    retention = config.state.retention
     processed_state, overflow = _process_state_for_persistence(
         planned_state,
         manifest=manifest,

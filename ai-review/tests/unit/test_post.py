@@ -6,6 +6,7 @@ import io
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -337,7 +338,7 @@ class PostTests(PostCase):
         # validation on purpose: the assertion is that posting re-checks it at
         # its own boundary rather than trusting an upstream stage.
         config = self._config()
-        config["posting"]["mode"] = "unsupported"
+        config = replace(config, posting=replace(config.posting, mode="unsupported"))
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):
             post_consensus(
                 FakePostClient("head"),
@@ -845,13 +846,14 @@ class PostTests(PostCase):
         consensus["groups"][0]["representative_anchor"]["side"] = "old"
 
         config = self._config()
-        config["posting"]["fallback_to_summary_comment"] = False
+        invalid = config.to_dict()
+        invalid["posting"]["fallback_to_summary_comment"] = False
         with self.assertRaisesRegex(ConfigError, "fallback_to_summary_comment"):
             validate_config(
                 {
                     "schema_version": CONFIG_SCHEMA_VERSION,
                     "reviewers": {},
-                    "posting": dict(config["posting"]),
+                    "posting": invalid["posting"],
                 }
             )
 
@@ -1646,8 +1648,7 @@ class PostTests(PostCase):
                 anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
                 state = self._state_with_records([self._state_record(group, anchor=anchor)])
                 client = StatePostClient("head", state)
-                config = self._config()
-                config["posting"]["v1_inline_sides"] = ["new", "old"]
+                config = self._config(v1_inline_sides=["new", "old"])
 
                 result = post_consensus(
                     client,  # type: ignore[arg-type]

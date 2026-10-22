@@ -10,6 +10,7 @@ from .anchors import anchor_path_key, candidate_issue_signature_hash
 from .canonical import CanonicalError, stable_json_hash
 from .config import (
     EffectiveConfigMismatch,
+    ReviewConfig,
     enabled_reviewers,
     load_config,
     require_effective_config_binding,
@@ -17,7 +18,7 @@ from .config import (
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
 from .constants import SEVERITY_RANK
-from .critique import _apply_critiques, _critique_enabled, _valid_duplicate_links
+from .critique import _apply_critiques, _valid_duplicate_links
 from .grouping import (
     _group_sort_key,
     group_findings,
@@ -90,7 +91,7 @@ def _final_severity(findings: list[dict[str, Any]]) -> str:
 def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
-    config: dict[str, Any],
+    config: ReviewConfig,
     state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
     statuses: dict[tuple[str, str], dict[str, Any]] | None = None,
@@ -123,7 +124,7 @@ def build_consensus(
     if status != "failed":
         valid_duplicate_links = (
             _valid_duplicate_links(all_findings, critique_batches)
-            if _critique_enabled(config)
+            if config.critique.enabled
             else set()
         )
         for findings in group_findings(all_findings, valid_duplicate_links):
@@ -236,7 +237,7 @@ def build_consensus(
 
 def validate_consensus_inputs(
     *,
-    config: dict[str, Any],
+    config: ReviewConfig,
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     critique_batches: list[tuple[str, dict[str, Any]]],
@@ -249,9 +250,6 @@ def validate_consensus_inputs(
             raise ConsensusIntegrityError("manifest missing run_id")
 
         enabled = set(enabled_reviewers(config))
-        reviewers_cfg = config.get("reviewers", {})
-        if not isinstance(reviewers_cfg, dict):
-            reviewers_cfg = {}
         seen_reviewers: set[str] = set()
         seen_critics: set[str] = set()
 
@@ -274,7 +272,7 @@ def validate_consensus_inputs(
                 raise ConsensusIntegrityError(
                     f"finding batch effective_config_sha256 mismatch for reviewer={reviewer}"
                 )
-            if not isinstance(reviewers_cfg.get(reviewer), dict):
+            if reviewer not in config.reviewers:
                 raise ConsensusIntegrityError(f"finding batch for unknown reviewer={reviewer}")
             # Matrix jobs may still emit skipped artifacts for disabled seats.
             if reviewer not in enabled and status != "skipped":
@@ -295,7 +293,7 @@ def validate_consensus_inputs(
             if batch.get("run_id") != run_id:
                 raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
             status = batch["adapter_status"]
-            if not isinstance(reviewers_cfg.get(critic), dict):
+            if critic not in config.reviewers:
                 raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
             if critic not in enabled and status != "skipped":
                 raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
@@ -339,7 +337,7 @@ def cli(argv: list[str] | None = None) -> int:
                 state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
 
         critique_inputs: list[tuple[str, dict[str, Any]]] = []
-        if _critique_enabled(config):
+        if config.critique.enabled:
             for path in sorted(Path(args.critiques_dir).glob("*.json")):
                 raw = load_json_file(path)
                 if not isinstance(raw, dict):
