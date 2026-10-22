@@ -22,7 +22,6 @@ from .memory import (
     state_aliases_from_state,
 )
 from .platform import ComparisonDiffPlatform, ReviewPlatformError
-from .platform.github import PullRequestVersion
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
 
@@ -362,19 +361,6 @@ def _enforce_diff_limits(diff_text: str, config: ReviewConfig) -> None:
         )
 
 
-def _directory_sha256(path: Path) -> str:
-    digest_parts: list[bytes] = []
-    if path.exists():
-        for item in sorted(path.rglob("*")):
-            if item.is_file():
-                rel = item.relative_to(path).as_posix()
-                digest_parts.append(rel.encode("utf-8"))
-                digest_parts.append(b"\0")
-                digest_parts.append(item.read_bytes())
-                digest_parts.append(b"\0")
-    return sha256_hex(b"".join(digest_parts))
-
-
 def _remove_bundle_entry(path: Path) -> None:
     """Remove one generated bundle entry regardless of its filesystem type."""
     try:
@@ -454,8 +440,6 @@ def _prepare_bound_bundle(
                 "start_sha": bound.start_sha,
                 "head_sha": bound.head_sha,
                 **bound.manifest_extensions,
-                "diff_sha256": sha256_hex(bound.diff_text.encode("utf-8")),
-                "repo_snapshot_sha256": _directory_sha256(snapshot_dir),
                 **effective_config_binding(config),
                 "created_at": now_iso(),
             }
@@ -553,53 +537,6 @@ def _load_platform_state(
         return default_state
 
 
-def _resolve_github_pull_request(client: Any, repo: str) -> dict[str, Any]:
-    pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
-    if not re.fullmatch(r"[1-9][0-9]{0,9}", pr_number):
-        raise SystemExit("prepare requires a valid numeric AI_REVIEW_GITHUB_PR_NUMBER")
-    fetch_pull_request = getattr(client, "fetch_pull_request", None)
-    if not callable(fetch_pull_request):
-        raise SystemExit("configured GitHub platform cannot fetch pull request metadata")
-    pull_request = fetch_pull_request(repo, pr_number)
-    if not isinstance(pull_request, dict):
-        raise BundleError("GitHub pull request response was not an object")
-    if str(pull_request.get("number") or "") != pr_number:
-        raise BundleError(
-            "stale GitHub input: fetched pull request number does not match the "
-            f"workflow-selected number (selected={pr_number}, "
-            f"fetched={pull_request.get('number') or 'missing'})"
-        )
-
-    raw_head = pull_request.get("head")
-    head = raw_head if isinstance(raw_head, dict) else {}
-    raw_head_repo = head.get("repo")
-    head_repo = raw_head_repo if isinstance(raw_head_repo, dict) else {}
-    source_repo = str(head_repo.get("full_name") or "")
-    # The shipped GitHub workflow always carries review credentials, so its
-    # external-fork path is deliberately fail-closed. The configurable
-    # security.allow_external_fork_secrets exception is limited to GitLab.
-    if source_repo != repo:
-        raise SystemExit(
-            "prepare refused to run: external fork PR secret-bearing path is disabled "
-            f"(source_repository={source_repo or 'unknown'}, repository={repo})"
-        )
-    return pull_request
-
-
-def _github_pull_request_version(pull_request: dict[str, Any]) -> PullRequestVersion:
-    raw_base = pull_request.get("base")
-    raw_head = pull_request.get("head")
-    base = raw_base if isinstance(raw_base, dict) else {}
-    head = raw_head if isinstance(raw_head, dict) else {}
-    base_sha = str(base.get("sha") or "")
-    head_sha = str(head.get("sha") or "")
-    if not _GIT_OBJECT_SHA_RE.fullmatch(base_sha) or not _GIT_OBJECT_SHA_RE.fullmatch(head_sha):
-        raise BundleError(
-            "prepare requires valid base.sha and head.sha in GitHub pull request metadata"
-        )
-    return PullRequestVersion(base_sha=base_sha, head_sha=head_sha)
-
-
 def _git_command(repo_path: Path, *args: str) -> str:
     try:
         resolved_repo_path = repo_path.resolve(strict=True)
@@ -687,31 +624,6 @@ def _github_checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha:
     return checkout_head
 
 
-def _require_github_revision(
-    pull_request: dict[str, Any],
-    *,
-    selected_head_sha: str,
-    checkout_head_sha: str,
-    expected_version: PullRequestVersion | None,
-    boundary: str,
-) -> PullRequestVersion:
-    version = _github_pull_request_version(pull_request)
-    if version.head_sha != selected_head_sha or version.head_sha != checkout_head_sha:
-        raise BundleError(
-            f"stale GitHub input at {boundary}: selected, checkout, and pull-request heads "
-            "must match "
-            f"(selected={selected_head_sha}, checkout={checkout_head_sha}, "
-            f"pull_request={version.head_sha})"
-        )
-    if expected_version is not None and version != expected_version:
-        raise BundleError(
-            f"stale GitHub input at {boundary}: pull-request base/head changed during prepare "
-            f"(expected={expected_version.base_sha}/{expected_version.head_sha}, "
-            f"current={version.base_sha}/{version.head_sha})"
-        )
-    return version
-
-
 def prepare_github_bundle(
     config: ReviewConfig,
     out: str | Path,
@@ -720,42 +632,27 @@ def prepare_github_bundle(
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
-    selected_head_sha = os.environ.get("AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA", "")
-    checkout_root = Path.cwd()
-    checkout_head_sha = _github_checkout_head(
-        checkout_root, out_path, expected_head_sha=selected_head_sha
-    )
+    pr_number = os.environ.get("AI_REVIEW_GITHUB_PR_NUMBER", "")
     try:
         client = create_runtime_platform(config)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     if not isinstance(client, ComparisonDiffPlatform):
         raise SystemExit("prepare requires a platform with comparison diff support")
-    pull_request = _resolve_github_pull_request(client, repo)
-    pr_number = str(pull_request.get("number") or "")
-    version = _require_github_revision(
-        pull_request,
-        selected_head_sha=selected_head_sha,
-        checkout_head_sha=checkout_head_sha,
-        expected_version=None,
-        boundary="before diff collection",
+    version = client.fetch_version(repo, pr_number)
+    # The workflow supplies the event SHA for automatic runs and the checked-out
+    # PR head for manual runs. Both must match the current API revision.
+    selected_head_sha = os.environ.get("AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA", "")
+    checkout_root = Path.cwd()
+    checkout_head_sha = _github_checkout_head(
+        checkout_root, out_path, expected_head_sha=selected_head_sha
     )
+    if version.head_sha != checkout_head_sha:
+        raise BundleError("stale GitHub input before diff collection: pull-request head changed")
     try:
         diff_text = client.fetch_comparison_diff(repo, version.base_sha, version.head_sha)
     except ReviewPlatformError as exc:
         raise BundleError(f"failed to fetch GitHub pull request diff: {exc}") from exc
-    after_diff = _resolve_github_pull_request(client, repo)
-    _require_github_revision(
-        after_diff,
-        selected_head_sha=selected_head_sha,
-        checkout_head_sha=checkout_head_sha,
-        expected_version=version,
-        boundary="after diff collection",
-    )
-    raw_head = pull_request.get("head")
-    head = raw_head if isinstance(raw_head, dict) else {}
-    raw_base = pull_request.get("base")
-    base = raw_base if isinstance(raw_base, dict) else {}
 
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
@@ -769,21 +666,18 @@ def prepare_github_bundle(
 
     def revalidate() -> None:
         _github_checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
-        final_pull_request = _resolve_github_pull_request(client, repo)
-        _require_github_revision(
-            final_pull_request,
-            selected_head_sha=selected_head_sha,
-            checkout_head_sha=checkout_head_sha,
-            expected_version=version,
-            boundary="manifest finalization",
-        )
+        current = client.fetch_version(repo, pr_number)
+        if current != version:
+            raise BundleError(
+                "stale GitHub input at manifest finalization: pull-request base/head changed"
+            )
 
     bound = _BoundRevision(
         project_id=repo,
         project_path=repo,
         change_id=pr_number,
-        source_branch=str(head.get("ref") or ""),
-        target_branch=str(base.get("ref") or ""),
+        source_branch=version.source_branch,
+        target_branch=version.target_branch,
         base_sha=version.base_sha,
         start_sha=version.base_sha,
         head_sha=version.head_sha,

@@ -41,7 +41,7 @@ class FakeGitHubClient:
     def fetch_version(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> PullRequestVersion:
-        return PullRequestVersion(base_sha="base", head_sha=self.head_sha)
+        return PullRequestVersion("base", self.head_sha, source_branch="", target_branch="")
 
     def fetch_diff(self, project_id_or_path: str | int, change_id: str | int) -> str:
         return self.diff_text

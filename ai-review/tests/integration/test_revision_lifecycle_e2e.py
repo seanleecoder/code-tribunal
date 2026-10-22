@@ -121,8 +121,8 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self, tmp: Path, name: str, diff_text: str
     ) -> tuple[Path, dict[str, Any]]:
         """Build a full input bundle from `diff_text` via prepare_local_bundle so the
-        manifest carries provenance (diff_sha256, run_id) consistent with the served
-        diff — modelling a distinct revision rather than reusing one manifest with a
+        manifest carries a run_id consistent with the served diff — modelling a
+        distinct revision rather than reusing one manifest with a
         swapped diff. Returns the bundle dir and its manifest (project/MR patched to
         the GitHub fake's coordinates)."""
         repo = tmp / f"{name}-repo"
@@ -235,10 +235,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     def test_line_movement_across_revisions_remaps_to_same_discussion(self) -> None:
         # Models a real cross-revision push, not just a diff swap: two INDEPENDENT
         # bundles are prepared (one per revision) so each manifest carries its own
-        # provenance — distinct diff_sha256 and run_id — matching the diff it serves.
+        # run_id matching the diff it serves.
         # Revision 1 posts a blocking finding; revision 2 advances the head SHA and
         # serves a diff that inserts unrelated lines above the marker, outside its ±6
-        # context window. Identity is head/diff-digest-independent (source_finding_id
+        # context window. Identity is head-independent (source_finding_id
         # is context_hash-based), so the stored anchor remaps to the marker's new line
         # and the existing discussion updates in place instead of a second opening.
         #
@@ -269,9 +269,8 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             head2 = "0123456789abcdef0123456789abcdef01234567"
             manifest2 = dict(manifest2_raw, head_sha=head2)
             # A genuine second revision: new head SHA, and — because each bundle was
-            # prepared from its own diff — a different input digest and run_id too.
+            # prepared from its own diff — a different run_id too.
             self.assertNotEqual(manifest1["head_sha"], manifest2["head_sha"])
-            self.assertNotEqual(manifest1["diff_sha256"], manifest2["diff_sha256"])
             self.assertNotEqual(manifest1["run_id"], manifest2["run_id"])
             client = FakeGitHubClient(head_sha=manifest1["head_sha"], diff_text=diff1)
 

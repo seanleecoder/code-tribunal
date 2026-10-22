@@ -254,7 +254,7 @@ class PostTests(PostCase):
             root = Path(tmp)
             argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
             manifest = load_json_file(root / "inputs" / "manifest.json")
-            manifest["diff_sha256"] = "f" * 64
+            manifest["source_branch"] = "another-source-branch"
             write_canonical_json(root / "inputs" / "manifest.json", manifest)
 
             message = self._assert_refused_before_platform(root, argv)

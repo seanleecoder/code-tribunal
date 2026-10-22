@@ -81,6 +81,17 @@ detected without an operator remembering to run it.
 
 ### Repository snapshot containment
 
+GitHub automatic runs check out the event's head SHA; manual runs check out the
+selected PR's head ref and pass its checked-out SHA to prepare. Checkout fetches
+files without running repository code and does not persist credentials. Prepare
+runs with `python -P` and the trusted image's `PYTHONPATH`, so Python cannot import
+a checkout's top-level `ai_review` package before validation. It keeps the
+checkout as its working directory to validate the PR number, same-repository
+origin, API revision and clean checkout before collecting the diff or snapshot.
+It fetches the diff by immutable base/head SHAs and rechecks the API revision and
+checkout before publishing the manifest. The staged bundle is published only
+after those checks pass.
+
 Prepare rejects symlinks and FIFO/socket/device nodes. On Linux and macOS it
 uses descriptor-relative `O_NOFOLLOW`/`O_DIRECTORY` traversal and fails closed
 where those primitives are unavailable. Directory depth is capped. A hostile

@@ -58,63 +58,24 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.1-6ca538106d1eef7f449e5227408c99013c75aedc@sha256:d855b177b4bfcd109f7cf1c8d86908a98dc22e83c4fbce911fdad4a68ccdaa52
     steps:
-      - name: Resolve pull request
-        id: pull-request
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          PR_NUMBER: ${{ inputs.pr_number }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const repository = `${context.repo.owner}/${context.repo.repo}`;
-            let pullRequest = context.payload.pull_request;
-            if (context.eventName === "workflow_dispatch") {
-              const requestedNumber = process.env.PR_NUMBER || "";
-              if (!/^[1-9][0-9]{0,9}$/.test(requestedNumber)) {
-                core.setFailed("pr_number must be a positive integer of at most 10 digits");
-                return;
-              }
-              const response = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: Number(requestedNumber),
-              });
-              pullRequest = response.data;
-            }
-            if (!pullRequest) {
-              core.setFailed("pull request metadata was unavailable");
-              return;
-            }
-            const sourceRepository = pullRequest.head?.repo?.full_name;
-            if (sourceRepository !== repository) {
-              core.setFailed(
-                `external fork PR checkout is disabled (source=${sourceRepository || "unknown"}, repository=${repository})`,
-              );
-              return;
-            }
-            const headSha = pullRequest.head?.sha || "";
-            if (!/^[0-9a-f]{40,64}$/.test(headSha)) {
-              core.setFailed("pull request head SHA was missing or invalid");
-              return;
-            }
-            const pullNumber = String(pullRequest.number || "");
-            if (!/^[1-9][0-9]{0,9}$/.test(pullNumber)) {
-              core.setFailed("pull request number was missing or invalid");
-              return;
-            }
-            core.setOutput("head_sha", headSha);
-            core.setOutput("pr_number", pullNumber);
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ steps.pull-request.outputs.head_sha }}
+          # Checkout fetches files only. Trusted prepare validates the PR's
+          # repository and binds this commit to the API revision before use.
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr_number) }}
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AI_REVIEW_GITHUB_PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
-          AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
-        run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
+          AI_REVIEW_GITHUB_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          if [ -z "$AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA" ]; then
+            AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA=$(git -c "safe.directory=$GITHUB_WORKSPACE" rev-parse --verify 'HEAD^{commit}')
+            export AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA
+          fi
+          python -P -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-review-inputs
