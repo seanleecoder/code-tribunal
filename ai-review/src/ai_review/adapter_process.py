@@ -2,7 +2,7 @@
 
 The other half of the _AdapterResult seam: everything about *spawning* a
 reviewer adapter — the runtime-env allowlists, the provider endpoint pinning,
-and process-group teardown on timeout.
+bounded output capture, and process-group teardown after every run.
 Parsing what comes back lives in adapter_output; artifact writing in
 adapter_artifacts.
 """
@@ -14,13 +14,13 @@ import os
 import re
 import signal
 import subprocess
-import sys
-import threading
+import tempfile
+import time
 from pathlib import Path
-from typing import Any
+from typing import BinaryIO
 
 from .config import ReviewerConfig
-from .redact import redact_text
+from .redact import redact_file_tail
 from .reviewers import ReviewerDefinition, adapter_python_path
 
 _ADAPTER_RUNTIME_ENV = {
@@ -147,17 +147,34 @@ class _AdapterResult:
         self.stderr = stderr
 
 
+# Polling bounds temporary disk use in practice; reads are capped independently
+# so even a burst between checks cannot become an unbounded in-memory capture.
+_ADAPTER_OUTPUT_LIMIT_BYTES = 32 * 1024 * 1024
+_ADAPTER_DIAGNOSTIC_TAIL_CHARS = 4000
+
+
+class AdapterOutputLimitError(RuntimeError):
+    """A reviewer exceeded the per-stream capture budget."""
+
+    def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
+        super().__init__(message)
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _check_output_size(stdout: BinaryIO, stderr: BinaryIO) -> None:
+    for name, stream in (("stdout", stdout), ("stderr", stderr)):
+        if os.fstat(stream.fileno()).st_size > _ADAPTER_OUTPUT_LIMIT_BYTES:
+            raise AdapterOutputLimitError(
+                f"adapter {name} exceeded {_ADAPTER_OUTPUT_LIMIT_BYTES} bytes"
+            )
+
+
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:
-    # Kill the adapter shell and every descendant it spawned (the reviewer CLI,
-    # its subprocesses) by signalling the whole process group, then reap the
-    # shell. Guarded against the race where the process already exited.
-    try:
-        pgid = os.getpgid(proc.pid)
-    except (ProcessLookupError, OSError):
-        proc.kill()
-        return
+    # start_new_session makes the adapter PID its process-group ID. Use it even
+    # after the adapter exits: a remaining CLI child still belongs to that group.
     with contextlib.suppress(ProcessLookupError, OSError):
-        os.killpg(pgid, signal.SIGKILL)
+        os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=5)
 
@@ -167,74 +184,51 @@ def _run_adapter_process(
     env: dict[str, str],
     timeout_seconds: int,
     *,
-    mirror_logs: bool,
     cwd: Path | None = None,
 ) -> _AdapterResult:
-    # Capture the adapter's stdout+stderr, and when mirror_logs is set, also
-    # stream them to the job log line-by-line (redacted) instead of buffering
-    # silently until exit. Live mirroring makes claude (stream-json on stdout) and
-    # opencode (json on stdout) visible during the run, not just codex (which
-    # narrates on stderr); it goes to stderr so stdout stays a clean channel.
-    # Mirroring is opt-in (AI_REVIEW_STREAM_ADAPTER_LOGS=1) because stream-json /
-    # --verbose output can be large and risk job-log truncation.
-    # start_new_session puts the adapter in its own process group so we can kill
-    # the whole tree on timeout. The adapters don't `exec` their final CLI
-    # (claude and codex run as children of the shell, and opencode serve as a
-    # child of its Python client), so killing only the adapter PID would orphan
-    # the CLI, leave it holding the stdout/stderr pipes open, and hang the pump
-    # threads (and the timeout) indefinitely.
-    proc = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=env,
-        cwd=cwd,
-        start_new_session=True,
-    )
-    collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
-
-    def _pump(stream: Any, key: str) -> None:
-        try:
-            for line in iter(stream.readline, ""):
-                collected[key].append(line)
-                if mirror_logs:
-                    sys.stderr.write(redact_text(line))
-                    sys.stderr.flush()
-        finally:
-            stream.close()
-
-    threads = [
-        threading.Thread(target=_pump, args=(proc.stdout, "stdout"), daemon=True),
-        threading.Thread(target=_pump, args=(proc.stderr, "stderr"), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
-
-    try:
-        proc.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        _kill_process_group(proc)
-        # Bounded join: once the group is killed the pipes close and the threads
-        # exit promptly, but never block the timeout on a thread that somehow
-        # doesn't (they're daemon threads, so the interpreter can still exit).
-        for thread in threads:
-            thread.join(timeout=5)
-        raise subprocess.TimeoutExpired(
+    # Anonymous, private files never enter the output/artifact directory. Unlike
+    # pipes, reading them cannot wait on EOF from a surviving CLI descendant.
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        proc = subprocess.Popen(
             command,
-            timeout_seconds,
-            output="".join(collected["stdout"]),
-            stderr="".join(collected["stderr"]),
-        ) from None
-
-    for thread in threads:
-        thread.join()
-    return _AdapterResult(
-        proc.returncode,
-        "".join(collected["stdout"]),
-        "".join(collected["stderr"]),
-    )
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            env=env,
+            cwd=cwd,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + timeout_seconds
+        timed_out = False
+        try:
+            try:
+                while proc.poll() is None:
+                    _check_output_size(stdout, stderr)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=min(remaining, 0.1))
+            finally:
+                # Also clean up descendants after a normal exit or an output-limit
+                # failure, before reading and closing the capture files.
+                _kill_process_group(proc)
+            _check_output_size(stdout, stderr)
+        except AdapterOutputLimitError as exc:
+            raise AdapterOutputLimitError(
+                str(exc),
+                stdout=redact_file_tail(stdout, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS),
+                stderr=redact_file_tail(stderr, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS),
+            ) from None
+        stdout.seek(0)
+        captured_stdout = stdout.read(_ADAPTER_OUTPUT_LIMIT_BYTES).decode("utf-8", errors="replace")
+        captured_stderr = redact_file_tail(stderr, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS)
+        if timed_out:
+            raise subprocess.TimeoutExpired(
+                command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
+            )
+        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr)
 
 
 def _effective_adapter_timeout_seconds(

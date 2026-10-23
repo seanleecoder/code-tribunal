@@ -47,7 +47,7 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
+- **Done:** S01, S02, S03, S05 (unreleased, next major), S09, S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
 - **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
 - **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
@@ -60,7 +60,6 @@ recommendation's disposition.
   - S13: kept for now.
   - S06: follows SPEC-66.
   - S16: one GitLab mode and a GitHub reusable workflow.
-- **Ready without an ADR:** S09.
 - **New items N01–N20** (from the 2026-10-14 review) are staged into the order
   below.
 - **Not on the roadmap:** X01.
@@ -144,6 +143,8 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 10. Done: the `input_bundle` revision cleanup (N17): platform-owned GitHub
     metadata, initial/final revision checks, no JavaScript resolver or unread
     diff/snapshot digests.
+    Also done: private file-backed adapter capture and removal of the optional
+    live log-mirroring path (S09).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 

@@ -25,7 +25,7 @@ credentials or sensitive model content into issues.
 | GitLab trust audit fails | Include project/SHA/path changed, or a reserved Code Tribunal job is redefined | Auditor errors | Restore the exact direct include example; do not bypass the validator |
 | Runtime override appears ignored | Pinned image predates it or prepare did not receive it | Template image source SHA and manifest effective config | Rotate all image pins together or make the override visible to prepare and start a new run |
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
-| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status, optional streamed adapter log | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (900 seconds when it is omitted, regardless of `timeout_seconds`); temporarily set `AI_REVIEW_STREAM_ADAPTER_LOGS=1`, then unset it |
+| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status and redacted timeout artifacts | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (900 seconds when it is omitted, regardless of `timeout_seconds`); inspect the timeout diagnostics before increasing the budget |
 | Reviewer reports `model_error` naming a model id | A `AI_REVIEW_<REVIEWER>_MODEL` override contains characters that cannot be passed safely to a CLI or interpolated into adapter config | Redacted `model_error` reading `model id has unsupported characters` | Set the override to a plain provider/slug id, optionally with an OpenRouter `:variant` suffix |
 
 ## Reviewer status meanings
@@ -50,12 +50,16 @@ finding pools).
 
 ## Adapter diagnostics
 
-`AI_REVIEW_STREAM_ADAPTER_LOGS=1` mirrors reviewer stdout and stderr while the
-process runs. It is off by default because verbose Claude stream output can
-exceed GitLab's job-log limit and truncate the useful tail. Adapter output is
-always captured for parsing. A parse or validation failure also writes two
-redacted artifacts, so post-mortem evidence remains available without enabling
-live streaming:
+Adapter stdout and stderr are captured in private temporary files, with a
+32 MiB budget per stream checked every 100 ms. Exceeding it fails the seat with
+`model_error` and `AdapterOutputLimitError`; the job log retains bounded, redacted
+stdout and stderr tails to diagnose the failure. Partial output is never treated
+as a clean review. After completion, the job log shows at most the last 4,000 redacted
+stderr characters, with a truncation notice when necessary. Capture files are
+closed and removed after the adapter's process group is terminated, including
+any children remaining after a normal adapter exit.
+
+A parse or validation failure writes two redacted artifacts:
 
 - `out/status/<stage>-<reviewer>-parse-debug.txt` — bounded head/tail preview of
   stdout and stderr, useful for a first look.
@@ -63,6 +67,10 @@ live streaming:
   stdout, bounded at 2 MiB. Read this one when the preview's elided middle is
   where the answer should have been; its newline structure is intact, so a
   stream can be replayed or reused as a test fixture directly.
+
+Timeouts write the same pair with `timeout` instead of `parse` in the names,
+preserving output emitted before the process group was killed. Temporary capture
+files are never uploaded as artifacts.
 
 A `schema_error` whose message names the *model* rather than the output — for
 example `model emitted no answer part` — means the reviewer never produced an

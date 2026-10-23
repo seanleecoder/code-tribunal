@@ -83,6 +83,13 @@ versioning.
   without changing the reducer's decision or automatically resolving candidate
   threads. Re-run from prepare with one image pair; v2 consensus artifacts are
   rejected.
+- Reviewer output is captured in private temporary files instead of memory and
+  pump threads (S09). The runner checks a 32 MiB budget per stream every 100 ms
+  and reports excess output as `model_error` with bounded, redacted stdout and
+  stderr tails, preserving process-group cleanup and stage timeouts. After
+  normal completion, job logs show only the final 4,000 redacted stderr
+  characters. The internal `AI_REVIEW_STREAM_ADAPTER_LOGS` switch is removed;
+  bounded, redacted parse and timeout artifacts remain available.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out
