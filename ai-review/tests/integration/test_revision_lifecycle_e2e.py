@@ -15,6 +15,7 @@ from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import parse_marker
 from ai_review.posting import post_consensus
+from ai_review.prompt_render import build_pooled_findings
 from ai_review.schema import (
     finalize_critique_batch,
     finalize_finding_batch,
@@ -159,23 +160,28 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         Callers pass only Claude's and Codex's batches, so OpenCode is the one
         eligible critic and its vote is a majority.
         """
-        pooled = self._source_ids(batches[0])
+        pooled = build_pooled_findings(manifest, batches, config, "opencode")
+        source_id = sorted(self._source_ids(batches[0]))[0]
+        target_id = next(
+            short_id for short_id, target in pooled["source_finding_ids"].items()
+            if target == source_id
+        )
         noise = finalize_critique_batch(
             {
                 "critiques": [
                     {
-                        "target_source_finding_id": sorted(pooled)[0],
+                        "target_id": target_id,
+                        "duplicate_of_id": None,
                         "verdict": "noise",
                         "rationale": "Style preference, not a defect.",
                         "adjusted_severity": None,
-                        "confidence": 0.9,
                     }
                 ]
             },
             critic="opencode",
             run_id=manifest["run_id"],
             effective_config_sha256=manifest["effective_config_sha256"],
-            pooled_finding_ids=pooled,
+            pooled_findings=pooled,
         )
         validate_consensus_inputs(
             config=config,

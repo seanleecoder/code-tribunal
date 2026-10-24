@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .adapter_artifacts import (
     _load_manifest,
@@ -41,12 +42,9 @@ from .reviewers import (
 )
 from .schema import (
     AdapterModelError,
-    SchemaValidationError,
     finalize_critique_batch,
     finalize_finding_batch,
-    load_json_file,
     now_iso,
-    validate_instance,
     write_canonical_json,
 )
 
@@ -175,6 +173,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 raise ConfigError(str(exc)) from exc
 
         prompt_tmp: Path | None = None
+        pooled: dict[str, Any] | None = None
 
         if stage == "review":
             rendered = render_review_prompt(input_dir, config, reviewer)
@@ -186,7 +185,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             tmp_dir = output_dir / ".tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)
             pooled_out = output_dir / "pooled_findings" / f"{reviewer}.json"
-            rendered = render_critique_prompt(
+            rendered, pooled = render_critique_prompt(
                 input_dir,
                 config,
                 reviewer,
@@ -247,8 +246,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 result.stdout, codec=reviewer_definition.output_codec, stage=stage
             )
             if stage == "review":
-                if not isinstance(raw.get("findings"), list):
-                    raise SchemaValidationError("adapter output findings must be an array")
                 finalized = finalize_finding_batch(
                     raw,
                     reviewer=reviewer,
@@ -259,19 +256,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     input_dir=input_dir,
                     max_findings=reviewer_config.max_findings,
                 )
-                validate_instance(finalized, "finding_batch.schema.json")
             elif stage == "critique":
-                pooled = load_json_file(pooled_out)
+                assert pooled is not None
                 finalized = finalize_critique_batch(
                     raw,
                     critic=reviewer,
                     run_id=run_id,
                     effective_config_sha256=config_digest,
-                    pooled_finding_ids={
-                        str(finding["source_finding_id"]) for finding in pooled["findings"]
-                    },
+                    pooled_findings=pooled,
                 )
-                validate_instance(finalized, "critique_batch.schema.json")
             else:
                 finalized = raw
         except Exception as exc:

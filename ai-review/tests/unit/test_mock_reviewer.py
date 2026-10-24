@@ -42,9 +42,7 @@ class MockReviewerTests(unittest.TestCase):
         candidate = _find_indexing_candidate(_diff("+    return records[0]"))
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        self.assertEqual(candidate["new_line"], 2)
-        self.assertEqual(candidate["new_path"], "src/foo.py")
-        self.assertEqual(candidate["old_path"], "src/foo.py")
+        self.assertEqual(candidate, {"new_path": "src/foo.py", "new_line": 2})
 
     def test_returns_none_without_marker(self) -> None:
         self.assertIsNone(_find_indexing_candidate(_diff("+    return safe()")))
@@ -116,7 +114,7 @@ class MockScenarioTests(unittest.TestCase):
         self.assertEqual(blocking_alt["title"], blocking["title"])
         self.assertEqual(blocking_alt["category"], blocking["category"])
         self.assertEqual(blocking_alt["severity"], blocking["severity"])
-        self.assertEqual(blocking_alt["anchor"], blocking["anchor"])
+        self.assertEqual(blocking_alt["location"], blocking["location"])
         self.assertNotEqual(blocking_alt["body"], blocking["body"])
 
     def test_scenarios_prefer_indexing_candidate_when_both_markers_exist(self) -> None:
@@ -137,7 +135,7 @@ class MockScenarioTests(unittest.TestCase):
         for scenario in ("blocking", "blocking_alt", "advisory"):
             finding = self._review(diff, scenario)[0]
             self.assertEqual(
-                finding["anchor"]["start"]["new_line"], 3, f"scenario={scenario}"
+                finding["location"]["start_line"], 3, f"scenario={scenario}"
             )
 
     def test_scenarios_survive_finalization_on_an_added_file_diff(self) -> None:
@@ -164,9 +162,8 @@ class MockScenarioTests(unittest.TestCase):
                         "os.environ", {"AI_REVIEW_MOCK_SCENARIO": scenario}, clear=False
                     ):
                         batch = review_batch("claude", Path(tmp))
-                    anchor = batch["findings"][0]["anchor"]
-                    self.assertEqual(anchor["new_path"], "src/new.py")
-                    self.assertEqual(anchor["old_path"], "src/new.py")
+                    location = batch["findings"][0]["location"]
+                    self.assertEqual(location["path"], "src/new.py")
                     finalized = finalize_finding_batch(
                         batch,
                         reviewer="claude",

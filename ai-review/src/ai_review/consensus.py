@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from .anchors import anchor_path_key, candidate_issue_signature_hash
+from .anchors import anchor_path_key, candidate_issue_signature_hash, finding_sort_key
 from .canonical import CanonicalError, stable_json_hash
 from .config import (
     EffectiveConfigMismatch,
@@ -51,18 +51,6 @@ def panel_status(successful: list[str], enabled: list[str]) -> str:
     if len(successful) < len(enabled):
         return "degraded"
     return "full"
-
-
-def _representative(findings: list[dict[str, Any]]) -> dict[str, Any]:
-    return sorted(
-        findings,
-        key=lambda item: (
-            -float(item.get("confidence", 0.0)),
-            -SEVERITY_RANK[str(item["severity"])],
-            str(item.get("reviewer", "")),
-            str(item["source_finding_id"]),
-        ),
-    )[0]
 
 
 def _evidence_by_reviewer(findings: list[dict[str, Any]]) -> dict[str, str]:
@@ -129,7 +117,7 @@ def build_consensus(
         )
         for findings in group_findings(all_findings, valid_duplicate_links):
             issue_id = issue_id_for_group(findings)
-            representative = _representative(findings)
+            representative = min(findings, key=finding_sort_key)
             contributing = sorted({finding["reviewer"] for finding in findings})
             source_ids = sorted({finding["source_finding_id"] for finding in findings})
             candidate_signature_hashes = sorted(

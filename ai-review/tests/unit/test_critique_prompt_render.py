@@ -5,12 +5,15 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from ai_review.config import CritiqueConfig, ReviewConfig
+from ai_review.config import CritiqueConfig, ReviewConfig, effective_config_binding
+from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
 from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import load_json_file, write_canonical_json
 
-from .test_consensus_state_matching import _batch, _config, _finding, _manifest
+from .test_consensus_state_matching import _batch as _unbound_batch
+from .test_consensus_state_matching import _config, _finding
+from .test_consensus_state_matching import _manifest as _unbound_manifest
 
 _IMAGE = trusted_runtime_root()
 _SHIPPED_CRITIQUE_PROMPT = (_IMAGE / "prompts" / "critique.md").read_text(encoding="utf-8")
@@ -21,8 +24,19 @@ def _full_config() -> ReviewConfig:
     return replace(_config(), critique=CritiqueConfig(enabled=True))
 
 
+def _manifest() -> dict:
+    return {**_unbound_manifest(), **effective_config_binding(_full_config())}
+
+
+def _batch(reviewer: str, finding: dict) -> dict:
+    return {
+        **_unbound_batch(reviewer, finding),
+        "effective_config_sha256": _manifest()["effective_config_sha256"],
+    }
+
+
 class CritiquePromptRenderTests(unittest.TestCase):
-    def test_pooled_findings_blind_reviewers_and_preserve_source_ids(self) -> None:
+    def test_pooled_findings_blind_reviewers_and_map_short_ids_by_impact(self) -> None:
         pooled = build_pooled_findings(
             _manifest(),
             [
@@ -34,13 +48,17 @@ class CritiquePromptRenderTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            [finding["source_finding_id"] for finding in pooled["findings"]],
-            ["1" * 64, "2" * 64],
+            [finding["id"] for finding in pooled["findings"]],
+            ["F001", "F002"],
         )
         self.assertEqual(
             [finding["reviewer"] for finding in pooled["findings"]],
-            ["reviewer_A", "reviewer_B"],
+            ["reviewer_B", "reviewer_A"],
         )
+        self.assertEqual(pooled["source_finding_ids"], {"F001": "2" * 64, "F002": "1" * 64})
+        for finding in pooled["findings"]:
+            self.assertNotIn("source_finding_id", finding)
+            self.assertNotIn("fingerprints", finding)
         self.assertNotIn("claude", str(pooled["findings"]))
         self.assertNotIn("codex", str(pooled["findings"]))
 
@@ -64,7 +82,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
 
         pooled_finding = pooled["findings"][0]
         self.assertEqual(pooled_finding["reviewer"], "reviewer_A")
-        self.assertEqual(pooled_finding["anchor"]["new_path"], "src/claude_config.py")
+        self.assertEqual(pooled_finding["location"]["path"], "src/claude_config.py")
         self.assertEqual(pooled_finding["body"], "The codex setting is a real input name.")
         self.assertEqual(pooled_finding["evidence"], ["claude_config['codex']"])
 
@@ -84,7 +102,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
                 _batch("claude", _finding("claude", "1" * 64, "major")),
             )
 
-            rendered = render_critique_prompt(
+            rendered, pool = render_critique_prompt(
                 input_dir,
                 _full_config(),
                 "opencode",
@@ -97,21 +115,43 @@ class CritiquePromptRenderTests(unittest.TestCase):
             self.assertIn(f"### README.md\n{_SHIPPED_RULES}", rendered)
             self.assertNotIn("Bundle rule.", rendered)
             audit = load_json_file(pooled_out)
-            self.assertEqual(audit["findings"][0]["source_finding_id"], "1" * 64)
+            self.assertEqual(audit, pool)
+            self.assertEqual(audit["source_finding_ids"], {"F001": "1" * 64})
             self.assertEqual(audit["findings"][0]["reviewer"], "reviewer_A")
+            self.assertNotIn("source_finding_ids", rendered)
+            self.assertNotIn("1" * 64, rendered)
+
+    def test_pool_ids_are_stable_when_batches_and_findings_are_reordered(self) -> None:
+        first = _batch("claude", _finding("claude", "1" * 64, "major"))
+        second = _batch("codex", _finding("codex", "2" * 64, "minor"))
+        expected = build_pooled_findings(_manifest(), [first, second], _full_config(), "opencode")
+        self.assertEqual(
+            build_pooled_findings(_manifest(), [second, first], _full_config(), "opencode"),
+            expected,
+        )
+
+    def test_pool_rejects_mixed_runs_configs_and_duplicate_reviewers(self) -> None:
+        valid = _batch("claude", _finding("claude", "1" * 64, "major"))
+        for batches in (
+            [{**valid, "run_id": "other-run"}],
+            [{**valid, "effective_config_sha256": "f" * 64}],
+            [valid, valid],
+        ):
+            with self.subTest(batches=batches), self.assertRaises(ConsensusIntegrityError):
+                build_pooled_findings(_manifest(), batches, _full_config(), "opencode")
 
     def test_repository_critique_prompt_requires_verdict_per_finding(self) -> None:
         prompt = _SHIPPED_CRITIQUE_PROMPT
 
         self.assertIn("Return a critique object for every finding", prompt)
-        self.assertIn("source_finding_id exactly as target_source_finding_id", prompt)
+        self.assertIn("exactly as target_id", prompt)
         self.assertIn("agree", prompt)
         self.assertIn("dispute", prompt)
         self.assertIn("noise", prompt)
         self.assertIn("duplicate", prompt)
-        self.assertIn("confidence", prompt)
-        self.assertIn("schema_version", prompt)
-        self.assertIn("adapter_status to success", prompt)
+        self.assertIn("duplicate_of_id", prompt)
+        self.assertNotIn("confidence", prompt)
+        self.assertNotIn("adapter_status", prompt)
 
 
 if __name__ == "__main__":

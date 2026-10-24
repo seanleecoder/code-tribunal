@@ -21,7 +21,9 @@ from ai_review.config import ConfigError, effective_config_binding, load_config
 from ai_review.schema import load_json_file, write_canonical_json
 
 
-def bind_manifest_to_config(input_dir: Path, config_path: Path) -> None:
+def bind_manifest_to_config(
+    input_dir: Path, config_path: Path, *, findings_dir: Path | None = None
+) -> None:
     """Record the effective config in the manifest, as prepare does.
 
     The runner refuses to run when its effective config differs from the
@@ -39,6 +41,11 @@ def bind_manifest_to_config(input_dir: Path, config_path: Path) -> None:
     manifest = load_json_file(manifest_path)
     manifest.update(effective_config_binding(config))
     write_canonical_json(manifest_path, manifest)
+    if findings_dir is not None:
+        for path in findings_dir.glob("*.json"):
+            batch = load_json_file(path)
+            batch["effective_config_sha256"] = manifest["effective_config_sha256"]
+            write_canonical_json(path, batch)
 
 
 def run_prepared_adapter(reviewer: str, stage: str) -> int:

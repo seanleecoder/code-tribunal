@@ -9,6 +9,18 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: reviewers author compact `location`
+  ranges and finding content; trusted finalization derives paths, line codes,
+  context hashes, fingerprints and finding IDs from the prepared diff (S05).
+  Critiques use short pool-local IDs such as `F001`, resolved against the exact
+  run/config/critic-bound pool held in runner memory. Unknown IDs fail the
+  critique batch. Numeric `confidence` is removed from findings and critiques;
+  severity, stable finding IDs and content determine caps and representatives.
+  Every candidate is validated before the cap, so malformed and cap-omitted
+  findings have separate counts in the existing run-health report.
+  `finding_batch.v2`, `critique_batch.v2` and `pooled_findings.v2` replace v1;
+  generate fresh artifacts with one image pair instead of replaying old ones.
+  Configuration, persisted state and `consensus.v2` retain their current formats.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out
