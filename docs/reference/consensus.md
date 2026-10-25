@@ -19,6 +19,11 @@ Findings are grouped on identity that survives rewording — path, category,
 anchor side, context hash, fingerprints, and symbol. Grouping carries no
 text-similarity signal, and exact grouping is deterministic.
 
+Finding caps and group representatives use severity first, then stable finding
+IDs and canonical content to break ties. Numeric confidence is absent from the
+finding and critique contracts; arrival order and run-local IDs do not affect
+that ordering.
+
 A group's supporters are the unique reviewer identities that back it
 independently: its direct contributing reviewers, plus critics whose effective
 verdict is `agree` and who contributed no direct finding to the group. One

@@ -18,7 +18,7 @@ from .schema import load_json_file, schema_dir
 
 _STAGE_SCHEMAS = {
     "review": "raw_finding_batch.schema.json",
-    "critique": "critique_batch.schema.json",
+    "critique": "raw_critique_batch.schema.json",
 }
 
 

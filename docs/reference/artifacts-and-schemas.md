@@ -15,7 +15,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/status/<stage>-<reviewer>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
 | `out/status/<stage>-<reviewer>-parse-raw-stdout.txt` | adapter runner on parse/validation failure | operator | complete redacted adapter stdout, bounded at 2 MiB with an explicit truncation marker; diagnostic text, no schema |
 | `out/findings/<reviewer>.json` | reviewer adapter | consensus/critique | [`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json) |
-| `out/pooled_findings/<reviewer>.json` | critique preparation | critic | anonymized finding pool contract |
+| `out/pooled_findings/<reviewer>.json` | critique preparation | operator | [`pooled_findings.schema.json`](../../ai-review/schemas/pooled_findings.schema.json); audit copy of the pool and short-ID mapping held in runner memory |
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
 | `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); the `drop` decision and `summary.drop_count` are retained for compatibility, and `drop_count` is always `0`. `run_health` is always written and post requires it |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
@@ -47,9 +47,24 @@ the job's exit status, not an input to another stage.
 
 Raw model output is normalized through
 [`raw_finding_batch.schema.json`](../../ai-review/schemas/raw_finding_batch.schema.json)
-before it can become a finding batch. Schema validity alone does not make a
-reviewer resolution-eligible: the batch-quality and effective-config fields are
-also evaluated by consensus.
+or [`raw_critique_batch.schema.json`](../../ai-review/schemas/raw_critique_batch.schema.json)
+before it can become a `finding_batch.v2` or `critique_batch.v2`. Reviewers author
+`location` (path, side, start/end line and symbol) and finding content. Trusted
+finalization resolves the location against the prepared diff and derives the
+anchor metadata, hashes and IDs. An unresolvable location drops only that finding.
+Every candidate is checked before the per-seat cap; malformed drops and valid
+cap omissions remain distinct in the existing quality counts. Neither findings
+nor critiques carry numeric confidence.
+
+Critics see anonymized finding content with short IDs such as `F001`, not the
+pool's internal source-ID mapping or run/config bookkeeping. Finalization maps
+those references through the exact `pooled_findings.v2` pool used to render the
+prompt, held in runner memory and bound to the run, critic and effective config.
+The audit file is never reloaded after the model runs. An unknown target or
+duplicate reference fails the critique batch. Version 1 finding/critique batches
+are rejected; run every stage from one image pair and generate fresh artifacts.
+Schema validity alone does not make a reviewer resolution-eligible: consensus
+uses the runner's batch-quality flag and validates the effective-config binding.
 
 In the canonical GitLab template, prepare/review/critique artifacts expire after
 seven days; consensus/post evidence expires after 30 days. GitHub retention

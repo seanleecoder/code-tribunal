@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .anchors import parse_unified_diff, resolve_side_paths
+from .anchors import parse_unified_diff
 from .reviewers import get_reviewer_definition
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
@@ -57,13 +57,7 @@ def _mock_scenario() -> str:
 
 
 def _candidate(diff_file: Any, line: Any) -> dict[str, Any]:
-    old_path, new_path = resolve_side_paths(diff_file.old_path, diff_file.new_path)
-    return {
-        "old_path": old_path,
-        "new_path": new_path,
-        "new_line": line.new_line,
-        "hunk_header": line.hunk_header,
-    }
+    return {"new_path": diff_file.new_path, "new_line": line.new_line}
 
 
 def _find_indexing_candidate(diff_text: str) -> dict[str, Any] | None:
@@ -84,32 +78,19 @@ def _find_first_added_line(diff_text: str) -> dict[str, Any] | None:
     return None
 
 
-def _anchor(candidate: dict[str, Any], *, symbol: str | None) -> dict[str, Any]:
+def _location(candidate: dict[str, Any], *, symbol: str | None) -> dict[str, Any]:
     return {
-        "new_path": candidate["new_path"],
-        "old_path": candidate["old_path"],
+        "path": candidate["new_path"],
         "side": "new",
-        "start": {
-            "old_line": None,
-            "new_line": candidate["new_line"],
-            "line_code": None,
-        },
-        "end": {
-            "old_line": None,
-            "new_line": candidate["new_line"],
-            "line_code": None,
-        },
-        "hunk_header": candidate["hunk_header"],
-        # Re-computed against the real diff during finalization; any valid
-        # hex placeholder is fine here.
-        "context_hash": "0" * 64,
+        "start_line": candidate["new_line"],
+        "end_line": candidate["new_line"],
         "symbol": symbol,
     }
 
 
 def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
-        "anchor": _anchor(candidate, symbol="extract_name"),
+        "location": _location(candidate, symbol="extract_name"),
         "severity": "major",
         "category": "correctness",
         "title": "Validate the empty response before indexing",
@@ -121,7 +102,6 @@ def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
             "records[0] is accessed before the existing empty-records guard can run."
         ],
         "suggestion": None,
-        "confidence": 0.82,
     }
 
 
@@ -145,20 +125,19 @@ _BLOCKING_ALT_BODY = (
 
 def _blocking_finding(candidate: dict[str, Any], *, body: str = _BLOCKING_BODY) -> dict[str, Any]:
     return {
-        "anchor": _anchor(candidate, symbol=None),
+        "location": _location(candidate, symbol=None),
         "severity": "blocker",
         "category": "correctness",
         "title": _BLOCKING_TITLE,
         "body": body,
         "evidence": ["Deterministic mock finding anchored to an added line."],
         "suggestion": None,
-        "confidence": 0.95,
     }
 
 
 def _advisory_finding(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
-        "anchor": _anchor(candidate, symbol=None),
+        "location": _location(candidate, symbol=None),
         "severity": "minor",
         "category": "maintainability",
         "title": "Deterministic mock advisory finding",
@@ -169,7 +148,6 @@ def _advisory_finding(candidate: dict[str, Any]) -> dict[str, Any]:
         ),
         "evidence": ["Deterministic mock finding anchored to an added line."],
         "suggestion": None,
-        "confidence": 0.6,
     }
 
 
@@ -197,27 +175,13 @@ def review_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
     return {"findings": [_advisory_finding(candidate)]}
 
 
-def critique_batch(reviewer: str, input_dir: Path) -> dict[str, Any]:
-    manifest = json.loads((input_dir / "manifest.json").read_text(encoding="utf-8"))
-    return {
-        "schema_version": "critique_batch.v1",
-        "run_id": manifest["run_id"],
-        "critic": reviewer,
-        "adapter_status": "success",
-        "critiques": [],
-    }
-
-
 def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("reviewer")
     parser.add_argument("stage", choices=["review", "critique"])
     args = parser.parse_args(argv)
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
-    if args.stage == "review":
-        batch = review_batch(args.reviewer, input_dir)
-    else:
-        batch = critique_batch(args.reviewer, input_dir)
+    batch = review_batch(args.reviewer, input_dir) if args.stage == "review" else {"critiques": []}
     # The documented mock CLI emits a batch. The runner's mock invocation emits
     # the real seat's transport so it needs no mock parsing path.
     if adapter_output:

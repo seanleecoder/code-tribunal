@@ -281,7 +281,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def _batch(self, reviewer: str, finding: dict[str, Any]) -> dict[str, Any]:
         findings = [copy.deepcopy(finding)]
         return {
-            "schema_version": "finding_batch.v1",
+            "schema_version": "finding_batch.v2",
             "run_id": "integration-run",
             "reviewer": reviewer,
             "adapter_status": "success",
@@ -329,7 +329,6 @@ class PublishEndToEndTests(unittest.TestCase):
             "body": body,
             "evidence": ['value = records[0]["name"]'],
             "suggestion": "Move the empty-records guard before indexing records[0].",
-            "confidence": 0.9,
             "fingerprints": {
                 "title_fingerprint": "d" * 64,
                 "evidence_fingerprint": evidence_fingerprint,

@@ -131,8 +131,9 @@ class ManifestBlockTests(unittest.TestCase):
         # The config only binds stages; reviewers would pay for it in every call.
         self.assertIn("effective_config", manifest)
         self.assertNotIn('"effective_config":', rendered)
-        self.assertIn(manifest["effective_config_sha256"], rendered)
-        self.assertIn('"run_id":"local-test"', rendered)
+        self.assertNotIn(manifest["effective_config_sha256"], rendered)
+        self.assertNotIn('"run_id":', rendered)
+        self.assertIn('"head_sha":"' + "1" * 40 + '"', rendered)
 
 
 if __name__ == "__main__":

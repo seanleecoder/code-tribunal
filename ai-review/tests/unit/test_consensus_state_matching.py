@@ -75,7 +75,6 @@ def _finding(
         "body": "The new config access can raise a KeyError.",
         "evidence": ["config['required']"],
         "suggestion": None,
-        "confidence": 0.8,
         "fingerprints": {
             "title_fingerprint": title_fingerprint,
             "evidence_fingerprint": evidence_fingerprint,
@@ -94,7 +93,7 @@ def _finding(
 def _batch(reviewer: str, finding: dict) -> dict:
     findings = [finding]
     return {
-        "schema_version": "finding_batch.v1",
+        "schema_version": "finding_batch.v2",
         "run_id": "run",
         "reviewer": reviewer,
         "adapter_status": "success",
@@ -190,7 +189,6 @@ def _critique(
         "verdict": verdict,
         "rationale": rationale,
         "adjusted_severity": adjusted_severity,
-        "confidence": 0.8,
     }
     if duplicate_of is not None:
         critique["duplicate_of_source_finding_id"] = duplicate_of
@@ -199,7 +197,7 @@ def _critique(
 
 def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
     return {
-        "schema_version": "critique_batch.v1",
+        "schema_version": "critique_batch.v2",
         "run_id": "run",
         "critic": critic,
         "adapter_status": status,

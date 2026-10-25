@@ -6,7 +6,14 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .canonical import canonical_json, normalize_path, normalize_text, sha256_hex
+from .canonical import (
+    canonical_json,
+    canonical_json_text,
+    normalize_path,
+    normalize_text,
+    sha256_hex,
+)
+from .constants import SEVERITY_RANK
 
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 HUNK_RE = re.compile(
@@ -178,9 +185,6 @@ def resolve_side_paths(old_path: str | None, new_path: str | None) -> tuple[str,
     added file both sides are the new file anyway. Callers reading a single side
     must therefore not treat a populated path as proof the side exists; use
     ``anchor["side"]`` for that.
-
-    Accepts raw reviewer output as well as parser output, so the sentinel check
-    is the same lenient one the parser uses.
     """
 
     old = None if not old_path or _is_dev_null(old_path) else old_path
@@ -318,6 +322,21 @@ def _line_belongs_to_side(side: str, line: DiffLine) -> bool:
     return line.kind == "context"
 
 
+def _line_key(side: str) -> str:
+    return "old_line" if side == "old" else "new_line"
+
+
+def _window_hash(
+    anchor: dict[str, Any], side: str, side_lines: list[DiffLine], index: int, window: int
+) -> str:
+    start = max(index - window, 0)
+    return compute_context_hash(
+        anchor_path_key(anchor),
+        side,
+        [line.text for line in side_lines[start : index + window + 1]],
+    )
+
+
 def context_hash_from_unified_diff(
     diff_text: str, anchor: dict[str, Any], *, window: int = 6
 ) -> str:
@@ -333,12 +352,7 @@ def context_hash_from_unified_diff(
         ]
         if not target_indexes:
             continue
-        target_index = target_indexes[0]
-        start = max(target_index - window, 0)
-        end = min(target_index + window, len(side_lines) - 1)
-        return compute_context_hash(
-            anchor_path_key(anchor), side, [line.text for line in side_lines[start : end + 1]]
-        )
+        return _window_hash(anchor, side, side_lines, target_indexes[0], window)
     raise ValueError("anchor does not map to the unified diff")
 
 
@@ -365,12 +379,9 @@ def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> 
         remap_old, remap_new = resolve_side_paths(diff_file.old_path, diff_file.new_path)
         side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
         for index, line in enumerate(side_lines):
-            start = max(index - window, 0)
-            end = min(index + window, len(side_lines) - 1)
-            line_texts = [item.text for item in side_lines[start : end + 1]]
             # Context hashes include the original path. That lets a renamed file remap
             # by content while still comparing the historical alias deterministically.
-            if compute_context_hash(anchor_path_key(anchor), side, line_texts) != expected_hash:
+            if _window_hash(anchor, side, side_lines, index, window) != expected_hash:
                 continue
             remapped = dict(anchor)
             remapped["old_path"] = remap_old
@@ -410,3 +421,82 @@ def first_evidence_or_body(finding: dict[str, Any]) -> str:
 
 def is_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_RE.fullmatch(value))
+
+
+class DiffLocationResolver:
+    """Index prepared coordinates once for all schema-validated locations in a batch."""
+
+    def __init__(self, files: Iterable[DiffFile]) -> None:
+        self._matches: dict[
+            tuple[str, str, int], list[tuple[DiffFile, list[DiffLine], int]]
+        ] = {}
+        for file in files:
+            for side in ("old", "new", "unchanged"):
+                side_path = file.old_path if side == "old" else file.new_path
+                if side_path is None:
+                    continue
+                aliases = {file.old_path, file.new_path} if side == "old" else {file.new_path}
+                paths = {normalize_path(p) for p in aliases if p is not None}
+                lines = [line for line in file.lines if _line_belongs_to_side(side, line)]
+                number = _line_key(side)
+                for index, line in enumerate(lines):
+                    for path in paths:
+                        key = (path, side, getattr(line, number))
+                        self._matches.setdefault(key, []).append((file, lines, index))
+
+    def resolve(self, location: dict[str, Any]) -> dict[str, Any]:
+        path = normalize_path(location["path"])
+        side = location["side"]
+        # JSON Schema integers include integral floats; slices require Python ints.
+        start, end = int(location["start_line"]), int(location["end_line"])
+        if end < start:
+            raise ValueError("location end precedes start")
+        matches = self._matches.get((path, side, start), [])
+        if len(matches) != 1:
+            raise ValueError("location is ambiguous or does not map to the prepared diff")
+        file, lines, index = matches[0]
+        number = _line_key(side)
+        count = end - start + 1
+        selected = lines[index : index + count]
+        if len(selected) != count or any(
+            getattr(line, number) != start + offset or line.hunk_header != selected[0].hunk_header
+            for offset, line in enumerate(selected)
+        ):
+            raise ValueError("location range must be contiguous within one diff hunk")
+        old_path, new_path = resolve_side_paths(file.old_path, file.new_path)
+        anchor = {
+            "old_path": normalize_path(old_path),
+            "new_path": normalize_path(new_path),
+            "side": side,
+            "start": {"old_line": selected[0].old_line, "new_line": selected[0].new_line},
+            "end": {"old_line": selected[-1].old_line, "new_line": selected[-1].new_line},
+            "hunk_header": selected[0].hunk_header,
+            "symbol": location["symbol"],
+        }
+        anchor["context_hash"] = _window_hash(anchor, side, lines, index, window=6)
+        return add_line_codes(anchor)
+
+
+def anchor_location(anchor: dict[str, Any]) -> dict[str, Any]:
+    """Project an anchor back to the model-facing location that resolves to it."""
+    number = _line_key(anchor["side"])
+    return {
+        "path": anchor_path_key(anchor),
+        "side": anchor["side"],
+        "start_line": anchor["start"][number],
+        "end_line": anchor["end"][number],
+        "symbol": anchor["symbol"],
+    }
+
+
+def finding_sort_key(finding: dict[str, Any]) -> tuple[int, str, str]:
+    """Stable impact ordering, independent of arrival order and run bookkeeping."""
+    content = {
+        key: finding[key]
+        for key in ("anchor", "severity", "category", "title", "body", "evidence", "suggestion")
+    }
+    return (
+        -SEVERITY_RANK[finding["severity"]],
+        finding["source_finding_id"],
+        canonical_json_text(content),
+    )

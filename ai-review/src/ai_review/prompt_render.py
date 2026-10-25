@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .anchors import anchor_location, finding_sort_key
 from .canonical import canonical_json_text
 from .config import ReviewConfig
+from .consensus import validate_consensus_inputs
 from .reviewers import trusted_runtime_root
-from .schema import load_json_file, write_canonical_json
+from .schema import load_json_file, validate_instance
 
 
 class PromptRenderError(ValueError):
@@ -25,13 +27,41 @@ def _read_rules() -> str:
     return "\n\n".join(chunks)
 
 
-def _prompt_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    """The manifest as reviewers see it, without the effective config.
+def _project_context(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: manifest[key]
+        for key in (
+            "project_path",
+            "source_branch",
+            "target_branch",
+            "base_sha",
+            "start_sha",
+            "head_sha",
+        )
+        if key in manifest
+    }
 
-    The config binds stages to each other; a reviewer gains nothing from it, and
-    it would cost prompt bytes on every provider call.
-    """
-    return {key: value for key, value in manifest.items() if key != "effective_config"}
+
+def _prior_decisions(input_dir: Path) -> dict[str, Any]:
+    path = input_dir / "prior_decisions.json"
+    prior = load_json_file(path) if path.exists() else {}
+    # Keep the prior finding's title, category, status and path, not state hashes.
+    return {
+        key: [
+            {
+                field: item[field]
+                for field in (
+                    "title",
+                    "category",
+                    "status",
+                    "path",
+                )
+                if field in item
+            }
+            for item in prior.get(key, [])
+        ]
+        for key in ("settled", "open")
+    }
 
 
 def _diff_stats_text(diff_text: str) -> str:
@@ -72,16 +102,14 @@ def _render(stage: str, config: ReviewConfig, blocks: list[tuple[str, str]]) -> 
 def render_review_prompt(input_dir: str | Path, config: ReviewConfig, reviewer: str) -> str:
     input_dir = Path(input_dir)
     manifest = load_json_file(input_dir / "manifest.json")
-    prior_decisions_path = input_dir / "prior_decisions.json"
-    prior_decisions = load_json_file(prior_decisions_path) if prior_decisions_path.exists() else {}
     diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
     return _render(
         "review",
         config,
         [
             ("REVIEWER", reviewer),
-            ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
-            ("PRIOR_DECISIONS_JSON", canonical_json_text(prior_decisions)),
+            ("PROJECT_CONTEXT_JSON", canonical_json_text(_project_context(manifest))),
+            ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
             ("RULES", _read_rules()),
             ("DIFF_STATS", _diff_stats_text(diff_text)),
             ("MR_DIFF_UNTRUSTED_DATA", diff_text),
@@ -102,35 +130,48 @@ def build_pooled_findings(
     config: ReviewConfig,
     critic: str,
 ) -> dict[str, Any]:
+    validate_consensus_inputs(
+        config=config, manifest=manifest, finding_batches=finding_batches, critique_batches=[]
+    )
     successful_batches = [
         batch for batch in finding_batches if batch.get("adapter_status") == "success"
     ]
-    aliases = _reviewer_aliases([str(batch.get("reviewer", "")) for batch in successful_batches])
+    aliases = _reviewer_aliases([str(batch["reviewer"]) for batch in successful_batches])
     blind = config.critique.blind_reviewer_identity
-    findings: list[dict[str, Any]] = []
-    for batch in sorted(successful_batches, key=lambda item: str(item.get("reviewer", ""))):
-        reviewer = str(batch["reviewer"])
-        reviewer_label = aliases[reviewer] if blind else reviewer
-        for index, finding in enumerate(
-            sorted(
-                batch.get("findings", []),
-                key=lambda item: str(item.get("source_finding_id", "")),
-            ),
-            start=1,
-        ):
-            copied = dict(finding)
-            if blind and "run_local_id" in copied:
-                copied["run_local_id"] = f"{reviewer_label}-{index:04d}"
-            copied["reviewer"] = reviewer_label
-            findings.append(copied)
-
-    return {
-        "schema_version": "pooled_findings.v1",
+    ordered = sorted(
+        [
+            {**finding, "reviewer": batch["reviewer"]}
+            for batch in successful_batches
+            for finding in batch["findings"]
+        ],
+        key=finding_sort_key,
+    )
+    findings, mapping = [], {}
+    for index, finding in enumerate(ordered, start=1):
+        short_id = f"F{index:03d}"
+        mapping[short_id] = finding["source_finding_id"]
+        findings.append(
+            {
+                "id": short_id,
+                "reviewer": aliases[finding["reviewer"]] if blind else finding["reviewer"],
+                "location": anchor_location(finding["anchor"]),
+                **{
+                    key: finding[key]
+                    for key in ("severity", "category", "title", "body", "evidence", "suggestion")
+                },
+            }
+        )
+    pool = {
+        "schema_version": "pooled_findings.v2",
         "run_id": manifest["run_id"],
         "critic": critic,
+        "effective_config_sha256": manifest["effective_config_sha256"],
         "blind_reviewer_identity": blind,
-        "findings": sorted(findings, key=lambda item: str(item.get("source_finding_id", ""))),
+        "source_finding_ids": mapping,
+        "findings": findings,
     }
+    validate_instance(pool, "pooled_findings.schema.json")
+    return pool
 
 
 def load_successful_finding_batches(findings_dir: str | Path) -> list[dict[str, Any]]:
@@ -145,9 +186,7 @@ def render_critique_prompt(
     config: ReviewConfig,
     critic: str,
     findings_dir: str | Path,
-    *,
-    pooled_findings_out: str | Path | None = None,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     input_dir = Path(input_dir)
     manifest = load_json_file(input_dir / "manifest.json")
     pooled_findings = build_pooled_findings(
@@ -156,15 +195,18 @@ def render_critique_prompt(
         config,
         critic,
     )
-    if pooled_findings_out is not None:
-        write_canonical_json(pooled_findings_out, pooled_findings)
-    return _render(
+    rendered = _render(
         "critique",
         config,
         [
             ("CRITIC", critic),
-            ("INPUT_MANIFEST_JSON", canonical_json_text(_prompt_manifest(manifest))),
+            ("PROJECT_CONTEXT_JSON", canonical_json_text(_project_context(manifest))),
+            ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
             ("RULES", _read_rules()),
-            ("POOLED_FINDINGS_JSON", canonical_json_text(pooled_findings)),
+            (
+                "POOLED_FINDINGS_JSON",
+                canonical_json_text({"findings": pooled_findings["findings"]}),
+            ),
         ],
     )
+    return rendered, pooled_findings

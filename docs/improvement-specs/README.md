@@ -47,12 +47,11 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S03, S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
+- **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
 - **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
   decoder, deleted on
   2026-10-18), S18, S19.
-- **Reverted, to re-land in the next major release:** S05 (`63ca67a`).
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
     canaries every release and the hostile canary when the trust boundary changes
@@ -145,7 +144,9 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 
 **Step 4 — next major release: one consensus, state, and consumer cutover.**
 
-11. Re-land S05, which restores `resolve_location` and removes `confidence`.
+11. Done, unreleased: S05 restores `resolve_location`, removes `confidence`, and
+    binds short critique IDs to the trusted pool. Finding and critique batches
+    move to v2; consensus and persisted state retain their current formats.
 12. Consensus becomes state-free (N11). `consensus.v3` also drops
     `group.body_hash` and removes the `drop` decision and `summary.drop_count`
     (COMPAT-003).

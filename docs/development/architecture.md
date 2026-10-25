@@ -76,6 +76,14 @@ These rules are worth stating because breaking them is silent:
   argument builder, so it cannot drift to a different flag or schema combination.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
+- Model authoring contracts contain finding content and diff coordinates, or
+  short critique references. `schema` projects and validates authoring fields,
+  resolves locations against the prepared diff, and supplies runtime metadata.
+  The critique pool is validated before rendering and retained in runner memory;
+  its on-disk copy is diagnostic, never an authority after the model runs.
+  S05 changes the authoring schemas, finalizers and their consumers together:
+  staging them separately would require an old/new contract path. Finding and
+  critique batches move to v2 without changing consensus or persisted state.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

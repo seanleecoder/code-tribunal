@@ -30,14 +30,11 @@ _DIFF = "\n".join(
 
 def _raw_valid() -> dict[str, Any]:
     return {
-        "anchor": {
-            "new_path": "src/foo.py",
-            "old_path": "src/foo.py",
+        "location": {
+            "path": "src/foo.py",
             "side": "new",
-            "start": {"old_line": None, "new_line": 2, "line_code": None},
-            "end": {"old_line": None, "new_line": 2, "line_code": None},
-            "hunk_header": "@@ -1,1 +1,2 @@",
-            "context_hash": "0" * 64,
+            "start_line": 2,
+            "end_line": 2,
             "symbol": None,
         },
         "severity": "major",
@@ -46,7 +43,6 @@ def _raw_valid() -> dict[str, Any]:
         "body": "The new config access can raise a KeyError.",
         "evidence": ["config['required']"],
         "suggestion": None,
-        "confidence": 0.8,
     }
 
 
@@ -56,7 +52,6 @@ def _raw_malformed() -> dict[str, Any]:
         "category": "security",
         "title": "broken",
         "body": "broken",
-        "confidence": 0.9,
     }
 
 
@@ -66,12 +61,7 @@ def _finalize(findings: list[Any]) -> tuple[dict[str, Any], str]:
         (input_dir / "mr.diff").write_text(_DIFF, encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             finalized = finalize_finding_batch(
-                {
-                    "adapter_status": "success",
-                    # Pinned so batches finalized in different seconds still compare equal.
-                    "completed_at": "2026-06-29T00:00:01Z",
-                    "findings": findings,
-                },
+                {"findings": findings},
                 reviewer="claude",
                 model="model",
                 run_id="run",
@@ -108,41 +98,23 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
         self.assertEqual(finalized["dropped_finding_count"], 1)
         self.assertTrue(finalized["usable_for_resolution"])
 
-    def test_missing_confidence_defaults_to_zero_and_malformed_still_drops(self) -> None:
-        # SPEC-41: only a present but wrong confidence drops the finding.
-        missing = _raw_valid()
-        del missing["confidence"]
-        finalized, err = _finalize(
-            [
-                missing,
-                {**_raw_valid(), "confidence": "high"},
-                {**_raw_valid(), "confidence": 1.5},
-            ]
-        )
-        self.assertEqual(finalized["accepted_finding_count"], 1)
-        self.assertIn("claude finding 1 has no confidence; using 0.0", err)
-        self.assertIn("dropped claude finding 2", err)
-        self.assertIn("dropped claude finding 3", err)
-
-        # Everything downstream sees the same finding as an explicit 0.0.
-        defaulted, _ = _finalize([missing])
-        explicit, _ = _finalize([{**_raw_valid(), "confidence": 0.0}])
-        self.assertEqual(defaulted, explicit)
-
     def test_all_dropped_batch_cannot_resolve(self) -> None:
         finalized, _ = _finalize([_raw_malformed(), _raw_malformed()])
         self.assertEqual(finalized["accepted_finding_count"], 0)
         self.assertEqual(finalized["dropped_finding_count"], 2)
         self.assertFalse(finalized["usable_for_resolution"])
 
-        empty_usable = finalize_finding_batch(
-            {"adapter_status": "success", "findings": []},
-            reviewer="codex",
-            model="model",
-            run_id="run",
-            started_at="2026-06-29T00:00:00Z",
-            effective_config_sha256="0" * 64,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "mr.diff").write_text(_DIFF)
+            empty_usable = finalize_finding_batch(
+                {"findings": []},
+                reviewer="codex",
+                model="model",
+                run_id="run",
+                started_at="2026-06-29T00:00:00Z",
+                effective_config_sha256="0" * 64,
+                input_dir=tmp,
+            )
         consensus = build_consensus(_manifest(), [finalized, empty_usable], _config())
         self.assertEqual(consensus["successful_reviewers"], ["codex"])
         self.assertEqual(consensus["resolution_eligible_reviewers"], ["codex"])

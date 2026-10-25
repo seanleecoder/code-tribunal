@@ -72,9 +72,7 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "review"), 1795)
-        self.assertEqual(
-            _effective_adapter_timeout_seconds(reviewer_config, "critique"), 895
-        )
+        self.assertEqual(_effective_adapter_timeout_seconds(reviewer_config, "critique"), 895)
 
     def test_omitted_critique_budget_uses_the_flat_default(self) -> None:
         """An absent critique budget does not depend on the review budget.
@@ -380,7 +378,8 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
     @staticmethod
     def _critique() -> dict[str, object]:
         return {
-            "target_source_finding_id": "4" * 64,
+            "target_id": "F001",
+            "duplicate_of_id": None,
             "verdict": "agree",
             "adjusted_severity": None,
             "rationale": "The finding is valid.",
@@ -394,19 +393,22 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
             critic="claude",
             run_id="test-run",
             effective_config_sha256="0" * 64,
-            pooled_finding_ids={critique["target_source_finding_id"]},
+            pooled_findings={
+                "schema_version": "pooled_findings.v2",
+                "run_id": "test-run",
+                "critic": "claude",
+                "effective_config_sha256": "0" * 64,
+                "source_finding_ids": {"F001": "4" * 64},
+            },
         )
         self.assertEqual(finalized_critique["critiques"][0]["verdict"], "agree")
 
         finding = {
-            "anchor": {
-                "new_path": "src/session.py",
-                "old_path": "src/session.py",
+            "location": {
+                "path": "src/session.py",
                 "side": "new",
-                "start": {"old_line": None, "new_line": 13, "line_code": None},
-                "end": {"old_line": None, "new_line": 13, "line_code": None},
-                "hunk_header": "@@ -0,0 +1,13 @@",
-                "context_hash": "0" * 64,
+                "start_line": 13,
+                "end_line": 13,
                 "symbol": "check_token",
             },
             "severity": "major",
@@ -415,19 +417,22 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
             "body": "A direct equality check leaks timing information.",
             "evidence": ["token == expected"],
             "suggestion": "Use hmac.compare_digest(token, expected).",
-            "confidence": 0.95,
         }
-        raw_finding = _coerce_adapter_root(
-            {"findings": [json.dumps(finding)]}, stage="review"
-        )
-        finalized_finding = finalize_finding_batch(
-            raw_finding,
-            reviewer="opencode",
-            model="test-model",
-            run_id="test-run",
-            started_at="2026-08-10T00:00:00Z",
-            effective_config_sha256="0" * 64,
-        )
+        raw_finding = _coerce_adapter_root({"findings": [json.dumps(finding)]}, stage="review")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "mr.diff").write_text(
+                "diff --git a/src/session.py b/src/session.py\n--- /dev/null\n"
+                "+++ b/src/session.py\n@@ -0,0 +13,1 @@\n+token == expected\n"
+            )
+            finalized_finding = finalize_finding_batch(
+                raw_finding,
+                reviewer="opencode",
+                model="test-model",
+                run_id="test-run",
+                started_at="2026-08-10T00:00:00Z",
+                effective_config_sha256="0" * 64,
+                input_dir=tmp,
+            )
         self.assertEqual(finalized_finding["accepted_finding_count"], 1)
 
     def test_whole_arrays_items_and_logging_follow_one_pass_contract(self) -> None:
@@ -455,8 +460,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
             self.assertIsNot(loaded, payload)
             self.assertEqual(
                 stderr.getvalue(),
-                f"ai-review: {stage} decoded {expected_count} "
-                "stringified structured item(s)\n",
+                f"ai-review: {stage} decoded {expected_count} stringified structured item(s)\n",
             )
 
     def test_non_decodes_preserve_identity_and_fail_closed(self) -> None:
@@ -477,9 +481,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
 
         duplicate_array = {"findings": '[{"title":"first","title":"second"}]'}
-        self.assertIs(
-            _coerce_adapter_root(duplicate_array, stage="review"), duplicate_array
-        )
+        self.assertIs(_coerce_adapter_root(duplicate_array, stage="review"), duplicate_array)
         invalid = _coerce_adapter_root(
             {"critiques": [json.dumps({"not": "a critique"})]}, stage="critique"
         )
@@ -489,12 +491,28 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                 critic="claude",
                 run_id="test-run",
                 effective_config_sha256="0" * 64,
-                pooled_finding_ids=set(),
+                pooled_findings={
+                    "schema_version": "pooled_findings.v2",
+                    "run_id": "test-run",
+                    "critic": "claude",
+                    "effective_config_sha256": "0" * 64,
+                    "source_finding_ids": {},
+                },
             )
 
-    def test_failure_batches_and_envelopes_are_unchanged(self) -> None:
+    def test_model_status_does_not_control_structured_output_decoding(self) -> None:
+        for stage, field in (("review", "findings"), ("critique", "critiques")):
+            item = {"title": "Recovered"} if stage == "review" else self._critique()
+            for value in ([item], [json.dumps(item)], json.dumps([item])):
+                for status in ("model_error", "timeout", None, {"untrusted": "status"}):
+                    with self.subTest(stage=stage, value=value, status=status):
+                        loaded = _coerce_adapter_root(
+                            {"adapter_status": status, field: value}, stage=stage
+                        )
+                        self.assertEqual(loaded[field], [item])
+
+    def test_envelopes_are_unchanged(self) -> None:
         payloads = (
-            ({"adapter_status": "timeout", "findings": "[]"}, "review"),
             ({"type": "result", "structured_output": {"findings": []}}, "review"),
         )
         for payload, stage in payloads:
@@ -668,19 +686,11 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
 
 
 def _write_author_findings(output_dir: Path, *, title: str) -> None:
-    write_canonical_json(
-        output_dir / "findings" / "author.json",
-        {
-            "schema_version": "finding_batch.v1",
-            "run_id": "local-test",
-            "reviewer": "author",
-            "adapter_status": "success",
-            "model": "model",
-            "started_at": "2026-06-29T00:00:00Z",
-            "completed_at": "2026-06-29T00:00:01Z",
-            "findings": [{"source_finding_id": "1" * 64, "title": title}],
-        },
-    )
+    from .test_consensus_state_matching import _batch, _finding
+
+    batch = _batch("codex", _finding("codex", "1" * 64, title=title))
+    batch.update(run_id="local-test", model="codex-model")
+    write_canonical_json(output_dir / "findings" / "codex.json", batch)
 
 
 def _write_reviewer_config(
@@ -740,6 +750,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 os.environ[key] = value
 
     def _set_env(self, paths: dict[str, Path], config_path: Path) -> None:
+        from support.adapter_inputs import bind_manifest_to_config
+
+        bind_manifest_to_config(
+            paths["input_dir"], config_path, findings_dir=paths["output_dir"] / "findings"
+        )
         os.environ["AI_REVIEW_INPUT_DIR"] = str(paths["input_dir"])
         os.environ["AI_REVIEW_OUTPUT_DIR"] = str(paths["output_dir"])
         os.environ["AI_REVIEW_CONFIG"] = str(config_path)
@@ -814,16 +829,16 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_local_mock_without_allow_flag_is_config_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            manifest = load_json_file(paths["input_dir"] / "manifest.json")
-            manifest["effective_config_sha256"] = "2" * 64
-            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_adapter(
                 paths["adapter_dir"],
                 "codex",
-                '#!/bin/sh\necho \'{"findings":[]}\'\n',
+                "#!/bin/sh\necho '{\"findings\":[]}'\n",
             )
             self._set_env(paths, config_path)
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            manifest["effective_config_sha256"] = "2" * 64
+            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             for allow in (None, "false", "TRUE", "1"):
                 with (
                     self.subTest(allow=allow),
@@ -914,6 +929,10 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
             self._set_env(paths, config_path)
 
+            manifest_path = paths["input_dir"] / "manifest.json"
+            manifest = load_json_file(manifest_path)
+            manifest.pop("effective_config_sha256", None)
+            write_canonical_json(manifest_path, manifest)
             self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
             self.assertFalse(sentinel.exists())
@@ -967,6 +986,28 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "schema_error")
             self.assertTrue((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
+    def test_review_requires_findings_array_in_status_and_debug_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            raw = '{"findings":{}}'
+            _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{raw}'\n")
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            status_dir = paths["output_dir"] / "status"
+            status = load_json_file(status_dir / "codex.json")
+            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["error_class"], "SchemaValidationError")
+            self.assertEqual(
+                status["error_message_redacted"], "adapter output findings must be an array"
+            )
+            self.assertIn(raw, (status_dir / "codex-parse-debug.txt").read_text())
+            self.assertEqual((status_dir / "codex-parse-raw-stdout.txt").read_text(), raw)
+
     def test_parse_failure_persists_full_stdout_with_newlines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
@@ -974,8 +1015,12 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             # Long enough that the 4 KB preview must elide the middle, so the
             # elided region is only recoverable from the raw artifact.
             filler = "\n".join(
-                json.dumps({"type": "message.part.updated", "part": {"type": "reasoning",
-                                                                     "text": f"step {index}"}})
+                json.dumps(
+                    {
+                        "type": "message.part.updated",
+                        "part": {"type": "reasoning", "text": f"step {index}"},
+                    }
+                )
                 for index in range(300)
             )
             _write_adapter(
@@ -1031,14 +1076,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 encoding="utf-8",
             )
             good_finding = {
-                "anchor": {
-                    "new_path": "src/foo.py",
-                    "old_path": "src/foo.py",
+                "location": {
+                    "path": "src/foo.py",
                     "side": "new",
-                    "start": {"old_line": None, "new_line": 2, "line_code": None},
-                    "end": {"old_line": None, "new_line": 2, "line_code": None},
-                    "hunk_header": "@@ -1,1 +1,3 @@",
-                    "context_hash": "0" * 64,
+                    "start_line": 2,
+                    "end_line": 2,
                     "symbol": None,
                 },
                 "severity": "major",
@@ -1047,7 +1089,6 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 "body": "records[0] is used without a guard.",
                 "evidence": ["records[0]"],
                 "suggestion": None,
-                "confidence": 0.8,
             }
             bad_finding = dict(good_finding)
             bad_finding["title"] = "Bad evidence item"
@@ -1209,7 +1250,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 'test -f "$AI_REVIEW_RENDERED_PROMPT"\n'
                 'grep -q POOLED_FINDINGS_JSON "$AI_REVIEW_RENDERED_PROMPT"\n'
-                'printf \'{"critic":"spoofed","critiques":[]}\'\n',
+                "printf '{\"critiques\":[]}'\n",
             )
             self._set_env(paths, config_path)
 
@@ -1219,13 +1260,35 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(batch["adapter_status"], "success")
             self.assertEqual(batch["critic"], "codex")
             pooled = load_json_file(paths["output_dir"] / "pooled_findings" / "codex.json")
-            self.assertEqual(pooled["findings"][0]["source_finding_id"], "1" * 64)
+            self.assertEqual(pooled["source_finding_ids"]["F001"], "1" * 64)
             status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
             self.assertEqual(status["status"], "success")
 
-    def test_critique_of_an_unpooled_finding_id_is_dropped_not_fatal(self) -> None:
-        # A critic that miscopies a pooled id must lose that one critique; it must
-        # not emit a target that later fails consensus for the whole run.
+    def test_pool_audit_copy_cannot_change_trusted_short_id_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(
+                paths["config_dir"], "codex", critique_enabled=True
+            )
+            _write_author_findings(paths["output_dir"], title="Original pool")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                "#!/bin/sh\n"
+                "printf '{}' > \"$AI_REVIEW_OUTPUT_DIR/pooled_findings/codex.json\"\n"
+                'printf \'{"critiques":[{"target_id":"F001","verdict":"agree",'
+                '"rationale":"Verified","adjusted_severity":null,"duplicate_of_id":null}]}\'\n',
+            )
+            self._set_env(paths, config_path)
+            self.assertEqual(run_adapter("codex", "critique"), 0)
+            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
+            self.assertEqual(batch["critiques"][0]["target_source_finding_id"], "1" * 64)
+            self.assertEqual(
+                load_json_file(paths["output_dir"] / "pooled_findings" / "codex.json"), {}
+            )
+
+    def test_unknown_short_id_invalidates_entire_critique_batch(self) -> None:
+        # Unknown short IDs invalidate the batch before it reaches consensus.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(
@@ -1234,27 +1297,23 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_author_findings(paths["output_dir"], title="Pooled")
             critiques = [
                 {
-                    "target_source_finding_id": target,
+                    "target_id": target,
+                    "duplicate_of_id": None,
                     "verdict": "agree",
                     "rationale": "reviewed",
                     "adjusted_severity": None,
-                    "confidence": 0.8,
                 }
-                for target in ("1" * 64, "3" * 64)
+                for target in ("F001", "F999")
             ]
             payload = json.dumps({"critiques": critiques})
-            _write_adapter(
-                paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n"
-            )
+            _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n")
             self._set_env(paths, config_path)
 
-            self.assertEqual(run_prepared_adapter("codex", "critique"), 0)
+            self.assertEqual(run_prepared_adapter("codex", "critique"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
-            self.assertEqual(batch["adapter_status"], "success")
-            self.assertEqual(
-                [item["target_source_finding_id"] for item in batch["critiques"]], ["1" * 64]
-            )
+            self.assertEqual(batch["adapter_status"], "schema_error")
+            self.assertEqual(batch["critiques"], [])
 
     def test_malformed_critique_with_unknown_id_emits_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1267,19 +1326,16 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 {
                     "critiques": [
                         {
-                            "target_source_finding_id": "2" * 64,
-                            "duplicate_of_source_finding_id": "bad",
+                            "target_id": "F999",
+                            "duplicate_of_id": "bad",
                             "verdict": "duplicate",
                             "rationale": "reviewed",
                             "adjusted_severity": None,
-                            "confidence": 0.8,
                         }
                     ]
                 }
             )
-            _write_adapter(
-                paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n"
-            )
+            _write_adapter(paths["adapter_dir"], "codex", f"#!/bin/sh\nprintf '%s' '{payload}'\n")
             self._set_env(paths, config_path)
 
             self.assertEqual(run_prepared_adapter("codex", "critique"), _EXIT_ERROR)

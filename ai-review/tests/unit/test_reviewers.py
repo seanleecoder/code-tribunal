@@ -220,7 +220,7 @@ class ReviewerSetupTests(unittest.TestCase):
                 prepare_workspace(REVIEWERS["codex"], "review", work / "absent", work / "missing")
 
     def test_transport_schema_keeps_every_key_except_the_draft_declaration(self) -> None:
-        for stage, name in (("review", "raw_finding_batch"), ("critique", "critique_batch")):
+        for stage, name in (("review", "raw_finding_batch"), ("critique", "raw_critique_batch")):
             with self.subTest(stage=stage):
                 original = load_json_file(_AI_REVIEW_ROOT / "schemas" / f"{name}.schema.json")
                 expected = {key: value for key, value in original.items() if key != "$schema"}
@@ -414,8 +414,8 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         """
         for reviewer in sorted(REVIEWER_IDS):
             for stage, schema_version in (
-                ("review", "finding_batch.v1"),
-                ("critique", "critique_batch.v1"),
+                ("review", "finding_batch.v2"),
+                ("critique", "critique_batch.v2"),
             ):
                 with self.subTest(reviewer=reviewer, stage=stage), mock.patch(
                     "ai_review.adapter_runner._run_adapter_process",
