@@ -144,10 +144,39 @@ to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
 No online legacy decoder or automatic migration runs during prepare/post.
 
 If publication fails after creating threads but before writing the combined
-summary, a retry reconciles bot-authored thread roots on that same revision.
+summary, a retry reconciles bot-authored thread roots needed by current findings
+or authorized commands on that same revision.
 It never replaces authoritative ledger records or human dispositions. Missing
-older history requires deliberate repair from the saved export; corrupt state
-is not treated as absence.
+older history requires the deliberate repair below; corrupt state is not
+treated as absence.
+
+### Missing ledger repair
+
+A failed first summary write can leave inline threads without any ledger, and a
+2.1.x failed state write can leave a summary without its separate v1 state note.
+After another push, neither case can be repaired by the v1 converter: there is
+no ledger to convert. The `missing-ledger-repair` error identifies this path.
+
+1. Pause review triggers and wait for active jobs to finish. Export all bot
+   comments, inline thread roots, replies and human commands across every page.
+   The migration's top-level-comment export alone does not include GitHub inline
+   review threads. Keep the exports until the repair is verified.
+2. If a ledger previously existed, restore that authenticated ledger from the
+   latest good export. Do not replace durable dispositions with empty state.
+3. If the first ledger was never written, inspect the orphaned findings and
+   record any human dispositions and command replies. Delete only the bot's
+   orphaned inline root comments using the platform's comment deletion action.
+   Also delete its ledger-free summary, if present. Preserve unrelated comments
+   and the exported thread/reply history. This deliberately retires those
+   orphaned thread IDs; fresh findings receive new IDs on publication.
+4. Rerun from prepare on the current head with the new images. Confirm that one
+   combined summary/ledger is written, then reapply any recorded human commands
+   to the appropriate new finding threads and verify their saved dispositions.
+
+Runtime never performs this deletion or silently starts over when older review
+history exists. Same-revision reconciliation reuses roots needed by current
+findings or explicit authorized commands. It does not re-import absent,
+automatically resolved threads that state compaction already retired.
 
 ## Concurrency
 

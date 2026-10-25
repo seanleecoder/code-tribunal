@@ -316,15 +316,15 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             return persisted
 
         claimed = [
-            record("1" * 64, "src/foo.py", context_hashes=["h"]),
-            record("2" * 64, "src/foo.py", context_hashes=["h"]),
+            record("1" * 64, "src/foo.py", context_hashes=["a" * 64]),
+            record("2" * 64, "src/foo.py", context_hashes=["a" * 64]),
         ]
         weaker = record("3" * 64, "src/bar.py", symbols=["s"], title_fingerprints=["t"])
         ambiguous = dict(
             self._ambiguous_group(),
             match_keys={
                 "path_keys": ["src/foo.py"],
-                "context_hashes": ["h"],
+                "context_hashes": ["a" * 64],
                 "title_fingerprints": ["t"],
                 "symbols": ["s"],
             },

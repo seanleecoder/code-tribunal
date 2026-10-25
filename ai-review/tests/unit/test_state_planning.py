@@ -310,6 +310,8 @@ class StatePlanningTests(PostCase):
             manifest,
             result,
             dry_run=False,
+            posting_mode="gitlab_discussions",
+            current_issue_ids={group["issue_id"] for group in consensus["groups"]},
         )
 
         self.assertEqual(context.version, MergeRequestVersion("base", "start", "head"))
@@ -795,6 +797,8 @@ class AlwaysOnStateTests(PostCase):
             self._manifest("head"),
             result,
             dry_run=False,
+            posting_mode="gitlab_discussions",
+            current_issue_ids={group["issue_id"] for group in consensus["groups"]},
         )
         return context, result
 
@@ -842,12 +846,8 @@ class AlwaysOnStateTests(PostCase):
         self.assertEqual(client.updated_mr_notes, [])
         self.assertEqual(client.resolve_calls, [])
 
-    def test_state_overflow_after_mutations_reports_partial_failure(self) -> None:
-        """The post-mutation overflow check has no enablement gate either.
-
-        Retention is sized so planning fits and the mutated records do not, which
-        is the only way to reach the second check with the first one passing.
-        """
+    def test_state_id_growth_is_rejected_before_mutations(self) -> None:
+        """A budget fitting only null IDs must fail before creating a thread."""
         consensus = self._consensus()
         group = consensus["groups"][0]
         client = FakePostClient("head")
@@ -873,12 +873,13 @@ class AlwaysOnStateTests(PostCase):
             consensus,
         )
 
-        self.assertEqual(result["status"], "partial_failed")
+        self.assertEqual(result["status"], "state_overflow")
         self.assertTrue(
-            any("state overflow after mutations" in item for item in result["warnings"]),
+            any("state.retention.max_state_bytes" in item for item in result["warnings"]),
             result["warnings"],
         )
         self.assertEqual(client.state_notes, [])
+        self.assertEqual(client.created, 0)
 
 
 class StateSourceStructureTests(unittest.TestCase):

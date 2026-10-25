@@ -92,3 +92,180 @@ def test_mandatory_summary_space_is_checked_before_creating_threads(mode: str) -
     assert result["created_discussions"] == 0
     assert not client.list_threads("1", "2")
     assert not client.state_notes
+
+
+@pytest.mark.parametrize("resolution_quorum", [True, False])
+def test_compacted_github_threads_are_not_recovered_as_absent_findings(
+    resolution_quorum: bool,
+) -> None:
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="")
+    config = fixtures._config(mode="github_reviews")
+    manifest = fixtures._manifest("head")
+    consensus = fixtures._consensus()
+    base = consensus["groups"][0]
+    consensus["groups"] = [
+        dict(copy.deepcopy(base), issue_id=f"{n:064x}", source_finding_ids=[f"{n + 100:064x}"])
+        for n in range(7)
+    ]
+    assert post_consensus(client, config, manifest, consensus)["created_discussions"] == 7
+    consensus["groups"] = []
+    assert post_consensus(client, config, manifest, consensus)["resolved_discussions"] == 7
+    assert len(decode_state_note_body(client.state_notes[0]["body"])["records"]) == 5
+
+    real_listing = client.list_threads
+
+    def rest_listing(*args: object) -> list[dict]:
+        threads = real_listing(*args)
+        for thread in threads:
+            thread["resolved"] = False
+            for note in thread["notes"]:
+                note["resolved"] = False
+        return threads
+
+    if not resolution_quorum:
+        consensus["resolution_eligible_reviewers"] = []
+    with patch.object(client, "list_threads", side_effect=rest_listing):
+        for _ in range(3):
+            result = post_consensus(client, config, manifest, consensus)
+            assert result["status"] == "success"
+            assert result["resolved_discussions"] == 0
+            records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+            assert len(records) == 5
+            assert {record["status"] for record in records} == {"resolved"}
+
+
+@pytest.mark.parametrize("new_slug", ["owner/renamed", "new-owner/repo"])
+def test_github_rename_or_transfer_rebinds_state_in_prepare_and_post(new_slug: str) -> None:
+    from ai_review.input_bundle import _load_platform_state
+    from ai_review.memory import validate_state_hash
+
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="")
+    config = fixtures._config(mode="github_reviews")
+    manifest = dict(fixtures._manifest("head"), project_id="owner/repo")
+    consensus = fixtures._consensus()
+    assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+    thread_id = decode_state_note_body(client.state_notes[0]["body"])["records"][0]["discussion_id"]
+    prepared = _load_platform_state(
+        client, {}, project_id=new_slug, change_id="2", posting_mode="github_reviews"
+    )
+    assert prepared["project_id"] == new_slug
+    assert validate_state_hash(prepared)
+    result = post_consensus(client, config, dict(manifest, project_id=new_slug), consensus)
+    assert result["status"] == "success"
+    assert result["created_discussions"] == 0
+    saved = decode_state_note_body(client.state_notes[0]["body"])
+    assert saved["project_id"] == new_slug
+    assert saved["records"][0]["discussion_id"] == thread_id
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+@pytest.mark.parametrize("legacy_summary", [False, True])
+def test_missing_ledger_after_push_has_a_manual_cleanup_recovery(
+    mode: str,
+    legacy_summary: bool,
+) -> None:
+    fixtures = PostCase()
+    client = (
+        FakeGitHubClient(head_sha="head", diff_text="")
+        if mode == "github_reviews"
+        else FakeGitLabClient(head_sha="head", diff_text="")
+    )
+    config = fixtures._config(mode=mode)
+    consensus = fixtures._consensus()
+    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
+        assert (
+            post_consensus(client, config, fixtures._manifest("head"), consensus)["status"]
+            == "partial_failed"
+        )
+    if legacy_summary:
+        client.create_state_note(
+            "1",
+            "2",
+            "Summary\n\n<!-- ai-review-summary:v1 run_id=legacy body_hash=" + "0" * 64 + " -->",
+        )
+    client.head_sha = "next"
+    with pytest.raises(ValueError, match="missing-ledger-repair"):
+        post_consensus(client, config, fixtures._manifest("next"), consensus)
+    # Model the documented operator action after exporting and inspecting all
+    # history: remove only the bot's orphaned roots and ledger-free summary.
+    if mode == "github_reviews":
+        client._comments.clear()
+        client._issue_comments.clear()
+    else:
+        client.discussions.clear()
+        client.mr_notes.clear()
+    result = post_consensus(client, config, fixtures._manifest("next"), consensus)
+    assert result["status"] == "success"
+    assert len(client.state_notes) == len(client.summary_notes) == 1
+
+
+def test_edited_unknown_category_is_normalized_before_recovery_is_persisted() -> None:
+    from ai_review.render import render_body
+
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="", user_permissions={100: 40})
+    group = fixtures._consensus()["groups"][0]
+    body, _ = render_body(group, "run", posting_mode="github_reviews")
+    thread = client.create_inline_comment(
+        "1",
+        "2",
+        body.replace("MAJOR correctness", "MAJOR Bogus"),
+        client.build_position(group["representative_anchor"], client.fetch_version("1", "2")),
+    )
+    client.add_reply(int(thread["id"]), "/ai-review wontfix", author_id=100)
+    consensus = dict(fixtures._consensus(), groups=[])
+    for _ in range(2):
+        result = post_consensus(
+            client, fixtures._config(mode="github_reviews"), fixtures._manifest("head"), consensus
+        )
+        assert result["status"] == "success"
+        records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+        assert records[0]["category"] == "other"
+        assert records[0]["human_disposition"] == "wontfix"
+
+
+def test_thread_id_growth_is_reserved_before_posting_a_nearly_full_summary() -> None:
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="")
+    consensus = fixtures._consensus()
+    consensus["groups"][0]["title"] = "t" * 47660
+    result = post_consensus(
+        client,
+        fixtures._config(mode="github_reviews", state={"retention": {"max_state_bytes": 100000}}),
+        fixtures._manifest("head"),
+        consensus,
+    )
+    assert result["status"] == "state_overflow"
+    assert result["created_discussions"] == 0
+    assert not client.list_threads("1", "2")
+
+
+def test_supported_maximum_thread_ids_fit_the_preflight_reservation() -> None:
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="")
+    consensus = fixtures._consensus()
+    consensus["groups"][0]["title"] = "t" * 47000
+    original_create = client.create_inline_comment
+
+    def create(*args: object) -> dict:
+        thread = original_create(*args)
+        thread["id"] = "x" * 128
+        thread["notes"][0]["id"] = (1 << 64) - 1
+        return thread
+
+    with patch.object(client, "create_inline_comment", side_effect=create):
+        result = post_consensus(
+            client,
+            fixtures._config(
+                mode="github_reviews", state={"retention": {"max_state_bytes": 100000}}
+            ),
+            fixtures._manifest("head"),
+            consensus,
+        )
+    assert result["status"] == "success"
+    assert len(client.state_notes[0]["body"]) <= 65536
+    record = decode_state_note_body(client.state_notes[0]["body"])["records"][0]
+    assert len(record["discussion_id"]) == 128
+    assert record["root_note_id"] == (1 << 64) - 1

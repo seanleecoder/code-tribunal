@@ -18,6 +18,7 @@ from .config import ReviewConfig
 from .memory import (
     load_state_from_notes,
     normalize_state,
+    state_overflow_reason,
 )
 from .notes import (
     find_summary_note,
@@ -32,6 +33,7 @@ from .state_plan import (
     _pipeline_id,
     _process_state_for_persistence,
     plan_state,
+    reserve_thread_ids,
     state_from_existing_discussions,
 )
 from .summary_render import _sort_groups, render_summary_body
@@ -54,16 +56,18 @@ def load_persisted_state(
     manifest: dict[str, Any],
     *,
     bot_author_id: int,
+    posting_mode: str,
 ) -> tuple[State | None, list[str]]:
     notes = client.list_state_notes(manifest["project_id"], manifest["merge_request_iid"])
-    state, warnings = load_state_from_notes(notes, expected_author_id=bot_author_id)
+    state, warnings = load_state_from_notes(
+        notes,
+        expected_author_id=bot_author_id,
+        project_id=manifest["project_id"],
+        change_id=manifest["merge_request_iid"],
+        posting_mode=posting_mode,
+    )
     if state is None:
         return None, warnings
-    if (state["project_id"], state["merge_request_iid"]) != (
-        str(manifest["project_id"]),
-        str(manifest["merge_request_iid"]),
-    ):
-        raise ValueError("persisted state belongs to another change")
     return normalize_state(state, manifest=manifest, pipeline_id=_pipeline_id(manifest)), warnings
 
 
@@ -360,12 +364,8 @@ def post_inline(
         existing = inline_plan.existing
 
         post_group: dict[str, Any] = dict(group)
-        if existing is not None:
-            if existing["issue_id"] != group["issue_id"]:
-                post_group = dict(group, issue_id=existing["issue_id"])
-            planned_record["remap_status"] = (
-                "exact" if existing.get("anchor") == group["representative_anchor"] else "remapped"
-            )
+        if existing is not None and existing["issue_id"] != group["issue_id"]:
+            post_group = dict(group, issue_id=existing["issue_id"])
 
         body, body_hash = render_body(
             cast(FindingGroup, post_group),
@@ -544,6 +544,8 @@ def prepare_post_context(
     result: PostResult,
     *,
     dry_run: bool,
+    posting_mode: str,
+    current_issue_ids: set[str],
 ) -> PostContext:
     version = client.fetch_version(manifest["project_id"], manifest["merge_request_iid"])
     raw_discussions = (
@@ -558,7 +560,7 @@ def prepare_post_context(
     if bot_author_id is None:
         raise RuntimeError("post requires current_user lookup to verify note authors")
     persisted_state, state_warnings = load_persisted_state(
-        client, manifest, bot_author_id=bot_author_id
+        client, manifest, bot_author_id=bot_author_id, posting_mode=posting_mode
     )
     indexed = index_ai_review_discussions(raw_discussions)
     if persisted_state is None:
@@ -571,17 +573,27 @@ def prepare_post_context(
             )
             for discussion in indexed
         ):
-            raise ValueError("existing review history has no ledger; restore state from an export")
+            raise ValueError(
+                "existing review history has no ledger; restore state from an export "
+                "or follow docs/operations.md#missing-ledger-repair"
+            )
         persisted_state = normalize_state(
             None, manifest=manifest, pipeline_id=_pipeline_id(manifest)
         )
-    # A previous write may have created a thread before the combined summary
-    # failed. Reconcile only bot-authored roots on this revision, preserving
-    # every authoritative ledger record and disposition.
+    human_commands = collect_human_commands(
+        client,
+        manifest["project_id"],
+        raw_discussions,
+        warnings=result["warnings"],
+    )
+    # Recover only identities this publication or an authorized command needs.
+    # Sweeping absent roots resurrects deliberately compacted resolved records:
+    # GitHub's REST listing does not expose their GraphQL resolution state.
+    needed_issue_ids = current_issue_ids | human_commands.keys()
     known_ids = {record["issue_id"] for record in persisted_state["records"]}
     known_threads = {record["discussion_id"] for record in persisted_state["records"]}
     recovered = state_from_existing_discussions(
-        indexed,
+        [discussion for discussion in indexed if discussion.marker["issue_id"] in needed_issue_ids],
         current_head_sha=manifest["head_sha"],
         expected_author_id=bot_author_id,
         exclude_discussion_ids=known_threads,
@@ -592,12 +604,6 @@ def prepare_post_context(
         if record["issue_id"] not in known_ids
     )
     result["warnings"].extend(state_warnings)
-    human_commands = collect_human_commands(
-        client,
-        manifest["project_id"],
-        raw_discussions,
-        warnings=result["warnings"],
-    )
     return PostContext(
         version=version,
         raw_discussions=raw_discussions,
@@ -640,6 +646,8 @@ def post_consensus(
         manifest,
         result,
         dry_run=dry_run,
+        posting_mode=posting_mode,
+        current_issue_ids={group["issue_id"] for group in consensus["groups"]},
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
@@ -673,6 +681,14 @@ def post_consensus(
     # Reserve health and the complete ledger before any platform mutation. Only
     # visible finding entries may be truncated to fit the combined comment.
     try:
+        reserved_state = reserve_thread_ids(state_plan)
+        overflow = state_overflow_reason(
+            reserved_state,
+            max_records=state_plan.retention.max_records,
+            max_state_bytes=state_plan.retention.max_state_bytes,
+        )
+        if overflow is not None:
+            raise ValueError(overflow)
         render_summary_body(
             consensus["run_id"],
             consensus["run_health"],
@@ -680,7 +696,7 @@ def post_consensus(
             fyi_groups,
             max_fyi,
             posting_mode=posting_mode,
-            state=state_plan.planned_state,
+            state=reserved_state,
         )
     except ValueError as exc:
         result["status"] = "state_overflow"

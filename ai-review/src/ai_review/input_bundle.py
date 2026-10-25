@@ -499,24 +499,24 @@ def _load_platform_state(
     *,
     project_id: str,
     change_id: str,
-    platform_name: str,
+    posting_mode: str,
 ) -> dict[str, Any]:
     """Missing initial state is empty; inaccessible or corrupt state aborts prepare."""
     bot_author_id = client.current_user_id()
     if bot_author_id is None:
         raise BundleError(
-            f"persisted state requires {platform_name} current_user lookup "
-            "to verify state-note author"
+            "persisted state requires current_user lookup to verify state-note author"
         )
     notes = client.list_state_notes(project_id, change_id)
-    loaded, warnings = load_state_from_notes(notes, expected_author_id=bot_author_id)
+    loaded, warnings = load_state_from_notes(
+        notes,
+        expected_author_id=bot_author_id,
+        project_id=project_id,
+        change_id=change_id,
+        posting_mode=posting_mode,
+    )
     for warning in warnings:
         print(f"ai-review prepare: {warning}")
-    if loaded is not None and (loaded["project_id"], loaded["merge_request_iid"]) != (
-        str(project_id),
-        str(change_id),
-    ):
-        raise BundleError("persisted state belongs to another change")
     return loaded if loaded is not None else default_state
 
 
@@ -643,7 +643,7 @@ def prepare_github_bundle(
             default_state,
             project_id=repo,
             change_id=pr_number,
-            platform_name="GitHub",
+            posting_mode="github_reviews",
         )
 
     def revalidate() -> None:
@@ -712,7 +712,7 @@ def prepare_gitlab_bundle(
             default_state,
             project_id=str(project_id),
             change_id=str(mr_iid),
-            platform_name="GitLab",
+            posting_mode="gitlab_discussions",
         )
 
     def revalidate() -> None:

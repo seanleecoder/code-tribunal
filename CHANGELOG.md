@@ -22,7 +22,11 @@ versioning.
   finding IDs and path/category/context hashes. Posting uses each current
   group's prepared anchor instead of fetching another diff and remapping old
   coordinates (N14). Same-revision bot-thread reconciliation recovers from
-  interrupted publication. See the state migration in `docs/operations.md`.
+  interrupted publication for current finding/command identities. Compacted,
+  absent roots are not re-imported. State is validated before writing, supported
+  returned thread-ID sizes are reserved before publication, and GitHub repository
+  renames/transfers refresh the stored slug on load. See the state migration and
+  missing-ledger repair in `docs/operations.md`.
 - Breaking, for the next major release: reviewers author compact `location`
   ranges and finding content; trusted finalization derives paths, line codes,
   context hashes, fingerprints and finding IDs from the prepared diff (S05).

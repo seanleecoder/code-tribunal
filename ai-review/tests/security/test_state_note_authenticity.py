@@ -30,6 +30,9 @@ class StateNoteAuthenticityTests(unittest.TestCase):
                 },
             ],
             expected_author_id=10,
+            project_id="1",
+            change_id="2",
+            posting_mode="gitlab_discussions",
         )
 
         self.assertIsNotNone(state)
@@ -46,6 +49,9 @@ class StateNoteAuthenticityTests(unittest.TestCase):
                 },
             ],
             expected_author_id=10,
+            project_id="1",
+            change_id="2",
+            posting_mode="gitlab_discussions",
         )
 
         self.assertIsNone(state)
@@ -56,11 +62,21 @@ class StateNoteAuthenticityTests(unittest.TestCase):
 
     def test_author_mismatch_summary_warning_omitted_if_notes_survive_check(self) -> None:
         # A note that matches the marker regex but fails validation (e.g. checksum/base64)
-        corrupt_body = f"<!-- ai-review-state:v1 invalid_payload state_hash={'0'*64} -->"
+        corrupt_body = f"<!-- ai-review-state:v1 invalid_payload state_hash={'0' * 64} -->"
         with self.assertRaisesRegex(ValueError, "migration"):
-            load_state_from_notes([{
-                "id": 2, "body": corrupt_body, "author": {"id": 10},
-            }], expected_author_id=10)
+            load_state_from_notes(
+                [
+                    {
+                        "id": 2,
+                        "body": corrupt_body,
+                        "author": {"id": 10},
+                    }
+                ],
+                expected_author_id=10,
+                project_id="1",
+                change_id="2",
+                posting_mode="gitlab_discussions",
+            )
 
 
 if __name__ == "__main__":

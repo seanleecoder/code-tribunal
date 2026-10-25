@@ -95,7 +95,11 @@ def test_migration_preserves_threads_dispositions_and_visible_summary() -> None:
     assert state["records"][3]["last_decision"] == "fyi"
     assert set(state["records"][0]["aliases"]) == {"source_finding_ids", "context_hashes"}
     loaded, _ = load_state_from_notes(
-        [{"id": target, "author": {"id": 42}, "body": body}], expected_author_id=42
+        [{"id": target, "author": {"id": 42}, "body": body}],
+        expected_author_id=42,
+        project_id="project",
+        change_id="7",
+        posting_mode="gitlab_discussions",
     )
     assert loaded == state
 
@@ -156,3 +160,17 @@ def test_cli_failure_does_not_write_a_migration_update(tmp_path: Path) -> None:
             ]
         )
     assert not output.exists()
+
+
+def test_legacy_summary_without_ledger_points_to_manual_repair() -> None:
+    notes = [
+        {
+            "id": 20,
+            "author": {"id": 42},
+            "body": (
+                "Summary\n\n<!-- ai-review-summary:v1 run_id=old body_hash=" + "0" * 64 + " -->"
+            ),
+        }
+    ]
+    with pytest.raises(ValueError, match="missing-ledger-repair"):
+        convert(notes)

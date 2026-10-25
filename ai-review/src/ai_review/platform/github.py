@@ -588,11 +588,6 @@ class GitHubReviewPlatform:
         value = user.get("id")
         return value if isinstance(value, int) else None
 
-    def _current_user_login(self) -> str | None:
-        user = self.current_user()
-        value = user.get("login")
-        return value if isinstance(value, str) else None
-
     def member_access_level(self, project_id_or_path: str | int, user_id: str | int) -> int | None:
         if isinstance(user_id, int) or str(user_id).isdigit():
             return None

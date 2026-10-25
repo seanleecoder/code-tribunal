@@ -76,8 +76,8 @@
               }
             }
           },
-          "discussion_id": { "type": ["string", "null"] },
-          "root_note_id": { "type": ["integer", "null"], "minimum": 1 },
+          "discussion_id": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_:-]+$" },
+          "root_note_id": { "type": ["integer", "null"], "minimum": 1, "maximum": 18446744073709551615 },
           "status": {
             "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified"]
           },

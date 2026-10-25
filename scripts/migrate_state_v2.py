@@ -47,6 +47,8 @@ def migrate_comments(
     summaries = [
         note for note in owned if re.search(r"<!--\s*ai-review-summary:", str(note.get("body", "")))
     ]
+    if not states and len(summaries) == 1:
+        raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
     if len(states) != 1 or len(summaries) > 1:
         raise ValueError(
             "expected one bot v1 state note and at most one bot summary; repair ambiguity first"

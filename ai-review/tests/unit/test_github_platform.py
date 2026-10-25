@@ -5,7 +5,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from ai_review.memory import encode_state_note
+from ai_review.memory import empty_state, encode_state_note
 from ai_review.platform.github import (
     GitHubReviewPlatform,
     GitHubReviewPlatformError,
@@ -34,13 +34,11 @@ class Session:
             return Response(200, {"id": 41898282, "login": "github-actions[bot]"})
         if url.endswith("/issues/7/comments"):
             state = encode_state_note(
-                {
-                    "state_schema_version": 2,
-                    "project_id": "octo/repo",
-                    "merge_request_iid": "7",
-                    "last_head_sha": "h" * 40,
-                    "records": [],
-                }
+                empty_state(
+                    project_id="octo/repo",
+                    merge_request_iid="7",
+                    head_sha="h" * 40,
+                )
             )
             return Response(
                 200,
@@ -529,9 +527,7 @@ def test_resolve_thread_refreshes_cached_map_once_on_miss() -> None:
 
 def test_resolve_thread_uses_ghes_graphql_endpoint() -> None:
     session = GraphQLSession()
-    platform = GitHubReviewPlatform(
-        "https://github.example/api/v3", "token", session=session
-    )
+    platform = GitHubReviewPlatform("https://github.example/api/v3", "token", session=session)
 
     platform.resolve_thread("octo/repo", 7, "123")
 
@@ -539,9 +535,7 @@ def test_resolve_thread_uses_ghes_graphql_endpoint() -> None:
 
 
 def test_resolve_thread_normalizes_invalid_repository_and_pr() -> None:
-    platform = GitHubReviewPlatform(
-        "https://api.github.test", "token", session=GraphQLSession()
-    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=GraphQLSession())
 
     for repository, change_id in (("invalid", 7), ("octo/repo", "not-a-number")):
         try:
@@ -697,9 +691,7 @@ def test_resolve_thread_keeps_http_403_generic_with_dedicated_token() -> None:
 def test_resolve_thread_rejects_unexpected_mutation_state() -> None:
     session = GraphQLSession(
         mutation_response={
-            "data": {
-                "resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}
-            }
+            "data": {"resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}}
         }
     )
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)

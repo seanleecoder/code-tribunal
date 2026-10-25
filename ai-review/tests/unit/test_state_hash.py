@@ -8,8 +8,10 @@ from ai_review.memory import (
     attach_state_hash,
     compact_state,
     decode_state_note_body,
+    empty_state,
     encode_state_note,
     load_state_from_notes,
+    normalize_state_record,
     validate_state_hash,
 )
 
@@ -86,10 +88,18 @@ class StateHashTests(unittest.TestCase):
                 [
                     {"id": 1, "body": encode_state_note(old)},
                     {"id": 2, "body": encode_state_note(new)},
-                ]
+                ],
+                project_id="1",
+                change_id="2",
+                posting_mode="gitlab_discussions",
             )
         with self.assertRaises(ValueError):
-            load_state_from_notes([{"id": 3, "body": "<!-- ai-review-state:v2 bad -->"}])
+            load_state_from_notes(
+                [{"id": 3, "body": "<!-- ai-review-state:v2 bad -->"}],
+                project_id="1",
+                change_id="2",
+                posting_mode="gitlab_discussions",
+            )
 
     def test_newest_valid_state_ignores_non_bot_authors(self) -> None:
         bot_state = attach_state_hash(
@@ -113,6 +123,9 @@ class StateHashTests(unittest.TestCase):
                 {"id": 2, "body": encode_state_note(forged_state), "author": {"id": 99}},
             ],
             expected_author_id=10,
+            project_id="1",
+            change_id="2",
+            posting_mode="gitlab_discussions",
         )
 
         self.assertEqual(state["last_head_sha"], "bot")
@@ -174,6 +187,32 @@ class StateHashTests(unittest.TestCase):
             {f"{index:064x}" for index in (*range(8), *range(15, 20))}
             | {"open", "wontfix", "stale", "stale_unverified"},
         )
+
+    def test_invalid_records_are_rejected_before_encoding_state(self) -> None:
+        state = empty_state(project_id="1", merge_request_iid="2", head_sha="head")
+        state["records"] = [normalize_state_record({"issue_id": "a" * 64, "category": "Bogus"})]
+        with self.assertRaisesRegex(ValueError, "Bogus"):
+            encode_state_note(state)
+
+    def test_change_binding_rejects_wrong_change_and_gitlab_project(self) -> None:
+        state = empty_state(project_id="1", merge_request_iid="2", head_sha="head")
+        notes = [{"id": 1, "author": {"id": 10}, "body": encode_state_note(state)}]
+        for mode, project, change in (
+            ("github_reviews", "1", "3"),
+            ("gitlab_discussions", "1", "3"),
+            ("gitlab_discussions", "999", "2"),
+        ):
+            with (
+                self.subTest(mode=mode, project=project, change=change),
+                self.assertRaisesRegex(ValueError, "another change"),
+            ):
+                load_state_from_notes(
+                    notes,
+                    expected_author_id=10,
+                    project_id=project,
+                    change_id=change,
+                    posting_mode=mode,
+                )
 
 
 if __name__ == "__main__":

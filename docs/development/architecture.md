@@ -92,12 +92,17 @@ These rules are worth stating because breaking them is silent:
   staging the alias-artifact deletion or consumers separately would require a
   temporary old/new contract path.
 - S14 stores state v2 inside the summary; rendering reserves room for the complete
-  ledger and health section before truncating visible findings. The explicit
+  ledger, supported returned thread-ID sizes, and health section before
+  truncating visible findings. The explicit
   offline v1 migration preserves record identities without an online decoder.
   Posting uses the current group's prepared anchor and context aliases (N14),
   with no additional diff fetch or scan. Prepare, the state schema, publication,
   and GitHub comment transport change together because an old/new runtime path
   would otherwise be needed. The offline converter has no platform access.
+  The state schema validates reads and writes and defines the supported ID
+  bounds used by preflight. Change binding lives in `memory.load_state_from_notes`:
+  GitLab project IDs remain strict, while GitHub's authenticated PR comment binds
+  the repository and its mutable owner/name slug is refreshed on load.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

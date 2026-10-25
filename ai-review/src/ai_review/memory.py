@@ -146,6 +146,7 @@ def normalize_state(
 
 def encode_state_note(state: Mapping[str, Any]) -> str:
     hashed = attach_state_hash(dict(state))
+    validate_instance(hashed, "state.schema.json")
     payload = canonical_json_text(hashed)
     encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
     return f"<!-- ai-review-state:v2 {encoded} -->"
@@ -199,6 +200,9 @@ def state_note_candidates(
 def load_state_from_notes(
     notes: list[dict[str, Any]],
     *,
+    project_id: str,
+    change_id: str,
+    posting_mode: str,
     expected_author_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     candidates, warnings, author_mismatches = state_note_candidates(
@@ -215,11 +219,20 @@ def load_state_from_notes(
             "multiple bot state/summary notes; migrate or repair state before retrying"
         )
     body = candidates[0]["body"]
+    if re.search(r"<!--\s*ai-review-state:", body) is None:
+        raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
     if re.findall(r"<!--\s*ai-review-state:v([0-9]+)\b", body) != ["2"]:
         raise ValueError(
             "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
         )
-    return decode_state_note_body(body), warnings
+    state = decode_state_note_body(body)
+    if state["merge_request_iid"] != str(change_id) or (
+        posting_mode != "github_reviews" and state["project_id"] != str(project_id)
+    ):
+        raise ValueError("persisted state belongs to another change")
+    # The authenticated comment's hosting PR is the repository binding on GitHub;
+    # its mutable owner/name slug is metadata, so renames/transfers refresh it.
+    return attach_state_hash(dict(state, project_id=str(project_id))), warnings
 
 
 def compact_state(state: Mapping[str, Any]) -> dict[str, Any]:

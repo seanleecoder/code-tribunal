@@ -17,7 +17,7 @@ from .memory import (
     state_overflow_reason,
 )
 from .notes import ExistingReviewDiscussion
-from .schema import now_iso
+from .schema import load_schema, now_iso
 from .types import (
     Consensus,
     FindingGroup,
@@ -191,6 +191,9 @@ def state_from_existing_discussions(
     expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
+    category_schema = load_schema("state.schema.json")["properties"]["records"]["items"][
+        "properties"
+    ]["category"]
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
         if discussion.resolved or discussion.discussion_id in excluded:
@@ -208,7 +211,9 @@ def state_from_existing_discussions(
         records.append(
             {
                 "issue_id": discussion.marker["issue_id"],
-                "category": discussion.category or "",
+                "category": discussion.category
+                if discussion.category in category_schema["enum"]
+                else "other",
                 "title": discussion.title,
                 "aliases": {
                     "source_finding_ids": [],
@@ -222,6 +227,34 @@ def state_from_existing_discussions(
             }
         )
     return {"state_schema_version": 2, "records": records}
+
+
+def reserve_thread_ids(plan: StatePlan) -> State:
+    """Size the ledger with the largest supported IDs before creating threads."""
+    properties = load_schema("state.schema.json")["properties"]["records"]["items"]["properties"]
+    pending = {
+        inline.record["issue_id"]
+        for inline in plan.inline_plans
+        if inline.record is not None
+        and inline.record["status"] not in {"wontfix", "resolved"}
+        and (inline.record["discussion_id"] is None or inline.record["root_note_id"] is None)
+    }
+    return cast(
+        State,
+        {
+            **plan.planned_state,
+            "records": [
+                dict(
+                    record,
+                    discussion_id="x" * properties["discussion_id"]["maxLength"],
+                    root_note_id=properties["root_note_id"]["maximum"],
+                )
+                if record["issue_id"] in pending
+                else record
+                for record in plan.planned_state["records"]
+            ],
+        },
+    )
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -418,6 +451,12 @@ def plan_state(
                 existing=cast(dict[str, Any] | None, previous),
                 status=status,
                 human_disposition=human_disposition,
+                remap_status=(
+                    "remapped"
+                    if previous is not None
+                    and previous.get("anchor") != group["representative_anchor"]
+                    else "exact"
+                ),
             ),
         )
         group_plan.existing = previous
