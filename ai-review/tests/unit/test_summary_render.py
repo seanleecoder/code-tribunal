@@ -75,7 +75,6 @@ class SummaryRenderTests(PostCase):
             decision="fyi",
             support_count=2,
             contributing_reviewers=["codex", "claude"],
-            issue_id_source="new_signature",
             critique_summary={"agree": 0, "dispute": 0, "noise": 2, "duplicate": 0},
         )
         return group
@@ -102,10 +101,10 @@ class SummaryRenderTests(PostCase):
     def test_only_a_demoted_group_carries_the_noise_marker(self) -> None:
         single_supporter = self._demoted_group()
         single_supporter.update(support_count=1, contributing_reviewers=["claude"])
-        ambiguous = self._demoted_group()
-        ambiguous["issue_id_source"] = "ambiguous_unassigned"
+        surfaced = self._demoted_group()
+        surfaced["decision"] = "surface"
 
-        for label, group in (("single supporter", single_supporter), ("ambiguous", ambiguous)):
+        for label, group in (("single supporter", single_supporter), ("surfaced", surfaced)):
             with self.subTest(label):
                 self.assertNotIn("marked noise", self._header(group))
 

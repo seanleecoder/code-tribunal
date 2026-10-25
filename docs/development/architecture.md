@@ -84,6 +84,13 @@ These rules are worth stating because breaking them is silent:
   S05 changes the authoring schemas, finalizers and their consumers together:
   staging them separately would require an old/new contract path. Finding and
   critique batches move to v2 without changing consensus or persisted state.
+- Consensus uses only current-run evidence and writes signature-derived group
+  IDs in `consensus.v3`. Posting matches each group against the complete latest
+  state once, preserves a matched thread's historical ID, and routes ambiguous
+  or already-claimed matches to the summary without changing the decision.
+  N11 changes prepare, the consensus schema/producer, and posting together:
+  staging the alias-artifact deletion or consumers separately would require a
+  temporary old/new contract path. The persisted-state migration remains S14.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

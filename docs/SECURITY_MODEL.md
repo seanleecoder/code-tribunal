@@ -128,6 +128,11 @@ not match the manifest. These bindings detect misconfiguration and mixed runs;
 they are not tamper protection, because whoever writes an artifact also chooses
 the values it records.
 
+Consensus uses current-run evidence only. Posting matches groups to the latest
+authenticated state; ambiguous or already-claimed matches use summary fallback
+and protect candidate threads from automatic resolution. Authorized commands
+naming a candidate still apply.
+
 Adapter status files (`out/status/`) are untrusted input to consensus. The
 trusted runner writes them, but in a job that also runs model CLIs with tool
 access. Consensus uses a status file only if it passes its schema, names the

@@ -19,7 +19,7 @@ from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
 from ai_review.schema import validate_instance
 
-from .test_consensus_state_matching import (
+from .test_consensus_groups import (
     _batch,
     _config,
     _critique,
@@ -27,7 +27,6 @@ from .test_consensus_state_matching import (
     _empty_batch,
     _finding,
     _manifest,
-    _record,
     _status,
 )
 
@@ -53,7 +52,6 @@ _SOURCE_IDS = {
     "opencode": "3" * 64,
     "cursor": "4" * 64,
 }
-_AMBIGUOUS_STATE = {"records": [_record("a" * 64), _record("b" * 64)]}
 
 
 def _run(
@@ -61,7 +59,6 @@ def _run(
     contributors: list[str],
     critique_batches: list[dict] | None = None,
     severity: str = "major",
-    state: dict | None = None,
     config: ReviewConfig | None = None,
 ) -> dict:
     consensus = build_consensus(
@@ -71,7 +68,6 @@ def _run(
             for reviewer in contributors
         ],
         config or _critique_config(),
-        state=state,
         critique_batches=critique_batches,
     )
     validate_instance(consensus, "consensus.schema.json")
@@ -82,27 +78,24 @@ class DecisionTableTests(unittest.TestCase):
     def test_decision_table(self) -> None:
         """The product policy, end to end through build_consensus.
 
-        Rows are ordered as the spec states them; the last three pin precedence,
-        which is the part an implementation of independent flags gets wrong.
+        Noise demotion takes precedence over the independent support threshold.
         """
         first = _SOURCE_IDS["claude"]
         cases = [
-            ("two direct contributors", ["claude", "codex"], None, "major", None, "surface"),
+            ("two direct contributors", ["claude", "codex"], None, "major", "surface"),
             (
                 "one direct plus one agreeing critic",
                 ["claude"],
                 [_critique_batch("codex", [_critique("codex", first, "agree")])],
                 "major",
-                None,
                 "surface",
             ),
-            ("one direct contributor alone", ["claude"], None, "major", None, "fyi"),
+            ("one direct contributor alone", ["claude"], None, "major", "fyi"),
             (
                 "the only agreeing critic is the contributor itself",
                 ["claude"],
                 [_critique_batch("claude", [_critique("claude", first, "agree")])],
                 "major",
-                None,
                 "fyi",
             ),
             (
@@ -110,7 +103,6 @@ class DecisionTableTests(unittest.TestCase):
                 ["claude", "codex", "opencode"],
                 [_critique_batch("cursor", [_critique("cursor", first, "noise")])],
                 "major",
-                None,
                 "fyi",
             ),
             (
@@ -118,7 +110,6 @@ class DecisionTableTests(unittest.TestCase):
                 ["claude", "codex"],
                 [_critique_batch("opencode", [_critique("opencode", first, "dispute")])],
                 "major",
-                None,
                 "surface",
             ),
             (
@@ -129,7 +120,6 @@ class DecisionTableTests(unittest.TestCase):
                     _critique_batch("cursor", [_critique("cursor", first, "dispute")]),
                 ],
                 "major",
-                None,
                 "surface",
             ),
             (
@@ -137,34 +127,16 @@ class DecisionTableTests(unittest.TestCase):
                 ["claude"],
                 [_critique_batch("codex", [_critique("codex", first, "agree")])],
                 "blocker",
-                None,
                 "surface",
             ),
-            ("blocker with one direct contributor", ["claude"], None, "blocker", None, "fyi"),
-            (
-                "two direct contributors with an ambiguous state match",
-                ["claude", "codex"],
-                None,
-                "major",
-                _AMBIGUOUS_STATE,
-                "fyi",
-            ),
-            (
-                "ambiguous state match outranks critic support",
-                ["claude", "codex", "opencode"],
-                [_critique_batch("cursor", [_critique("cursor", first, "agree")])],
-                "major",
-                _AMBIGUOUS_STATE,
-                "fyi",
-            ),
+            ("blocker with one direct contributor", ["claude"], None, "blocker", "fyi"),
         ]
-        for name, contributors, critiques, severity, state, expected in cases:
+        for name, contributors, critiques, severity, expected in cases:
             with self.subTest(name):
                 consensus = _run(
                     contributors=contributors,
                     critique_batches=critiques,
                     severity=severity,
-                    state=state,
                 )
                 self.assertEqual(len(consensus["groups"]), 1)
                 self.assertEqual(consensus["groups"][0]["decision"], expected)
@@ -555,68 +527,33 @@ class MajorityNoiseTests(unittest.TestCase):
         self.assertEqual(one_of_one["groups"][0]["support_count"], 2)
         self.assertEqual(one_of_one["groups"][0]["decision"], "fyi")
         self.assertEqual(
-            one_of_one["summary"], {"surface_count": 0, "fyi_count": 1, "drop_count": 0}
+            one_of_one["summary"], {"surface_count": 0, "fyi_count": 1}
         )
-
-    def test_ambiguous_group_keeps_its_reviewed_severity_under_critique(self) -> None:
-        consensus = _run(
-            contributors=["claude", "codex", "opencode"],
-            config=_critique_config(allow_severity_downgrade=True),
-            critique_batches=[
-                _critique_batch(
-                    "cursor",
-                    [
-                        _critique(
-                            "cursor", _SOURCE_IDS["claude"], "dispute", adjusted_severity="minor"
-                        )
-                    ],
-                )
-            ],
-            state=_AMBIGUOUS_STATE,
-        )
-
-        group = consensus["groups"][0]
-        self.assertEqual(group["issue_id_source"], "ambiguous_unassigned")
-        self.assertEqual(group["decision"], "fyi")
-        self.assertEqual(group["final_severity"], "major")
 
 
 class PureDecisionTests(unittest.TestCase):
-    def test_precedence_is_ordered_not_a_set_of_independent_flags(self) -> None:
+    def test_noise_demotes_before_the_support_threshold(self) -> None:
         cases = [
-            ((0, False, False), "fyi"),
-            ((SUPPORT_REQUIRED, False, False), "surface"),
-            ((SUPPORT_REQUIRED - 1, False, False), "fyi"),
-            ((SUPPORT_REQUIRED, True, False), "fyi"),
-            ((SUPPORT_REQUIRED, True, True), "fyi"),
-            ((SUPPORT_REQUIRED, False, True), "fyi"),
-            ((0, True, True), "fyi"),
+            ((0, False), "fyi"),
+            ((SUPPORT_REQUIRED, False), "surface"),
+            ((SUPPORT_REQUIRED - 1, False), "fyi"),
+            ((SUPPORT_REQUIRED, True), "fyi"),
         ]
-        for (support, noise, ambiguous), expected in cases:
-            with self.subTest(support=support, noise=noise, ambiguous=ambiguous):
+        for (support, noise), expected in cases:
+            with self.subTest(support=support, noise=noise):
                 self.assertEqual(
-                    decide_group(
-                        support_count=support, majority_noise=noise, ambiguous=ambiguous
-                    ),
-                    expected,
+                    decide_group(support_count=support, majority_noise=noise), expected
                 )
 
     def test_demoted_by_noise_is_the_inverse_of_decide_group(self) -> None:
         for support in range(SUPPORT_REQUIRED + 2):
             for noise in (False, True):
-                for ambiguous in (False, True):
-                    group = {
-                        "decision": decide_group(
-                            support_count=support, majority_noise=noise, ambiguous=ambiguous
-                        ),
-                        "support_count": support,
-                        "issue_id_source": "ambiguous_unassigned" if ambiguous else "new_signature",
-                    }
-                    with self.subTest(support=support, noise=noise, ambiguous=ambiguous):
-                        self.assertEqual(
-                            demoted_by_noise(group),
-                            noise and not ambiguous and support >= SUPPORT_REQUIRED,
-                        )
+                group = {
+                    "decision": decide_group(support_count=support, majority_noise=noise),
+                    "support_count": support,
+                }
+                with self.subTest(support=support, noise=noise):
+                    self.assertEqual(demoted_by_noise(group), noise and support >= SUPPORT_REQUIRED)
 
     def test_support_threshold_is_two(self) -> None:
         self.assertEqual(SUPPORT_REQUIRED, 2)

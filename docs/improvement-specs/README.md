@@ -48,6 +48,7 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
+- **Done, unreleased for the next major:** N11 (`consensus.v3`).
 - **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
   decoder, deleted on
@@ -147,9 +148,11 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 11. Done, unreleased: S05 restores `resolve_location`, removes `confidence`, and
     binds short critique IDs to the trusted pool. Finding and critique batches
     move to v2; consensus and persisted state retain their current formats.
-12. Consensus becomes state-free (N11). `consensus.v3` also drops
-    `group.body_hash` and removes the `drop` decision and `summary.drop_count`
-    (COMPAT-003).
+12. Done, unreleased: consensus is state-free (N11). `consensus.v3` drops
+    `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
+    `summary.drop_count`, and requires `run_health`. Posting alone matches the
+    latest state and preserves thread identity; prepare no longer writes the
+    state-alias artifact. COMPAT-003, COMPAT-006 and COMPAT-007 are removed.
 13. One S14 state migration: state moves into the summary comment (N04), and the
     anchor remap uses context hashes (N14).
 14. Consumer-visible changes:

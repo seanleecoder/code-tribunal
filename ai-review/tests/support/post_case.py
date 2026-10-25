@@ -59,7 +59,6 @@ class PostCase(unittest.TestCase):
             "groups": [
                 {
                     "issue_id": "a" * 64,
-                    "issue_id_source": "new_signature",
                     "decision": "surface",
                     "final_severity": "major",
                     "category": "correctness",

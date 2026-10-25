@@ -17,7 +17,7 @@ from ai_review.config import (
 from ai_review.consensus import cli
 from ai_review.schema import load_json_file, write_canonical_json
 
-from .test_consensus_state_matching import _batch, _finding, _status
+from .test_consensus_groups import _batch, _finding, _status
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import config_tail, panel_filler  # noqa: E402
@@ -45,6 +45,37 @@ def _manifest_for_config(config: ReviewConfig, *, run_id: str = "local-test") ->
 
 
 class ConsensusCliTests(unittest.TestCase):
+    def test_consensus_ignores_obsolete_state_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / "inputs"
+            findings = root / "findings"
+            inputs.mkdir()
+            findings.mkdir()
+            config_path = _repo_config()
+            config = load_config(config_path)
+            manifest = _manifest_for_config(config)
+            write_canonical_json(inputs / "manifest.json", manifest)
+            for index, reviewer in enumerate(("claude", "codex"), 1):
+                batch = _batch(reviewer, _finding(reviewer, str(index) * 64))
+                batch.update(
+                    run_id=manifest["run_id"],
+                    effective_config_sha256=manifest["effective_config_sha256"],
+                )
+                write_canonical_json(findings / f"{reviewer}.json", batch)
+            out = root / "consensus.json"
+            argv = [
+                "--config", str(config_path), "--inputs", str(inputs),
+                "--findings-dir", str(findings), "--out", str(out),
+            ]
+            self.assertEqual(cli(argv), 0)
+            before = out.read_bytes()
+            (inputs / "state_aliases.json").write_text("invalid json")
+            (inputs / "state.json").write_text("invalid json")
+
+            self.assertEqual(cli(argv), 0)
+            self.assertEqual(out.read_bytes(), before)
+
     def test_failed_panel_still_writes_consensus_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

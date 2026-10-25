@@ -22,20 +22,14 @@ from typing import Any, Literal
 SUPPORT_REQUIRED = 2
 
 
-def decide_group(
-    *, support_count: int, majority_noise: bool, ambiguous: bool
-) -> Literal["surface", "fyi"]:
+def decide_group(*, support_count: int, majority_noise: bool) -> Literal["surface", "fyi"]:
     """Decide one group. The branches are ordered by precedence, not by taste.
 
-    An ambiguous cross-run state match stays ``fyi`` whatever the support: Code
-    Tribunal cannot safely choose which historical thread to mutate, and
-    ``consensus.schema.json`` pins ``decision`` to ``fyi`` for an unassigned
-    group, so any other answer fails validation against its own artifact schema.
-    Majority independent noise then demotes the group to ``fyi``: the critics
+    Majority independent noise demotes the group to ``fyi``: the critics
     judged it low value, not wrong, so it stays visible in the summary without a
-    thread. Only after both does the support threshold apply.
+    thread. Otherwise the support threshold applies.
     """
-    if ambiguous or majority_noise:
+    if majority_noise:
         return "fyi"
     return "surface" if support_count >= SUPPORT_REQUIRED else "fyi"
 
@@ -51,7 +45,6 @@ def demoted_by_noise(group: Mapping[str, Any]) -> bool:
         decide_group(
             support_count=group["support_count"],
             majority_noise=False,
-            ambiguous=group["issue_id_source"] == "ambiguous_unassigned",
         )
         == "surface"
     )
@@ -77,5 +70,4 @@ def apply_group_decision(
     group["decision"] = decide_group(
         support_count=len(supporters),
         majority_noise=majority_noise,
-        ambiguous=group.get("issue_id_source") == "ambiguous_unassigned",
     )

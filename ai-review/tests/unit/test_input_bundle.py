@@ -398,7 +398,6 @@ class BundlePublicationTests(unittest.TestCase):
                     "mr.diff",
                     "prior_decisions.json",
                     "repo_snapshot",
-                    "state_aliases.json",
                 ],
             )
             manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
@@ -884,7 +883,6 @@ class GitHubPrepareTests(unittest.TestCase):
             for filename in (
                 "mr.diff",
                 "prior_decisions.json",
-                "state_aliases.json",
             ):
                 (out / filename).write_text("old\n", encoding="utf-8")
             (out / "repo_snapshot").mkdir()

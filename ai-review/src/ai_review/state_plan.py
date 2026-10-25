@@ -380,54 +380,29 @@ def plan_state(
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
     for group in inline_candidates + summary_fallback_groups + fyi_groups:
-        issue_id = group.get("issue_id")
-        if not isinstance(issue_id, str):
-            # Consensus leaves issue_id unset on an ambiguous match; protect every record
-            # it matches. Match the full state: filtering out claimed records would fall
-            # through to a weaker precedence and protect an unrelated record.
-            candidate_ids = [
-                record["issue_id"]
-                for record in find_matching_record(group, persisted_state).records
-            ]
-            if candidate_ids:
-                protected_issue_ids.update(candidate_ids)
-                outcome.warnings.append(
-                    "ambiguous existing record match for unassigned group; "
-                    f"protected {len(candidate_ids)} candidate record(s)"
-                )
-            continue
-        state_for_match = {
-            "records": [
-                record
-                for record in base_records
-                if record.get("discussion_id") not in planning_used_discussion_ids
-            ]
-        }
-        state_match = find_matching_record(group, cast(State, state_for_match))
-        if state_match.status == "ambiguous":
+        issue_id = group["issue_id"]
+        # Always match the complete current state. Removing claimed records can
+        # turn ambiguity into a false unique match, or fall through to a weaker
+        # precedence and overwrite an unrelated thread.
+        state_match = find_matching_record(group, persisted_state)
+        previous = state_match.record
+        already_claimed = previous is not None and (
+            previous["issue_id"] in planned_issue_ids
+            or (
+                previous.get("discussion_id") is not None
+                and previous["discussion_id"] in planning_used_discussion_ids
+            )
+        )
+        if state_match.status == "ambiguous" or already_claimed:
             ambiguous_issue_ids.add(issue_id)
+            protected_issue_ids.update(record["issue_id"] for record in state_match.records)
             outcome.warnings.append(
                 f"ambiguous existing record match for {issue_id}; "
                 f"protected {len(state_match.records)} candidate record(s)"
             )
-            for candidate in state_match.records:
-                candidate_id = candidate.get("issue_id")
-                if not isinstance(candidate_id, str) or candidate_id in planned_issue_ids:
-                    continue
-                updated = dict(candidate)
-                updated["status"] = "stale"
-                updated["remap_status"] = "ambiguous"
-                planned_records.append(
-                    cast(
-                        StateRecord,
-                        normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
-                    )
-                )
-                planned_issue_ids.add(candidate_id)
+            # _plan_stale_records preserves settled records and still applies
+            # commands naming a candidate. Protection blocks absence resolution.
             continue
-        previous = (
-            cast(StateRecord, state_match.record) if state_match.status == "matched" else None
-        )
         if previous is not None:
             planned_matches[issue_id] = previous
             if previous.get("discussion_id") is not None:

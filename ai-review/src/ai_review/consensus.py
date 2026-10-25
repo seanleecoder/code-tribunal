@@ -24,7 +24,6 @@ from .grouping import (
     group_findings,
     issue_id_for_group,
 )
-from .memory import find_matching_record, state_from_aliases
 from .run_health import build_run_health_jobs, load_status_files, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
@@ -33,7 +32,7 @@ from .schema import (
     validate_instance,
     write_canonical_json,
 )
-from .types import Consensus, FindingGroup, PanelStatus, State
+from .types import Consensus, FindingGroup, PanelStatus
 
 
 def panel_status(successful: list[str], enabled: list[str]) -> str:
@@ -80,7 +79,6 @@ def build_consensus(
     manifest: dict[str, Any],
     finding_batches: list[dict[str, Any]],
     config: ReviewConfig,
-    state: State | None = None,
     critique_batches: list[dict[str, Any]] | None = None,
     statuses: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> Consensus:
@@ -129,9 +127,8 @@ def build_consensus(
             path_keys = sorted({anchor_path_key(finding["anchor"]) for finding in findings})
             group = {
                 "issue_id": issue_id,
-                "issue_id_source": "new_signature",
-                # Assigned by consensus_policy.apply_group_decision once the
-                # cross-run state match is known; never written here.
+                # Assigned by consensus_policy.apply_group_decision from this
+                # run's evidence; historical thread matching belongs to post.
                 "decision": "fyi",
                 "final_severity": _final_severity(findings),
                 "category": representative["category"],
@@ -140,8 +137,6 @@ def build_consensus(
                 "suggestion": representative.get("suggestion"),
                 "evidence_by_reviewer": _evidence_by_reviewer(findings),
                 "critique_disputes": [],
-                # COMPAT-007: posting hashes the body it publishes; nothing reads this.
-                "body_hash": "0" * 64,
                 "agreeing_critics": [],
                 "support_count": 0,
                 "contributing_reviewers": contributing,
@@ -167,30 +162,7 @@ def build_consensus(
                         }
                     ),
                 },
-                "state_match": {
-                    "status": "new",
-                    "matched_issue_id": None,
-                    "precedence": None,
-                },
             }
-            state_match = find_matching_record(cast(FindingGroup, group), state)
-            if state_match.status == "matched" and state_match.record is not None:
-                group["issue_id"] = state_match.record["issue_id"]
-                group["issue_id_source"] = "matched_state"
-                group["state_match"] = {
-                    "status": "matched",
-                    "matched_issue_id": state_match.record["issue_id"],
-                    "precedence": state_match.precedence,
-                }
-            elif state_match.status == "ambiguous":
-                group["issue_id"] = None
-                group["issue_id_source"] = "ambiguous_unassigned"
-                group["state_match"] = {
-                    "status": "ambiguous",
-                    "matched_issue_id": None,
-                    "precedence": state_match.precedence,
-                }
-            # After the state match, because ambiguity is an input to the policy.
             apply_group_decision(group)
             groups.append(group)
     else:
@@ -199,7 +171,7 @@ def build_consensus(
     groups = sorted(groups, key=_group_sort_key)
     jobs = build_run_health_jobs(config, finding_batches, critique_batches, statuses or {})
     return {
-        "schema_version": "consensus.v2",
+        "schema_version": "consensus.v3",
         "run_id": manifest["run_id"],
         "project_id": manifest["project_id"],
         "merge_request_iid": manifest["merge_request_iid"],
@@ -213,8 +185,6 @@ def build_consensus(
         "summary": {
             "surface_count": sum(1 for group in groups if group["decision"] == "surface"),
             "fyi_count": sum(1 for group in groups if group["decision"] == "fyi"),
-            # COMPAT-003: required by consensus.v2; majority noise now demotes to fyi.
-            "drop_count": 0,
         },
         "run_health": {
             "grade": run_health_grade(status, jobs),
@@ -302,7 +272,6 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--findings-dir", default="out/findings")
     parser.add_argument("--critiques-dir", default="out/critiques")
     parser.add_argument("--status-dir", default="out/status")
-    parser.add_argument("--state")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     config = load_config(args.config)
@@ -318,12 +287,6 @@ def cli(argv: list[str] | None = None) -> int:
         batches = []
         for path in sorted(Path(args.findings_dir).glob("*.json")):
             batches.append(load_json_file(path))
-        state = cast(State | None, load_json_file(args.state)) if args.state else None
-        if state is None:
-            aliases_path = inputs / "state_aliases.json"
-            if aliases_path.exists():
-                state = cast(State | None, state_from_aliases(load_json_file(aliases_path)))
-
         critique_inputs: list[tuple[str, dict[str, Any]]] = []
         if config.critique.enabled:
             for path in sorted(Path(args.critiques_dir).glob("*.json")):
@@ -346,7 +309,6 @@ def cli(argv: list[str] | None = None) -> int:
             manifest,
             batches,
             config,
-            state=state,
             critique_batches=critique_batches,
             statuses=statuses,
         )

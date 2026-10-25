@@ -14,7 +14,7 @@ from ai_review.schema import finalize_finding_batch, validate_instance
 from ai_review.state_plan import _has_resolution_quorum
 from ai_review.types import Consensus
 
-from .test_consensus_state_matching import _config, _manifest
+from .test_consensus_groups import _config, _manifest
 
 _DIFF = "\n".join(
     [
@@ -127,7 +127,7 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
 
     def test_resolution_quorum_ignores_legacy_successful_reviewers_field(self) -> None:
         legacy: Consensus = {
-            "schema_version": "consensus.v2",
+            "schema_version": "consensus.v3",
             "run_id": "run",
             "project_id": "1",
             "merge_request_iid": "2",
@@ -138,7 +138,8 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
             "failed_reviewers": [],
             "panel_status": "full",
             "groups": [],
-            "summary": {"surface_count": 0, "fyi_count": 0, "drop_count": 0},
+            "summary": {"surface_count": 0, "fyi_count": 0},
+            "run_health": {"grade": "full", "jobs": []},
         }
         # Explicit empty eligibility must not resolve via successful_reviewers.
         self.assertFalse(

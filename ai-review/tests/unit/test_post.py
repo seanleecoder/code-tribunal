@@ -36,10 +36,15 @@ from ai_review.posting import (
     post_inline,
 )
 from ai_review.render import render_body
-from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.schema import (
+    SchemaValidationError,
+    load_json_file,
+    validate_instance,
+    write_canonical_json,
+)
 from ai_review.state_plan import plan_state
 
-from .test_consensus_state_matching import _batch, _empty_batch, _finding, _manifest
+from .test_consensus_groups import _batch, _empty_batch, _finding, _manifest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -284,17 +289,19 @@ class PostTests(PostCase):
             self.assertIn("re-run prepare", message)
 
     def test_cli_refuses_a_consensus_artifact_without_run_health(self) -> None:
-        """A 2.0.2-shaped artifact still validates but comes from an earlier release."""
+        """The schema refuses missing health before constructing a platform client."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             consensus = load_json_file(_GOLDEN_CONSENSUS)
             del consensus["run_health"]
-            validate_instance(consensus, "consensus.schema.json")
             argv = _write_post_cli_run(root, consensus)
-
-            message = self._assert_refused_before_platform(root, argv)
-            self.assertIn("no run_health", message)
-            self.assertIn("earlier release", message)
+            with (
+                patch("ai_review.post.create_runtime_platform") as factory,
+                self.assertRaises(SchemaValidationError),
+            ):
+                post_module.cli(argv)
+            factory.assert_not_called()
+            self.assertFalse((root / "post-result.json").exists())
 
     def test_seat_with_every_finding_dropped_grades_degraded_in_artifact_and_summary(
         self,
@@ -766,9 +773,10 @@ class PostTests(PostCase):
             consensus,
         )
         self.assertEqual(result["updated_discussions"], 1)
-        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(client.updated, 1)
-        self.assertEqual(client.created, 1)
+        self.assertEqual(client.created, 0)
+        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
         validate_instance(result, "post_result.schema.json")
 
     def test_post_run_to_run_upsert_reuses_existing_discussion_with_reduced_panel(self) -> None:

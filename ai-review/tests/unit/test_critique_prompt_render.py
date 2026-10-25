@@ -11,9 +11,9 @@ from ai_review.prompt_render import build_pooled_findings, render_critique_promp
 from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import write_canonical_json
 
-from .test_consensus_state_matching import _batch as _unbound_batch
-from .test_consensus_state_matching import _config, _finding
-from .test_consensus_state_matching import _manifest as _unbound_manifest
+from .test_consensus_groups import _batch as _unbound_batch
+from .test_consensus_groups import _config, _finding
+from .test_consensus_groups import _manifest as _unbound_manifest
 
 _IMAGE = trusted_runtime_root()
 _SHIPPED_CRITIQUE_PROMPT = (_IMAGE / "prompts" / "critique.md").read_text(encoding="utf-8")

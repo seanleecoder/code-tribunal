@@ -20,7 +20,17 @@ versioning.
   findings have separate counts in the existing run-health report.
   `finding_batch.v2`, `critique_batch.v2` and `pooled_findings.v2` replace v1;
   generate fresh artifacts with one image pair instead of replaying old ones.
-  Configuration, persisted state and `consensus.v2` retain their current formats.
+  Configuration and persisted state retain their current formats.
+- Breaking, for the next major release: consensus uses only this run's evidence
+  (N11). `consensus.v3` assigns signature-derived issue IDs and removes
+  `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
+  `summary.drop_count`; `run_health` is required. Prepare no longer writes
+  `state_aliases.json`, and consensus no longer accepts `--state`. Posting alone
+  matches the latest authenticated state, preserving historical thread IDs and
+  human commands. Ambiguous or already-claimed matches use summary fallback
+  without changing the reducer's decision or automatically resolving candidate
+  threads. Re-run from prepare with one image pair; v2 consensus artifacts are
+  rejected. Persisted state remains version 1.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out

@@ -17,14 +17,12 @@ type Category = Literal[
     "other",
 ]
 type AnchorSide = Literal["new", "old", "unchanged"]
-# COMPAT-003: "drop" mirrors the consensus.v2 enum; consensus no longer emits it.
-type Decision = Literal["surface", "fyi", "drop"]
+type Decision = Literal["surface", "fyi"]
 type ReviewerId = str
 type RunId = str
 type ProjectId = str
 type MergeRequestIid = str
 type PanelStatus = Literal["full", "degraded", "failed"]
-type IssueIdSource = Literal["matched_state", "new_signature", "ambiguous_unassigned"]
 type StateMatchStatus = Literal["matched", "new", "ambiguous"]
 type MatchPrecedence = Literal[
     "exact_issue_id",
@@ -91,22 +89,13 @@ class MatchKeys(TypedDict):
     symbols: list[str]
 
 
-class GroupStateMatch(TypedDict):
-    status: StateMatchStatus
-    matched_issue_id: str | None
-    precedence: MatchPrecedence | None
-
-
 class FindingGroup(TypedDict):
-    issue_id: str | None
-    issue_id_source: IssueIdSource
+    issue_id: str
     decision: Decision
     final_severity: Severity
     category: Category
     title: str
     body: str
-    # COMPAT-007: always 64 zeros; posting hashes the body it publishes.
-    body_hash: str
     support_count: int
     agreeing_critics: list[ReviewerId]
     contributing_reviewers: list[ReviewerId]
@@ -116,7 +105,6 @@ class FindingGroup(TypedDict):
     representative_anchor: dict[str, JsonValue]
     all_anchors: list[dict[str, JsonValue]]
     match_keys: MatchKeys
-    state_match: GroupStateMatch
     suggestion: NotRequired[str | None]
     evidence_by_reviewer: NotRequired[dict[str, str]]
     critique_disputes: NotRequired[list[CritiqueDispute]]
@@ -125,7 +113,6 @@ class FindingGroup(TypedDict):
 class ConsensusSummary(TypedDict):
     surface_count: int
     fyi_count: int
-    drop_count: int
 
 
 type RunHealthGrade = Literal["full", "degraded", "rerun_recommended"]
@@ -167,7 +154,7 @@ class RunHealth(TypedDict):
 
 
 class Consensus(TypedDict):
-    schema_version: Literal["consensus.v2"]
+    schema_version: Literal["consensus.v3"]
     run_id: RunId
     project_id: ProjectId
     merge_request_iid: MergeRequestIid
@@ -179,9 +166,7 @@ class Consensus(TypedDict):
     panel_status: PanelStatus
     groups: list[FindingGroup]
     summary: ConsensusSummary
-    # COMPAT-006: optional in consensus.v2 so earlier artifacts still validate;
-    # consensus always writes it and post rejects an artifact without it.
-    run_health: NotRequired[RunHealth]
+    run_health: RunHealth
 
 
 class StateAliases(TypedDict):
@@ -205,7 +190,8 @@ class StateRecord(TypedDict):
     first_seen_sha: str
     anchor: dict[str, JsonValue]
     last_posted_body_hash: str
-    last_decision: Decision
+    # Persisted state v1 retains historical decisions until the S14 migration.
+    last_decision: Literal["surface", "fyi", "drop"]
     last_final_severity: Severity
     created_by_pipeline_id: str
     updated_by_pipeline_id: str

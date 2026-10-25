@@ -339,7 +339,6 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
         self.assertEqual(c_surface["summary"]["surface_count"], 1)
         self.assertEqual([group["decision"] for group in c_noise["groups"]], ["fyi"])
-        self.assertEqual(c_noise["summary"]["drop_count"], 0)
         self.assertEqual(p_noise["resolved_discussions"], 0)
         self.assertEqual(client.resolved_threads, {})
         self.assertEqual(record["status"], "open")
