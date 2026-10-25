@@ -55,6 +55,17 @@ images, variables, and configuration, and start again at prepare. Threads receiv
 one reverse cosmetic update back to `render-body.v3`. Re-add the required gate
 check only if you restore a 1.0.x template.
 
+## Unreleased major: consensus artifact cutover
+
+Run prepare through post with one image pair and generate fresh artifacts.
+`consensus.v3` replaces v2, requires `run_health`, and removes `issue_id_source`,
+`state_match`, `group.body_hash`, `summary.drop_count` and the `drop` decision.
+Remove `--state` from custom consensus commands. Prepare no longer writes
+`state_aliases.json`; posting reads the latest platform state itself and keeps
+historical thread IDs and commands. Ambiguous matches appear in the summary
+without mutating or automatically resolving their candidate threads. Persisted
+state keeps its version 1 format.
+
 ## Failure behavior
 
 | Failure class | Behavior | Operator action |

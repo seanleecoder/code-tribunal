@@ -37,13 +37,23 @@ class PlanOutcome:
 
 
 @dataclass
+class InlinePlan:
+    group: FindingGroup
+    record: StateRecord | None = None
+    existing: StateRecord | None = None
+
+    @property
+    def ambiguous(self) -> bool:
+        """Planning leaves ``record`` unset only for a group it cannot claim."""
+        return self.record is None
+
+
+@dataclass
 class StatePlan:
     persisted_state: State
     base_records: list[StateRecord]
     planned_records: list[StateRecord]
-    planned_by_issue: dict[str, StateRecord]
-    planned_matches: dict[str, StateRecord]
-    ambiguous_issue_ids: set[str]
+    inline_plans: list[InlinePlan]
     pipeline_id: str
     planned_state: State
     retention: StateRetention
@@ -310,18 +320,6 @@ def _plan_stale_records(
         planned_issue_ids.add(issue_id)
 
 
-def _planned_by_issue(
-    planned_records: list[StateRecord],
-    planned_matches: dict[str, StateRecord],
-) -> dict[str, StateRecord]:
-    planned_by_issue = {record["issue_id"]: record for record in planned_records}
-    for group_issue_id, existing in planned_matches.items():
-        existing_issue_id = existing.get("issue_id")
-        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
-            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
-    return planned_by_issue
-
-
 def _planned_state_payload(
     persisted_state: State,
     *,
@@ -373,70 +371,54 @@ def plan_state(
         for record in persisted_state.get("records", [])
         if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
     ]
-    planned_matches: dict[str, StateRecord] = {}
-    ambiguous_issue_ids: set[str] = set()
     protected_issue_ids: set[str] = set()
     planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
-    for group in inline_candidates + summary_fallback_groups + fyi_groups:
-        issue_id = group.get("issue_id")
-        if not isinstance(issue_id, str):
-            # Consensus leaves issue_id unset on an ambiguous match; protect every record
-            # it matches. Match the full state: filtering out claimed records would fall
-            # through to a weaker precedence and protect an unrelated record.
-            candidate_ids = [
-                record["issue_id"]
-                for record in find_matching_record(group, persisted_state).records
-            ]
-            if candidate_ids:
-                protected_issue_ids.update(candidate_ids)
-                outcome.warnings.append(
-                    "ambiguous existing record match for unassigned group; "
-                    f"protected {len(candidate_ids)} candidate record(s)"
-                )
-            continue
-        state_for_match = {
-            "records": [
-                record
-                for record in base_records
-                if record.get("discussion_id") not in planning_used_discussion_ids
-            ]
-        }
-        state_match = find_matching_record(group, cast(State, state_for_match))
-        if state_match.status == "ambiguous":
-            ambiguous_issue_ids.add(issue_id)
-            outcome.warnings.append(
-                f"ambiguous existing record match for {issue_id}; "
-                f"protected {len(state_match.records)} candidate record(s)"
+    # Inline candidates plan first so they claim records and threads before
+    # fallback and fyi groups. Complete-link groups can share their primary
+    # signature's issue ID, so each group keeps its own plan: a later claim
+    # cannot replace an accepted match or make the earlier group ambiguous.
+    group_plans = [
+        InlinePlan(group) for group in inline_candidates + summary_fallback_groups + fyi_groups
+    ]
+    for group_plan in group_plans:
+        group = group_plan.group
+        issue_id = group["issue_id"]
+        # Always match the complete current state. Removing claimed records can
+        # turn ambiguity into a false unique match, or fall through to a weaker
+        # precedence and overwrite an unrelated thread.
+        state_match = find_matching_record(group, persisted_state)
+        previous = state_match.record
+        already_claimed = previous is not None and (
+            previous["issue_id"] in planned_issue_ids
+            or (
+                previous.get("discussion_id") is not None
+                and previous["discussion_id"] in planning_used_discussion_ids
             )
-            for candidate in state_match.records:
-                candidate_id = candidate.get("issue_id")
-                if not isinstance(candidate_id, str) or candidate_id in planned_issue_ids:
-                    continue
-                updated = dict(candidate)
-                updated["status"] = "stale"
-                updated["remap_status"] = "ambiguous"
-                planned_records.append(
-                    cast(
-                        StateRecord,
-                        normalize_state_record(updated, manifest=manifest, pipeline_id=pipeline_id),
-                    )
-                )
-                planned_issue_ids.add(candidate_id)
-            continue
-        previous = (
-            cast(StateRecord, state_match.record) if state_match.status == "matched" else None
         )
-        if previous is not None:
-            planned_matches[issue_id] = previous
-            if previous.get("discussion_id") is not None:
-                planning_used_discussion_ids.add(previous.get("discussion_id"))
+        duplicate_new_issue = previous is None and issue_id in planned_issue_ids
+        if state_match.status == "ambiguous" or already_claimed or duplicate_new_issue:
+            protected_issue_ids.update(record["issue_id"] for record in state_match.records)
+            if duplicate_new_issue:
+                outcome.warnings.append(
+                    f"duplicate issue ID {issue_id}; kept the earlier group plan"
+                )
+            else:
+                outcome.warnings.append(
+                    f"ambiguous existing record match for {issue_id}; "
+                    f"protected {len(state_match.records)} candidate record(s)"
+                )
+            # _plan_stale_records preserves settled records and still applies
+            # commands naming a candidate. Protection blocks absence resolution.
+            continue
+        if previous is not None and previous.get("discussion_id") is not None:
+            planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
         human_disposition = previous.get("human_disposition") if previous else None
         command = human_commands.get(issue_id)
         if command is None and previous is not None:
-            command = human_commands.get(str(previous.get("issue_id") or ""))
+            command = human_commands.get(previous["issue_id"])
         if command == "wontfix":
             status = "wontfix"
             human_disposition = "wontfix"
@@ -449,21 +431,21 @@ def plan_state(
         elif previous is not None and previous.get("status") == "wontfix":
             status = "wontfix"
             human_disposition = previous.get("human_disposition") or "wontfix"
-        planned_records.append(
-            cast(
-                StateRecord,
-                _record_for_group(
-                    group,
-                    manifest=manifest,
-                    pipeline_id=pipeline_id,
-                    existing=cast(dict[str, Any] | None, previous),
-                    status=status,
-                    human_disposition=human_disposition,
-                ),
-            )
+        group_plan.record = cast(
+            StateRecord,
+            _record_for_group(
+                group,
+                manifest=manifest,
+                pipeline_id=pipeline_id,
+                existing=cast(dict[str, Any] | None, previous),
+                status=status,
+                human_disposition=human_disposition,
+            ),
         )
+        group_plan.existing = previous
+        planned_records.append(group_plan.record)
         planned_issue_ids.add(issue_id)
-        if previous is not None and isinstance(previous.get("issue_id"), str):
+        if previous is not None:
             planned_issue_ids.add(previous["issue_id"])
 
     _plan_stale_records(
@@ -496,11 +478,7 @@ def plan_state(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        planned_by_issue={}
-        if outcome.overflow is not None
-        else _planned_by_issue(planned_records, planned_matches),
-        planned_matches=planned_matches,
-        ambiguous_issue_ids=ambiguous_issue_ids,
+        inline_plans=[] if outcome.overflow is not None else group_plans[: len(inline_candidates)],
         pipeline_id=pipeline_id,
         planned_state=processed_state,
         retention=retention,

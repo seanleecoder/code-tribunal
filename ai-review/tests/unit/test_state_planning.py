@@ -180,7 +180,8 @@ class StatePlanningTests(PostCase):
         self.assertEqual(planned_by_id["1" * 64]["remap_status"], "ambiguous")
         self.assertEqual(planned_by_id["2" * 64]["status"], "stale")
         self.assertEqual(planned_by_id["2" * 64]["remap_status"], "ambiguous")
-        self.assertNotIn(group["issue_id"], plan.planned_by_issue)
+        self.assertTrue(plan.inline_plans[0].ambiguous)
+        self.assertIsNone(plan.inline_plans[0].record)
 
     def test_plan_state_applies_human_commands_to_current_and_stale_records(self) -> None:
         consensus = self._consensus()
@@ -281,7 +282,7 @@ class StatePlanningTests(PostCase):
             "state has 1 records, exceeds state.retention.max_records (0)",
         )
         self.assertEqual(plan.outcome.warnings, [])
-        self.assertEqual(plan.planned_by_issue, {})
+        self.assertEqual(plan.inline_plans, [])
 
     def test_prepare_post_context_loads_state_discussions_and_commands(self) -> None:
         consensus = self._consensus()
@@ -349,7 +350,6 @@ class StatePlanningTests(PostCase):
             consensus,
             result,
             state_plan,
-            [group],
             summary_fallback_groups,
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
@@ -363,7 +363,8 @@ class StatePlanningTests(PostCase):
         self.assertIs(outcome.summary_fallback_groups, summary_fallback_groups)
         self.assertEqual(outcome.result["created_discussions"], 1)
         self.assertEqual(outcome.result["posted_discussions"][0]["action"], "created")
-        planned_record = outcome.state_plan.planned_by_issue[group["issue_id"]]
+        planned_record = outcome.state_plan.inline_plans[0].record
+        assert planned_record is not None
         self.assertEqual(planned_record["discussion_id"], "discussion")
         self.assertEqual(planned_record["root_note_id"], 123)
         self.assertEqual(client.created_positions, [self._position("head")])

@@ -12,9 +12,10 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import ReviewConfig, load_config, validate_config
 from ai_review.consensus import build_consensus
+from ai_review.memory import decode_state_note_body
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
-from ai_review.posting import post_consensus
+from ai_review.posting import post_consensus, write_persisted_state
 from ai_review.schema import load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
@@ -224,6 +225,67 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(len(client.summary_notes), 1)
         self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(exit_code_for_status(second_post["status"]), 0)
+
+    def test_post_matches_current_state_without_rebuilding_consensus(self) -> None:
+        for mode in ("gitlab_discussions", "github_reviews"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+                config = replace(config, posting=replace(config.posting, mode=mode))
+                client: Any = (
+                    FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+                    if mode == "github_reviews"
+                    else FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+                )
+                batches = self._blocking_batches()
+                old = build_consensus(manifest, batches, config)
+                for batch in batches:
+                    finding = batch["findings"][0]
+                    finding["fingerprints"]["title_fingerprint"] = "e" * 64
+                    finding["candidate_issue_signature"]["title_fingerprint"] = "e" * 64
+                    finding["body"] = "Updated body with the same underlying defect."
+                current = build_consensus(manifest, batches, config)
+                original = copy.deepcopy(current)
+                old_id = old["groups"][0]["issue_id"]
+                self.assertNotEqual(current["groups"][0]["issue_id"], old_id)
+                validate_instance(current, "consensus.schema.json")
+
+                # Historical state appears after the current artifact was built.
+                first = post_consensus(client, config, manifest, old, diff_text=diff_text)
+                updated = post_consensus(client, config, manifest, current, diff_text=diff_text)
+                self.assertEqual(first["created_discussions"], 1)
+                self.assertEqual(updated["created_discussions"], 0)
+                self.assertEqual(updated["updated_discussions"], 1)
+                self.assertEqual(updated["posted_discussions"][0]["issue_id"], old_id)
+                state = decode_state_note_body(client.state_notes[0]["body"])
+                self.assertEqual(state["records"][0]["issue_id"], old_id)
+                self.assertEqual(state["records"][0]["status"], "open")
+
+                # A later state change makes the same artifact ambiguous. A
+                # settled candidate stays settled, and the open thread is safe.
+                settled = dict(
+                    copy.deepcopy(state["records"][0]),
+                    issue_id="f" * 64,
+                    discussion_id=None,
+                    root_note_id=None,
+                    status="wontfix",
+                    human_disposition="wontfix",
+                )
+                state["records"].append(settled)
+                write_persisted_state(client, manifest, state)
+                for _ in range(2):
+                    result = post_consensus(
+                        client, config, manifest, current, diff_text=diff_text
+                    )
+                    validate_instance(result, "post_result.schema.json")
+                    self.assertEqual(result["status"], "success")
+                    self.assertEqual(result["created_discussions"], 0)
+                    self.assertEqual(result["updated_discussions"], 0)
+                    self.assertEqual(result["resolved_discussions"], 0)
+                    self.assertEqual(result["summary_comment"]["surface_findings"], 1)
+                    state = decode_state_note_body(client.state_notes[0]["body"])
+                    statuses = {r["issue_id"]: r["status"] for r in state["records"]}
+                    self.assertEqual(statuses, {old_id: "stale", "f" * 64: "wontfix"})
+                self.assertEqual(current, original)
 
     def _run_e2e(
         self, batches: list[dict[str, Any]]

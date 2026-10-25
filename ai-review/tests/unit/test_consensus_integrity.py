@@ -19,7 +19,7 @@ from ai_review.consensus import (
 from ai_review.schema import empty_critique_batch, empty_finding_batch, write_canonical_json
 
 from .test_consensus_cli import _manifest_for_config
-from .test_consensus_state_matching import _batch, _finding
+from .test_consensus_groups import _batch, _finding
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import config_tail, panel_filler  # noqa: E402

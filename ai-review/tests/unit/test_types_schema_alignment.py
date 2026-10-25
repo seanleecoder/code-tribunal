@@ -279,24 +279,6 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
                 schema = load_schema(schema_name)
                 _assert_typed_dict_matches_schema(artifact_type, schema, schema)
 
-    def test_conditional_branches_reference_only_live_group_fields(self) -> None:
-        """`allOf` is invisible to the alignment walk above.
-
-        `_assert_typed_dict_matches_schema` compares `properties` against the
-        TypedDict and never descends into `allOf`, so a stale reference to a
-        removed field left inside the `ambiguous_unassigned` conditional would
-        pass every other check in this module while constraining nothing.
-        """
-        group = load_schema("consensus.schema.json")["$defs"]["group"]
-        live_fields = set(group["properties"])
-
-        for index, clause in enumerate(group["allOf"]):
-            for branch in ("if", "then", "else"):
-                named = set(clause.get(branch, {}).get("properties", {}))
-                named |= set(clause.get(branch, {}).get("required", []))
-                with self.subTest(clause=index, branch=branch):
-                    self.assertEqual(named - live_fields, set())
-
     def test_schema_alignment_comparator_branches(self) -> None:
         critique_root = load_schema("critique_batch.schema.json")
         critique_schema = critique_root["properties"]["critiques"]["items"]

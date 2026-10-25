@@ -126,14 +126,13 @@ def _group_source_hash(group: dict[str, Any]) -> str:
     return sha256_hex(canonical_json(sorted(group.get("source_finding_ids", []))))
 
 
-def _group_sort_key(group: dict[str, Any]) -> tuple[int, str, str, str, str]:
-    issue_id = group.get("issue_id")
-    title = str(group.get("title", ""))
-    path = _group_anchor_path(group)
-    source_hash = _group_source_hash(group)
-    if isinstance(issue_id, str):
-        return (0, issue_id, title, path, source_hash)
-    return (1, title, path, source_hash, "")
+def _group_sort_key(group: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        group["issue_id"],
+        str(group.get("title", "")),
+        _group_anchor_path(group),
+        _group_source_hash(group),
+    )
 
 
 def group_findings(

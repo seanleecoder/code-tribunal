@@ -79,7 +79,7 @@ class SchemaValidationTests(unittest.TestCase):
         fixture = load_json_file(_GOLDEN_CONSENSUS)
 
         stale_version = copy.deepcopy(fixture)
-        for version in ("consensus.v1",):
+        for version in ("consensus.v1", "consensus.v2"):
             stale_version["schema_version"] = version
             with self.assertRaises(SchemaValidationError):
                 validate_instance(stale_version, "consensus.schema.json")
@@ -90,8 +90,13 @@ class SchemaValidationTests(unittest.TestCase):
             ("group vote_count", "groups", {"vote_count": 2}),
             ("group critique_support_count", "groups", {"critique_support_count": 0}),
             ("group critique_noise_count", "groups", {"critique_noise_count": 0}),
+            ("group issue_id_source", "groups", {"issue_id_source": "new_signature"}),
+            ("group state_match", "groups", {"state_match": {"status": "new"}}),
+            ("group body_hash", "groups", {"body_hash": "0" * 64}),
+            ("drop decision", "groups", {"decision": "drop"}),
             ("summary block_merge", "summary", {"block_merge": False}),
             ("summary panel_convergence", "summary", {"panel_convergence": 1.0}),
+            ("summary drop_count", "summary", {"drop_count": 0}),
         ]
         for label, section, replacement in removed:
             with self.subTest(label=label):
@@ -103,13 +108,14 @@ class SchemaValidationTests(unittest.TestCase):
                 with self.assertRaises(SchemaValidationError):
                     validate_instance(consensus, "consensus.schema.json")
 
-    def test_run_health_is_optional_and_closed_on_consensus_v2(self) -> None:
+    def test_run_health_is_required_and_closed_on_consensus_v3(self) -> None:
         fixture = load_json_file(_GOLDEN_CONSENSUS)
         validate_instance(fixture, "consensus.schema.json")
 
         earlier_release = copy.deepcopy(fixture)
         del earlier_release["run_health"]
-        validate_instance(earlier_release, "consensus.schema.json")
+        with self.assertRaises(SchemaValidationError):
+            validate_instance(earlier_release, "consensus.schema.json")
 
         job = fixture["run_health"]["jobs"][0]
         invalid = [

@@ -1,8 +1,16 @@
 # Deterministic consensus
 
 Consensus consumes schema-valid, run-bound reviewer evidence and produces one
-deterministic `consensus.v2` artifact. Its output is informational: nothing in
+deterministic `consensus.v3` artifact. Its output is informational: nothing in
 it decides whether a change may merge.
+
+Consensus is state-free: group IDs derive from the current findings' signatures.
+Only posting matches those groups to the latest authenticated historical state
+and preserves an existing thread's issue ID. An ambiguous or already-claimed
+match prevents inline mutation and uses summary fallback; it does not change
+the reducer's decision. Candidate records are protected from absence-based
+resolution, settled dispositions remain settled, and authorized commands naming
+a candidate still apply.
 
 ## Inputs and eligibility
 
@@ -34,15 +42,13 @@ The decision follows one ordered rule, and severity changes none of it:
 
 | Condition | Decision |
 |---|---|
-| The cross-run state match is ambiguous | `fyi` |
 | A majority of eligible independent critics call it noise | `fyi` |
 | Two or more unique identities support it | `surface` |
 | Otherwise | `fyi` |
 
-The order is precedence, not preference. An ambiguous state match stays `fyi`
-whatever the support, because no historical thread can be safely chosen to
-mutate; majority noise then demotes the group to `fyi` before the support
-threshold is ever consulted. A critic majority says a finding is low value, not
+The order is precedence, not preference. Majority noise demotes the group to
+`fyi` before the support threshold is ever consulted. A critic majority says a
+finding is low value, not
 that it is wrong, so a demoted group gets no thread but stays in the summary,
 marked with its noise count. Consensus never drops a group.
 
@@ -71,7 +77,7 @@ seats, never by panel status.
 
 Output is stable across input-file ordering. Golden contract cases and unit
 tests pin that behavior directly: the shuffled-batch case in
-[`test_consensus_state_matching.py`](../../ai-review/tests/unit/test_consensus_state_matching.py),
+[`test_consensus_groups.py`](../../ai-review/tests/unit/test_consensus_groups.py),
 the reversed-finding case in
 [`test_grouping.py`](../../ai-review/tests/unit/test_grouping.py), and the
 serialized contract fixtures in

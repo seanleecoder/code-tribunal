@@ -36,10 +36,15 @@ from ai_review.posting import (
     post_inline,
 )
 from ai_review.render import render_body
-from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.schema import (
+    SchemaValidationError,
+    load_json_file,
+    validate_instance,
+    write_canonical_json,
+)
 from ai_review.state_plan import plan_state
 
-from .test_consensus_state_matching import _batch, _empty_batch, _finding, _manifest
+from .test_consensus_groups import _batch, _empty_batch, _finding, _manifest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -284,17 +289,19 @@ class PostTests(PostCase):
             self.assertIn("re-run prepare", message)
 
     def test_cli_refuses_a_consensus_artifact_without_run_health(self) -> None:
-        """A 2.0.2-shaped artifact still validates but comes from an earlier release."""
+        """The schema refuses missing health before constructing a platform client."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             consensus = load_json_file(_GOLDEN_CONSENSUS)
             del consensus["run_health"]
-            validate_instance(consensus, "consensus.schema.json")
             argv = _write_post_cli_run(root, consensus)
-
-            message = self._assert_refused_before_platform(root, argv)
-            self.assertIn("no run_health", message)
-            self.assertIn("earlier release", message)
+            with (
+                patch("ai_review.post.create_runtime_platform") as factory,
+                self.assertRaises(SchemaValidationError),
+            ):
+                post_module.cli(argv)
+            factory.assert_not_called()
+            self.assertFalse((root / "post-result.json").exists())
 
     def test_seat_with_every_finding_dropped_grades_degraded_in_artifact_and_summary(
         self,
@@ -766,9 +773,10 @@ class PostTests(PostCase):
             consensus,
         )
         self.assertEqual(result["updated_discussions"], 1)
-        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(client.updated, 1)
-        self.assertEqual(client.created, 1)
+        self.assertEqual(client.created, 0)
+        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
         validate_instance(result, "post_result.schema.json")
 
     def test_post_run_to_run_upsert_reuses_existing_discussion_with_reduced_panel(self) -> None:
@@ -1525,6 +1533,64 @@ class PostTests(PostCase):
         self.assertEqual(state_after["records"][0]["status"], "open")
         validate_instance(result, "post_result.schema.json")
 
+    def test_signature_collisions_keep_each_groups_accepted_thread_match(self) -> None:
+        # Complete-link grouping splits [10, 12] from [100, 100]. The primary
+        # findings at 10 and 100 share a signature, so both groups have one ID.
+        claude = _batch("claude", _finding("claude", "1" * 64, line=10))
+        claude["findings"].append(_finding("claude", "3" * 64, line=100))
+        claude.update(raw_finding_count=2, accepted_finding_count=2)
+        consensus = build_consensus(
+            self._manifest("head"),
+            [
+                claude,
+                _batch("codex", _finding("codex", "2" * 64, line=12, context_hash="e" * 64)),
+                _batch("opencode", _finding("opencode", "4" * 64, line=100)),
+            ],
+            self._config(),
+        )
+        validate_instance(consensus, "consensus.schema.json")
+        groups = consensus["groups"]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["issue_id"], groups[1]["issue_id"])
+        self.assertEqual([group["decision"] for group in groups], ["surface", "surface"])
+
+        for history in ("shared record", "distinct records", "no records"):
+            with self.subTest(history=history):
+                if history == "shared record":
+                    records = [self._state_record(groups[0], anchor={})]
+                elif history == "distinct records":
+                    records = [
+                        self._state_record(
+                            group, issue_id=str(index) * 64,
+                            discussion_id=f"thread-{index}", anchor={},
+                        )
+                        for index, group in enumerate(groups, 8)
+                    ]
+                else:
+                    records = []
+                client = StatePostClient("head", self._state_with_records(records))
+
+                result = post_consensus(
+                    client, self._config(), self._manifest("head"), consensus
+                )
+
+                validate_instance(result, "post_result.schema.json")
+                expected_updates = 2 if history == "distinct records" else len(records)
+                self.assertEqual(result["updated_discussions"], expected_updates)
+                self.assertEqual(result["created_discussions"], int(not records))
+                self.assertEqual(
+                    result["summary_comment"]["surface_findings"],
+                    0 if history == "distinct records" else 1,
+                )
+                self.assertEqual(client.resolve_calls, [])
+                self.assertEqual(
+                    {entry["issue_id"] for entry in result["posted_discussions"]},
+                    {record["issue_id"] for record in records} or {groups[0]["issue_id"]},
+                )
+                state_after = decode_state_note_body(client.state_notes[0]["body"])
+                self.assertEqual(len(state_after["records"]), max(1, len(records)))
+                self.assertEqual({record["status"] for record in state_after["records"]}, {"open"})
+
     def test_post_ambiguous_match_protects_candidates_from_resolution(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
@@ -1730,7 +1796,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [group],
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
@@ -1784,7 +1849,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [group],
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",

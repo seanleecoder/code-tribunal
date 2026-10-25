@@ -19,7 +19,6 @@ from .memory import (
     empty_state,
     newest_valid_state_from_notes,
     prior_decisions_from_state,
-    state_aliases_from_state,
 )
 from .platform import ComparisonDiffPlatform, ReviewPlatformError
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
@@ -423,9 +422,6 @@ def _prepare_bound_bundle(
                 state = bound.load_state(state)
             write_canonical_json(
                 staging_path / "prior_decisions.json", prior_decisions_from_state(state)
-            )
-            write_canonical_json(
-                staging_path / "state_aliases.json", state_aliases_from_state(state)
             )
 
             manifest = {

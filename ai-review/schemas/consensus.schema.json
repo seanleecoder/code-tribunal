@@ -15,10 +15,11 @@
     "failed_reviewers",
     "panel_status",
     "groups",
-    "summary"
+    "summary",
+    "run_health"
   ],
   "properties": {
-    "schema_version": { "const": "consensus.v2" },
+    "schema_version": { "const": "consensus.v3" },
     "run_id": { "type": "string", "minLength": 1 },
     "project_id": { "type": "string" },
     "merge_request_iid": { "type": "string" },
@@ -51,20 +52,18 @@
       "additionalProperties": false,
       "required": [
         "surface_count",
-        "fyi_count",
-        "drop_count"
+        "fyi_count"
       ],
       "properties": {
         "surface_count": { "type": "integer", "minimum": 0 },
-        "fyi_count": { "type": "integer", "minimum": 0 },
-        "drop_count": { "type": "integer", "minimum": 0 }
+        "fyi_count": { "type": "integer", "minimum": 0 }
       }
     },
     "run_health": {
       "type": "object",
       "additionalProperties": false,
       "required": ["grade", "jobs"],
-      "description": "Observational run health. Optional so earlier consensus.v2 artifacts validate; consensus always writes it and post requires it. It never changes a decision, panel_status, or an exit code.",
+      "description": "Observational run health. It never changes a decision, panel_status, or an exit code.",
       "properties": {
         "grade": { "enum": ["full", "degraded", "rerun_recommended"] },
         "jobs": {
@@ -132,36 +131,13 @@
     "group": {
       "type": "object",
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "required": ["issue_id_source"],
-            "properties": {
-              "issue_id_source": { "const": "ambiguous_unassigned" }
-            }
-          },
-          "then": {
-            "properties": {
-              "issue_id": { "type": "null" },
-              "decision": { "const": "fyi" }
-            }
-          },
-          "else": {
-            "properties": {
-              "issue_id": { "$ref": "#/$defs/sha256" }
-            }
-          }
-        }
-      ],
       "required": [
         "issue_id",
-        "issue_id_source",
         "decision",
         "final_severity",
         "category",
         "title",
         "body",
-        "body_hash",
         "support_count",
         "agreeing_critics",
         "contributing_reviewers",
@@ -170,18 +146,11 @@
         "critique_summary",
         "representative_anchor",
         "all_anchors",
-        "match_keys",
-        "state_match"
+        "match_keys"
       ],
       "properties": {
-        "issue_id": {
-          "type": ["string", "null"],
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "issue_id_source": {
-          "enum": ["matched_state", "new_signature", "ambiguous_unassigned"]
-        },
-        "decision": { "enum": ["surface", "fyi", "drop"] },
+        "issue_id": { "$ref": "#/$defs/sha256" },
+        "decision": { "enum": ["surface", "fyi"] },
         "final_severity": { "enum": ["info", "minor", "major", "blocker"] },
         "category": {
           "enum": [
@@ -228,10 +197,6 @@
               }
             }
           }
-        },
-        "body_hash": {
-          "$ref": "#/$defs/sha256",
-          "description": "Always 64 zeros since 2.1.0; posting hashes the body it publishes. Removed in consensus.v3."
         },
         "support_count": {
           "type": "integer",
@@ -298,26 +263,6 @@
             "symbols": {
               "type": "array",
               "items": { "type": "string" }
-            }
-          }
-        },
-        "state_match": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "matched_issue_id", "precedence"],
-          "properties": {
-            "status": { "enum": ["matched", "new", "ambiguous"] },
-            "matched_issue_id": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
-            "precedence": {
-              "type": ["string", "null"],
-              "enum": [
-                "exact_issue_id",
-                "source_finding_id",
-                "context_hash",
-                "title_anchor",
-                "symbol_title",
-                null
-              ]
             }
           }
         }

@@ -243,9 +243,7 @@ def _apply_critiques(
         majority_noise = bool(eligible_critics) and noise_counts.get(index, 0) > len(
             eligible_critics
         ) / 2
-        # A group whose thread identity cannot be assigned keeps its reviewed
-        # severity; decide_group already keeps it fyi.
-        if allow_downgrade and group.get("issue_id_source") != "ambiguous_unassigned":
+        if allow_downgrade:
             severity = str(group["final_severity"])
             group["final_severity"] = _severity_after_group_downgrade(
                 severity,

@@ -271,29 +271,6 @@ def newest_valid_state_from_notes(
     return valid[0][2], warnings
 
 
-def state_aliases_from_state(state: dict[str, Any]) -> dict[str, Any]:
-    records = []
-    for record in state.get("records", []):
-        if not isinstance(record, dict) or not isinstance(record.get("issue_id"), str):
-            continue
-        records.append(
-            {
-                "issue_id": record["issue_id"],
-                "category": record.get("category", ""),
-                "status": record.get("status", "open"),
-                "aliases": record.get("aliases", {}),
-                "anchor": record.get("anchor", {}),
-            }
-        )
-    return {"schema_version": "state_aliases.v1", "records": records}
-
-
-def state_from_aliases(aliases: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(aliases, dict) or aliases.get("schema_version") != "state_aliases.v1":
-        return None
-    return {"records": aliases.get("records", [])}
-
-
 def compact_state(state: Mapping[str, Any], retention: StateRetention) -> dict[str, Any]:
     keep_resolved_records = retention.keep_resolved_records
     keep_stale_records = retention.keep_stale_records

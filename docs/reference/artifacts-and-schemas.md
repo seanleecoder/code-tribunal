@@ -9,7 +9,6 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring, post | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
-| `inputs/state_aliases.json` | prepare | consensus/post | [`state_aliases.schema.json`](../../ai-review/schemas/state_aliases.schema.json) |
 | `out/status/<reviewer>.json` | reviewer adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
 | `out/status/critique-<reviewer>.json` | critic adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
 | `out/status/<stage>-<reviewer>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
@@ -17,7 +16,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/findings/<reviewer>.json` | reviewer adapter | consensus/critique | [`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json) |
 | `out/pooled_findings/<reviewer>.json` | critique preparation | operator | [`pooled_findings.schema.json`](../../ai-review/schemas/pooled_findings.schema.json); audit copy of the pool and short-ID mapping held in runner memory |
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
-| `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); the `drop` decision and `summary.drop_count` are retained for compatibility, and `drop_count` is always `0`. `run_health` is always written and post requires it |
+| `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); `consensus.v3` contains state-free groups, `surface`/`fyi` decisions and required `run_health` |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
 | encoded state note/comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and checksum |
 
@@ -36,10 +35,13 @@ it from the finding and critique batches and the status files it is given with
 `failed_reviewers`, resolution eligibility, or an exit code. Post renders it as
 the first section of the summary comment and refuses an artifact without it.
 
-`run_health` is an optional property of `consensus.v2`, so a consensus artifact
-from 2.0.x still validates. Adding an optional property under the same schema
-identifier is a minor change. That is sound only because producer and consumer
-always run from one pinned image pair and artifacts are never mixed across runs.
+`consensus.v3` removes `issue_id_source`, `state_match`, `group.body_hash`,
+`summary.drop_count` and the `drop` decision. Every group has a signature-derived
+issue ID; posting alone matches it to historical state and chooses a reusable
+thread. Prepare carries no `state_aliases.json`, and consensus accepts no
+`--state` argument. Version 2 consensus artifacts are rejected. Producer and
+consumer must run from one pinned image pair with fresh artifacts from prepare.
+Persisted state keeps its version 1 format.
 
 `post_result.json` is the terminal artifact: nothing downstream reads it, and
 `post` validates it against its schema on write. It is operator diagnostics plus

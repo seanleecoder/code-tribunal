@@ -686,7 +686,7 @@ def _scaffold_project(root: Path) -> dict[str, Path]:
 
 
 def _write_author_findings(output_dir: Path, *, title: str) -> None:
-    from .test_consensus_state_matching import _batch, _finding
+    from .test_consensus_groups import _batch, _finding
 
     batch = _batch("codex", _finding("codex", "1" * 64, title=title))
     batch.update(run_id="local-test", model="codex-model")
