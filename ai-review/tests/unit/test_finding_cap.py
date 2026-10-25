@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
+from ai_review.anchors import _line_belongs_to_side
 from ai_review.schema import finalize_finding_batch, validate_instance
 
 DIFF = "\n".join(
@@ -46,9 +48,9 @@ def _finding(new_line: int, severity: str, title: str) -> dict[str, Any]:
 
 
 class FindingCapTests(unittest.TestCase):
-    def _finalize(self, findings: list[Any], cap: int | None = None) -> dict:
+    def _finalize(self, findings: list[Any], cap: int | None = None, *, diff: str = DIFF) -> dict:
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "mr.diff").write_text(DIFF)
+            Path(tmp, "mr.diff").write_text(diff)
             with contextlib.redirect_stderr(io.StringIO()):
                 batch = finalize_finding_batch(
                     {"findings": findings},
@@ -111,6 +113,38 @@ class FindingCapTests(unittest.TestCase):
             ),
             (1220, 50, 20),
         )
+
+    def test_large_diff_is_indexed_once_while_validating_beyond_the_cap(self) -> None:
+        line_count = 2000
+        diff = (
+            "diff --git a/src/foo.py b/src/foo.py\n--- /dev/null\n+++ b/src/foo.py\n"
+            f"@@ -0,0 +1,{line_count} @@\n" + "+a\n" * line_count
+        )
+        visits = 0
+
+        def count_visit(side: str, line: Any) -> bool:
+            nonlocal visits
+            visits += 1
+            return _line_belongs_to_side(side, line)
+
+        with mock.patch("ai_review.anchors._line_belongs_to_side", new=count_visit):
+            batch = self._finalize(
+                [_finding(index + 1, "major", f"Finding {index}") for index in range(100)]
+                + [_finding(1, "major", "Repeated")] * 100
+                + [_finding(line_count + index + 1, "major", "Missing") for index in range(20)]
+                + [{"title": "Malformed"}] * 20,
+                10,
+                diff=diff,
+            )
+        self.assertEqual(
+            (
+                batch["raw_finding_count"],
+                batch["accepted_finding_count"],
+                batch["dropped_finding_count"],
+            ),
+            (240, 10, 40),
+        )
+        self.assertLessEqual(visits, 3 * line_count)
 
     def test_empty_success_all_invalid_and_zero_cap_have_distinct_quality(self) -> None:
         for findings, cap, usable, raw, dropped in [

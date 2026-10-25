@@ -500,9 +500,19 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                 },
             )
 
-    def test_failure_batches_and_envelopes_are_unchanged(self) -> None:
+    def test_model_status_does_not_control_structured_output_decoding(self) -> None:
+        for stage, field in (("review", "findings"), ("critique", "critiques")):
+            item = {"title": "Recovered"} if stage == "review" else self._critique()
+            for value in ([item], [json.dumps(item)], json.dumps([item])):
+                for status in ("model_error", "timeout", None, {"untrusted": "status"}):
+                    with self.subTest(stage=stage, value=value, status=status):
+                        loaded = _coerce_adapter_root(
+                            {"adapter_status": status, field: value}, stage=stage
+                        )
+                        self.assertEqual(loaded[field], [item])
+
+    def test_envelopes_are_unchanged(self) -> None:
         payloads = (
-            ({"adapter_status": "timeout", "findings": "[]"}, "review"),
             ({"type": "result", "structured_output": {"findings": []}}, "review"),
         )
         for payload, stage in payloads:

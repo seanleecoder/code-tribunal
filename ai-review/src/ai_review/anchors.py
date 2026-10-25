@@ -420,48 +420,62 @@ def is_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_RE.fullmatch(value))
 
 
-def resolve_location(files: tuple[DiffFile, ...], location: dict[str, Any]) -> dict[str, Any]:
-    """Resolve one model-authored range using only prepared diff coordinates."""
-    path = normalize_path(location["path"])
-    side = location["side"]
-    start, end = location["start_line"], location["end_line"]
-    if end < start:
-        raise ValueError("location end precedes start")
-    number = "old_line" if side == "old" else "new_line"
-    matches = []
-    for file in files:
-        side_path = file.old_path if side == "old" else file.new_path
-        if side_path is None:
-            continue
-        aliases = {file.old_path, file.new_path} if side == "old" else {file.new_path}
-        if path not in {normalize_path(p) for p in aliases if p is not None}:
-            continue
-        lines = [line for line in file.lines if _line_belongs_to_side(side, line)]
-        for index, line in enumerate(lines):
-            if getattr(line, number) == start:
-                matches.append((file, lines, index))
-    if len(matches) != 1:
-        raise ValueError("location is ambiguous or does not map to the prepared diff")
-    file, lines, index = matches[0]
-    count = end - start + 1
-    selected = lines[index : index + count]
-    if len(selected) != count or any(
-        getattr(line, number) != start + offset or line.hunk_header != selected[0].hunk_header
-        for offset, line in enumerate(selected)
-    ):
-        raise ValueError("location range must be contiguous within one diff hunk")
-    old_path, new_path = resolve_side_paths(file.old_path, file.new_path)
-    anchor = {
-        "old_path": normalize_path(old_path),
-        "new_path": normalize_path(new_path),
-        "side": side,
-        "start": {"old_line": selected[0].old_line, "new_line": selected[0].new_line},
-        "end": {"old_line": selected[-1].old_line, "new_line": selected[-1].new_line},
-        "hunk_header": selected[0].hunk_header,
-        "symbol": location["symbol"],
-    }
-    anchor["context_hash"] = context_hash_from_unified_diff((file,), anchor)
-    return add_line_codes(anchor)
+class DiffLocationResolver:
+    """Index prepared coordinates once for all schema-validated locations in a batch."""
+
+    def __init__(self, files: Iterable[DiffFile]) -> None:
+        self._matches: dict[
+            tuple[str, str, int], list[tuple[DiffFile, list[DiffLine], int]]
+        ] = {}
+        for file in files:
+            for side in ("old", "new", "unchanged"):
+                side_path = file.old_path if side == "old" else file.new_path
+                if side_path is None:
+                    continue
+                aliases = {file.old_path, file.new_path} if side == "old" else {file.new_path}
+                paths = {normalize_path(p) for p in aliases if p is not None}
+                lines = [line for line in file.lines if _line_belongs_to_side(side, line)]
+                number = "old_line" if side == "old" else "new_line"
+                for index, line in enumerate(lines):
+                    for path in paths:
+                        key = (path, side, getattr(line, number))
+                        self._matches.setdefault(key, []).append((file, lines, index))
+
+    def resolve(self, location: dict[str, Any]) -> dict[str, Any]:
+        path = normalize_path(location["path"])
+        side = location["side"]
+        # JSON Schema integers include integral floats; slices require Python ints.
+        start, end = int(location["start_line"]), int(location["end_line"])
+        if end < start:
+            raise ValueError("location end precedes start")
+        matches = self._matches.get((path, side, start), [])
+        if len(matches) != 1:
+            raise ValueError("location is ambiguous or does not map to the prepared diff")
+        file, lines, index = matches[0]
+        number = "old_line" if side == "old" else "new_line"
+        count = end - start + 1
+        selected = lines[index : index + count]
+        if len(selected) != count or any(
+            getattr(line, number) != start + offset or line.hunk_header != selected[0].hunk_header
+            for offset, line in enumerate(selected)
+        ):
+            raise ValueError("location range must be contiguous within one diff hunk")
+        old_path, new_path = resolve_side_paths(file.old_path, file.new_path)
+        anchor = {
+            "old_path": normalize_path(old_path),
+            "new_path": normalize_path(new_path),
+            "side": side,
+            "start": {"old_line": selected[0].old_line, "new_line": selected[0].new_line},
+            "end": {"old_line": selected[-1].old_line, "new_line": selected[-1].new_line},
+            "hunk_header": selected[0].hunk_header,
+            "symbol": location["symbol"],
+        }
+        anchor["context_hash"] = compute_context_hash(
+            anchor_path_key(anchor),
+            side,
+            (line.text for line in lines[max(index - 6, 0) : index + 7]),
+        )
+        return add_line_codes(anchor)
 
 
 def finding_sort_key(finding: dict[str, Any]) -> tuple[int, str, str]:

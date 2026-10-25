@@ -173,8 +173,6 @@ def _decode_stringified_structured_output(payload: dict[str, Any], *, stage: str
     finalization. Duplicate keys are rejected at both decode boundaries.
     """
     field = _BATCH_FIELDS[stage]
-    if payload.get("adapter_status", "success") != "success":
-        return payload
     value = payload.get(field)
     replaced = 0
     if isinstance(value, str):

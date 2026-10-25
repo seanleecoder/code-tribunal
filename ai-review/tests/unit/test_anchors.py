@@ -5,12 +5,12 @@ from typing import Any
 
 from ai_review.anchors import (
     DiffLine,
+    DiffLocationResolver,
     _line_belongs_to_side,
     _target_matches,
     context_hash_from_unified_diff,
     parse_unified_diff,
     remap_anchor,
-    resolve_location,
 )
 
 
@@ -42,6 +42,42 @@ def _anchor(
 
 
 class AnchorRemapTests(unittest.TestCase):
+    def test_integral_coordinates_resolve_like_integer_coordinates(self) -> None:
+        diff = (
+            "diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n"
+            "@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail\n"
+        )
+        locations = DiffLocationResolver(parse_unified_diff(diff))
+        for side in ("old", "new", "unchanged"):
+            for start, end in ((1, 1), (1, 3)):
+                location = {
+                    "path": "src/foo.py",
+                    "side": side,
+                    "start_line": start,
+                    "end_line": end,
+                    "symbol": None,
+                }
+                if side == "unchanged" and end == 3:
+                    # The changed middle line is not an unchanged range.
+                    continue
+                expected = locations.resolve(location)
+                for floating_start, floating_end in ((True, False), (False, True), (True, True)):
+                    with self.subTest(
+                        side=side, start=start, end=end,
+                        floating_start=floating_start, floating_end=floating_end,
+                    ):
+                        actual = locations.resolve(
+                            {
+                                **location,
+                                "start_line": float(start) if floating_start else start,
+                                "end_line": float(end) if floating_end else end,
+                            }
+                        )
+                        self.assertEqual(actual, expected)
+                        self.assertEqual(
+                            actual["context_hash"], context_hash_from_unified_diff(diff, actual)
+                        )
+
     def test_old_side_rename_accepts_both_paths_and_rejects_collisions(self) -> None:
         diff = (
             "diff --git a/src/a.py b/src/b.py\n"
@@ -54,9 +90,9 @@ class AnchorRemapTests(unittest.TestCase):
             "end_line": 2,
             "symbol": None,
         }
-        files = tuple(parse_unified_diff(diff))
-        old = resolve_location(files, location)
-        new = resolve_location(files, {**location, "path": "src/b.py"})
+        locations = DiffLocationResolver(parse_unified_diff(diff))
+        old = locations.resolve(location)
+        new = locations.resolve({**location, "path": "src/b.py"})
         self.assertEqual(old, new)
         self.assertEqual(old["old_path"], "src/a.py")
         self.assertEqual(old["new_path"], "src/b.py")
@@ -67,13 +103,17 @@ class AnchorRemapTests(unittest.TestCase):
             "--- a/src/b.py\n+++ b/src/c.py\n@@ -2,1 +2,1 @@\n-other\n+replacement\n"
         )
         with self.assertRaisesRegex(ValueError, "ambiguous"):
-            resolve_location(tuple(parse_unified_diff(collision)), {**location, "path": "src/b.py"})
+            DiffLocationResolver(parse_unified_diff(collision)).resolve(
+                {**location, "path": "src/b.py"}
+            )
         added = (
             "diff --git a/src/b.py b/src/b.py\n--- /dev/null\n+++ b/src/b.py\n"
             "@@ -0,0 +2,1 @@\n+new\n"
         )
         with self.assertRaises(ValueError):
-            resolve_location(tuple(parse_unified_diff(added)), {**location, "path": "src/b.py"})
+            DiffLocationResolver(parse_unified_diff(added)).resolve(
+                {**location, "path": "src/b.py"}
+            )
 
     def test_parse_unified_diff_covers_headers_hunks_and_line_kinds(self) -> None:
         diff_text = "\n".join(

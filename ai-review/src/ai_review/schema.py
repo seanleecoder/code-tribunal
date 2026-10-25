@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import (
+    DiffLocationResolver,
     candidate_issue_signature,
     compute_source_finding_id,
     evidence_fingerprint,
     finding_sort_key,
     first_evidence_or_body,
     parse_unified_diff,
-    resolve_location,
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
@@ -305,7 +305,9 @@ def finalize_finding_batch(
 ) -> dict[str, Any]:
     import jsonschema
 
-    files = tuple(parse_unified_diff((Path(input_dir) / "mr.diff").read_text(encoding="utf-8")))
+    locations = DiffLocationResolver(
+        parse_unified_diff((Path(input_dir) / "mr.diff").read_text(encoding="utf-8"))
+    )
     raw_schema = load_schema("raw_finding_batch.schema.json")
     batch = _prune_undeclared(batch, raw_schema, raw_schema)
     raw_findings = batch.get("findings")
@@ -322,7 +324,7 @@ def finalize_finding_batch(
         try:
             validator.validate(finding)
             normalized = {key: value for key, value in finding.items() if key != "location"}
-            anchor = resolve_location(files, finding["location"])
+            anchor = locations.resolve(finding["location"])
             normalized["anchor"] = anchor
             title_fp = title_fingerprint(normalized["title"])
             normalized["fingerprints"] = {
