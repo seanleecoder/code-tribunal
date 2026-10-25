@@ -190,7 +190,7 @@ class StateRecord(TypedDict):
     first_seen_sha: str
     anchor: dict[str, JsonValue]
     last_posted_body_hash: str
-    # Persisted state v1 retains historical decisions until the S14 migration.
+    # COMPAT-005: older notes may carry "drop"; removed by the S14 state migration.
     last_decision: Literal["surface", "fyi", "drop"]
     last_final_severity: Severity
     created_by_pipeline_id: str

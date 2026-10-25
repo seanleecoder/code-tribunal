@@ -367,12 +367,11 @@ def _update_existing_inline_discussion(
     manifest: dict[str, Any],
     result: PostResult,
     existing: StateRecord,
-    planned_record: StateRecord | None,
+    planned_record: StateRecord,
     group: FindingGroup,
     post_group: Mapping[str, Any],
     body: str,
     body_hash: str,
-    used_discussion_ids: set[Any],
     summary_fallback_groups: list[FindingGroup],
 ) -> None:
     existing_discussion_id = str(existing["discussion_id"])
@@ -391,19 +390,15 @@ def _update_existing_inline_discussion(
     except ReviewPlatformError as exc:
         # Mirror create-path degradation: keep posting the rest of the run and
         # write a structured post_result instead of aborting before the artifact.
-        # Intentionally leave used_discussion_ids untouched — planning-time dedup
-        # already prevents double-matching the same discussion in this pass.
         result["status"] = "partial_failed"
         result["warnings"].append(
             f"update_comment for {post_group['issue_id']} failed: {exc}"
         )
         summary_fallback_groups.append(group)
         return
-    used_discussion_ids.add(existing["discussion_id"])
-    if planned_record is not None:
-        planned_record["discussion_id"] = existing_discussion_id
-        planned_record["root_note_id"] = existing_root_note_id
-        planned_record["last_posted_body_hash"] = body_hash
+    planned_record["discussion_id"] = existing_discussion_id
+    planned_record["root_note_id"] = existing_root_note_id
+    planned_record["last_posted_body_hash"] = body_hash
     result["updated_discussions"] += 1
     result["posted_discussions"].append(
         {
@@ -436,54 +431,44 @@ def post_inline(
     mutated objects makes that seam explicit for callers and direct tests while
     preserving the in-place behavior expected by the finalization phase.
     """
-    used_discussion_ids: set[Any] = set()
+    # Planning claims each record and discussion at most once, so no two plans
+    # here can reach the same existing thread.
     for inline_plan in state_plan.inline_plans:
         group = inline_plan.group
-        issue_id = group["issue_id"]
         planned_record = inline_plan.record
-        if inline_plan.ambiguous:
+        if planned_record is None:
             result["warnings"].append(
-                f"ambiguous existing discussion match for {issue_id}; "
+                f"ambiguous existing discussion match for {group['issue_id']}; "
                 "skipped inline creation"
             )
             summary_fallback_groups.append(group)
             continue
-        if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
+        if planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
         existing = inline_plan.existing
-        if existing is not None and existing.get("discussion_id") in used_discussion_ids:
-            result["warnings"].append(
-                f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
-                "skipped inline creation"
-            )
-            summary_fallback_groups.append(group)
-            continue
 
         post_group: dict[str, Any] = dict(group)
         if existing is not None:
-            if existing["issue_id"] != group.get("issue_id"):
+            if existing["issue_id"] != group["issue_id"]:
                 post_group = dict(group, issue_id=existing["issue_id"])
             existing_anchor = existing.get("anchor")
             if current_diff_text is not None and _can_remap_anchor(existing_anchor):
                 remap = remap_anchor(current_diff_text, cast(dict[str, Any], existing_anchor))
                 remap_status = str(remap.get("status"))
                 if remap_status == "exact":
-                    if planned_record is not None:
-                        planned_record["remap_status"] = "exact"
+                    planned_record["remap_status"] = "exact"
                 elif remap_status == "remapped" and isinstance(remap.get("anchor"), dict):
                     remapped_anchor = remap["anchor"]
-                    if planned_record is not None:
-                        planned_record["anchor"] = remapped_anchor
-                        planned_record["remap_status"] = "remapped"
+                    planned_record["anchor"] = remapped_anchor
+                    planned_record["remap_status"] = "remapped"
                     # Preserve thread identity and state after deterministic
                     # remap. Visible placement is platform-specific and requires
                     # separate live validation; create only without a reusable thread.
                     post_group = dict(post_group, representative_anchor=remapped_anchor)
                 elif remap_status == "missing":
-                    if planned_record is not None:
-                        planned_record["status"] = "stale_unverified"
-                        planned_record["remap_status"] = "missing"
+                    planned_record["status"] = "stale_unverified"
+                    planned_record["remap_status"] = "missing"
                     result["stale_unverified"] += 1
                     result["warnings"].append(
                         f"missing remap for {post_group['issue_id']}; posting summary fallback"
@@ -491,9 +476,8 @@ def post_inline(
                     summary_fallback_groups.append(group)
                     continue
                 else:
-                    if planned_record is not None:
-                        planned_record["status"] = "stale"
-                        planned_record["remap_status"] = "ambiguous"
+                    planned_record["status"] = "stale"
+                    planned_record["remap_status"] = "ambiguous"
                     result["warnings"].append(
                         f"ambiguous remap for {post_group['issue_id']}; skipped inline update"
                     )
@@ -527,7 +511,6 @@ def post_inline(
                 post_group,
                 body,
                 body_hash,
-                used_discussion_ids,
                 summary_fallback_groups,
             )
             continue
@@ -553,11 +536,9 @@ def post_inline(
             continue
         discussion, root_note_id = created
         result["created_discussions"] += 1
-        used_discussion_ids.add(discussion["id"])
-        if planned_record is not None:
-            planned_record["discussion_id"] = str(discussion["id"])
-            planned_record["root_note_id"] = root_note_id
-            planned_record["last_posted_body_hash"] = body_hash
+        planned_record["discussion_id"] = str(discussion["id"])
+        planned_record["root_note_id"] = root_note_id
+        planned_record["last_posted_body_hash"] = body_hash
         result["posted_discussions"].append(
             {
                 "issue_id": str(post_group["issue_id"]),

@@ -54,6 +54,9 @@ def _consensus(*, eligible: list[str] | None = None) -> dict[str, Any]:
     }
 
 
+_SOURCE_FINDING_ID = "b" * 64
+
+
 def _group(issue_id: str) -> dict[str, Any]:
     return {
         "issue_id": issue_id,
@@ -62,7 +65,7 @@ def _group(issue_id: str) -> dict[str, Any]:
         "category": "correctness",
         "title": "Title",
         "body": "Body",
-        "source_finding_ids": ["b" * 64],
+        "source_finding_ids": [_SOURCE_FINDING_ID],
         "match_keys": {"context_hashes": [], "title_fingerprints": [], "symbols": []},
         "representative_anchor": {
             "new_path": "src/foo.py",
@@ -96,6 +99,13 @@ def _record(issue_id: str, **overrides: Any) -> dict[str, Any]:
         "last_posted_body_hash": "c" * 64,
     }
     record.update(overrides)
+    return record
+
+
+def _matching_record(issue_id: str, **overrides: Any) -> dict[str, Any]:
+    """A record that matches every ``_group`` through its source finding ID."""
+    record = _record(issue_id, **overrides)
+    record["aliases"]["source_finding_ids"] = [_SOURCE_FINDING_ID]
     return record
 
 
@@ -199,8 +209,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
 
             with self.subTest(command=command, identity="historical"):
                 previous_id = "1" * 64
-                previous = _record(previous_id)
-                previous["aliases"]["source_finding_ids"] = ["b" * 64]
+                previous = _matching_record(previous_id)
                 plan = _plan(
                     persisted=[previous],
                     inline=[_group(issue_id)],
@@ -230,18 +239,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         issue_id = "a" * 64
         plan = _plan(
             persisted=[
-                _record(
-                    issue_id,
-                    status="wontfix",
-                    human_disposition="wontfix",
-                    aliases={
-                        "candidate_issue_signatures": [],
-                        "source_finding_ids": ["b" * 64],
-                        "context_hashes": [],
-                        "title_fingerprints": [],
-                        "symbols": [],
-                    },
-                )
+                _matching_record(issue_id, status="wontfix", human_disposition="wontfix")
             ],
             inline=[_group("9" * 64)],
         )
@@ -250,14 +248,10 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(plan.inline_plans[0].record["issue_id"], issue_id)
 
     def _ambiguous_candidates(self) -> list[dict[str, Any]]:
-        candidates = [
-            _record("1" * 64, discussion_id="d1"),
-            _record("2" * 64, discussion_id="d2"),
+        return [
+            _matching_record("1" * 64, discussion_id="d1"),
+            _matching_record("2" * 64, discussion_id="d2"),
         ]
-        for candidate in candidates:
-            # The source finding ID that _group carries, so both records match it.
-            candidate["aliases"]["source_finding_ids"] = ["b" * 64]
-        return candidates
 
     def _ambiguous_group(self) -> dict[str, Any]:
         return dict(_group("9" * 64), decision="fyi")
@@ -347,8 +341,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, "3" * 64), "resolved")
 
     def test_claimed_match_never_falls_through_to_a_weaker_record(self) -> None:
-        strong = _record("1" * 64, discussion_id="strong")
-        strong["aliases"]["source_finding_ids"] = ["b" * 64]
+        strong = _matching_record("1" * 64, discussion_id="strong")
         weak = _record("2" * 64, discussion_id="weak")
         weak["aliases"].update(symbols=["symbol"], title_fingerprints=["title"])
         later = _group("9" * 64)
@@ -362,8 +355,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, "2" * 64), "resolved")
 
     def test_a_record_without_a_thread_can_only_be_claimed_once(self) -> None:
-        record = _record("1" * 64, discussion_id=None, root_note_id=None)
-        record["aliases"]["source_finding_ids"] = ["b" * 64]
+        record = _matching_record("1" * 64, discussion_id=None, root_note_id=None)
 
         plan = _plan(persisted=[record], inline=[_group("8" * 64), _group("9" * 64)])
 

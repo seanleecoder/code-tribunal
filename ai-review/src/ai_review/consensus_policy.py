@@ -23,7 +23,7 @@ SUPPORT_REQUIRED = 2
 
 
 def decide_group(*, support_count: int, majority_noise: bool) -> Literal["surface", "fyi"]:
-    """Decide one group. The branches are ordered by precedence, not by taste.
+    """Decide one group.
 
     Majority independent noise demotes the group to ``fyi``: the critics
     judged it low value, not wrong, so it stays visible in the summary without a
@@ -41,12 +41,9 @@ def demoted_by_noise(group: Mapping[str, Any]) -> bool:
     the group is ``fyi`` but would have surfaced without the noise vote. The
     artifact carries no field for this, so the summary derives it here.
     """
-    return group["decision"] == "fyi" and (
-        decide_group(
-            support_count=group["support_count"],
-            majority_noise=False,
-        )
-        == "surface"
+    return (
+        group["decision"] == "fyi"
+        and decide_group(support_count=group["support_count"], majority_noise=False) == "surface"
     )
 
 
@@ -67,7 +64,4 @@ def apply_group_decision(
     )
     group["agreeing_critics"] = critics
     group["support_count"] = len(supporters)
-    group["decision"] = decide_group(
-        support_count=len(supporters),
-        majority_noise=majority_noise,
-    )
+    group["decision"] = decide_group(support_count=len(supporters), majority_noise=majority_noise)

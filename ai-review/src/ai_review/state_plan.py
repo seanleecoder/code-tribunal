@@ -41,7 +41,11 @@ class InlinePlan:
     group: FindingGroup
     record: StateRecord | None = None
     existing: StateRecord | None = None
-    ambiguous: bool = False
+
+    @property
+    def ambiguous(self) -> bool:
+        """Planning leaves ``record`` unset only for a group it cannot claim."""
+        return self.record is None
 
 
 @dataclass
@@ -367,18 +371,19 @@ def plan_state(
         for record in persisted_state.get("records", [])
         if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
     ]
-    inline_plans: list[InlinePlan] = []
     protected_issue_ids: set[str] = set()
     planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
-    for index, group in enumerate(inline_candidates + summary_fallback_groups + fyi_groups):
-        # Complete-link groups can share their primary signature's issue ID.
-        # Keep each inline group's plan separate so a later claim cannot replace
-        # an accepted match or make the earlier group ambiguous.
-        inline_plan = InlinePlan(group) if index < len(inline_candidates) else None
-        if inline_plan is not None:
-            inline_plans.append(inline_plan)
+    # Inline candidates plan first so they claim records and threads before
+    # fallback and fyi groups. Complete-link groups can share their primary
+    # signature's issue ID, so each group keeps its own plan: a later claim
+    # cannot replace an accepted match or make the earlier group ambiguous.
+    group_plans = [
+        InlinePlan(group) for group in inline_candidates + summary_fallback_groups + fyi_groups
+    ]
+    for group_plan in group_plans:
+        group = group_plan.group
         issue_id = group["issue_id"]
         # Always match the complete current state. Removing claimed records can
         # turn ambiguity into a false unique match, or fall through to a weaker
@@ -394,8 +399,6 @@ def plan_state(
         )
         duplicate_new_issue = previous is None and issue_id in planned_issue_ids
         if state_match.status == "ambiguous" or already_claimed or duplicate_new_issue:
-            if inline_plan is not None:
-                inline_plan.ambiguous = True
             protected_issue_ids.update(record["issue_id"] for record in state_match.records)
             if duplicate_new_issue:
                 outcome.warnings.append(
@@ -415,7 +418,7 @@ def plan_state(
         human_disposition = previous.get("human_disposition") if previous else None
         command = human_commands.get(issue_id)
         if command is None and previous is not None:
-            command = human_commands.get(str(previous.get("issue_id") or ""))
+            command = human_commands.get(previous["issue_id"])
         if command == "wontfix":
             status = "wontfix"
             human_disposition = "wontfix"
@@ -428,7 +431,7 @@ def plan_state(
         elif previous is not None and previous.get("status") == "wontfix":
             status = "wontfix"
             human_disposition = previous.get("human_disposition") or "wontfix"
-        record = cast(
+        group_plan.record = cast(
             StateRecord,
             _record_for_group(
                 group,
@@ -439,12 +442,10 @@ def plan_state(
                 human_disposition=human_disposition,
             ),
         )
-        planned_records.append(record)
-        if inline_plan is not None:
-            inline_plan.record = record
-            inline_plan.existing = previous
+        group_plan.existing = previous
+        planned_records.append(group_plan.record)
         planned_issue_ids.add(issue_id)
-        if previous is not None and isinstance(previous.get("issue_id"), str):
+        if previous is not None:
             planned_issue_ids.add(previous["issue_id"])
 
     _plan_stale_records(
@@ -477,7 +478,7 @@ def plan_state(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        inline_plans=[] if outcome.overflow is not None else inline_plans,
+        inline_plans=[] if outcome.overflow is not None else group_plans[: len(inline_candidates)],
         pipeline_id=pipeline_id,
         planned_state=processed_state,
         retention=retention,
