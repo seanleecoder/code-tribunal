@@ -37,13 +37,19 @@ class PlanOutcome:
 
 
 @dataclass
+class InlinePlan:
+    group: FindingGroup
+    record: StateRecord | None = None
+    existing: StateRecord | None = None
+    ambiguous: bool = False
+
+
+@dataclass
 class StatePlan:
     persisted_state: State
     base_records: list[StateRecord]
     planned_records: list[StateRecord]
-    planned_by_issue: dict[str, StateRecord]
-    planned_matches: dict[str, StateRecord]
-    ambiguous_issue_ids: set[str]
+    inline_plans: list[InlinePlan]
     pipeline_id: str
     planned_state: State
     retention: StateRetention
@@ -310,18 +316,6 @@ def _plan_stale_records(
         planned_issue_ids.add(issue_id)
 
 
-def _planned_by_issue(
-    planned_records: list[StateRecord],
-    planned_matches: dict[str, StateRecord],
-) -> dict[str, StateRecord]:
-    planned_by_issue = {record["issue_id"]: record for record in planned_records}
-    for group_issue_id, existing in planned_matches.items():
-        existing_issue_id = existing.get("issue_id")
-        if isinstance(existing_issue_id, str) and existing_issue_id in planned_by_issue:
-            planned_by_issue[group_issue_id] = planned_by_issue[existing_issue_id]
-    return planned_by_issue
-
-
 def _planned_state_payload(
     persisted_state: State,
     *,
@@ -373,13 +367,18 @@ def plan_state(
         for record in persisted_state.get("records", [])
         if isinstance(record, dict) and isinstance(record.get("issue_id"), str)
     ]
-    planned_matches: dict[str, StateRecord] = {}
-    ambiguous_issue_ids: set[str] = set()
+    inline_plans: list[InlinePlan] = []
     protected_issue_ids: set[str] = set()
     planned_records: list[StateRecord] = []
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
-    for group in inline_candidates + summary_fallback_groups + fyi_groups:
+    for index, group in enumerate(inline_candidates + summary_fallback_groups + fyi_groups):
+        # Complete-link groups can share their primary signature's issue ID.
+        # Keep each inline group's plan separate so a later claim cannot replace
+        # an accepted match or make the earlier group ambiguous.
+        inline_plan = InlinePlan(group) if index < len(inline_candidates) else None
+        if inline_plan is not None:
+            inline_plans.append(inline_plan)
         issue_id = group["issue_id"]
         # Always match the complete current state. Removing claimed records can
         # turn ambiguity into a false unique match, or fall through to a weaker
@@ -393,20 +392,25 @@ def plan_state(
                 and previous["discussion_id"] in planning_used_discussion_ids
             )
         )
-        if state_match.status == "ambiguous" or already_claimed:
-            ambiguous_issue_ids.add(issue_id)
+        duplicate_new_issue = previous is None and issue_id in planned_issue_ids
+        if state_match.status == "ambiguous" or already_claimed or duplicate_new_issue:
+            if inline_plan is not None:
+                inline_plan.ambiguous = True
             protected_issue_ids.update(record["issue_id"] for record in state_match.records)
-            outcome.warnings.append(
-                f"ambiguous existing record match for {issue_id}; "
-                f"protected {len(state_match.records)} candidate record(s)"
-            )
+            if duplicate_new_issue:
+                outcome.warnings.append(
+                    f"duplicate issue ID {issue_id}; kept the earlier group plan"
+                )
+            else:
+                outcome.warnings.append(
+                    f"ambiguous existing record match for {issue_id}; "
+                    f"protected {len(state_match.records)} candidate record(s)"
+                )
             # _plan_stale_records preserves settled records and still applies
             # commands naming a candidate. Protection blocks absence resolution.
             continue
-        if previous is not None:
-            planned_matches[issue_id] = previous
-            if previous.get("discussion_id") is not None:
-                planning_used_discussion_ids.add(previous.get("discussion_id"))
+        if previous is not None and previous.get("discussion_id") is not None:
+            planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
         human_disposition = previous.get("human_disposition") if previous else None
         command = human_commands.get(issue_id)
@@ -424,19 +428,21 @@ def plan_state(
         elif previous is not None and previous.get("status") == "wontfix":
             status = "wontfix"
             human_disposition = previous.get("human_disposition") or "wontfix"
-        planned_records.append(
-            cast(
-                StateRecord,
-                _record_for_group(
-                    group,
-                    manifest=manifest,
-                    pipeline_id=pipeline_id,
-                    existing=cast(dict[str, Any] | None, previous),
-                    status=status,
-                    human_disposition=human_disposition,
-                ),
-            )
+        record = cast(
+            StateRecord,
+            _record_for_group(
+                group,
+                manifest=manifest,
+                pipeline_id=pipeline_id,
+                existing=cast(dict[str, Any] | None, previous),
+                status=status,
+                human_disposition=human_disposition,
+            ),
         )
+        planned_records.append(record)
+        if inline_plan is not None:
+            inline_plan.record = record
+            inline_plan.existing = previous
         planned_issue_ids.add(issue_id)
         if previous is not None and isinstance(previous.get("issue_id"), str):
             planned_issue_ids.add(previous["issue_id"])
@@ -471,11 +477,7 @@ def plan_state(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        planned_by_issue={}
-        if outcome.overflow is not None
-        else _planned_by_issue(planned_records, planned_matches),
-        planned_matches=planned_matches,
-        ambiguous_issue_ids=ambiguous_issue_ids,
+        inline_plans=[] if outcome.overflow is not None else inline_plans,
         pipeline_id=pipeline_id,
         planned_state=processed_state,
         retention=retention,

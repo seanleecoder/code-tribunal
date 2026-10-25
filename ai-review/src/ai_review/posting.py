@@ -421,7 +421,6 @@ def post_inline(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    inline_candidates: list[FindingGroup],
     summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
@@ -438,14 +437,13 @@ def post_inline(
     preserving the in-place behavior expected by the finalization phase.
     """
     used_discussion_ids: set[Any] = set()
-    for group in inline_candidates:
+    for inline_plan in state_plan.inline_plans:
+        group = inline_plan.group
         issue_id = group["issue_id"]
-        if not isinstance(issue_id, str):
-            continue
-        planned_record = state_plan.planned_by_issue.get(issue_id)
-        if issue_id in state_plan.ambiguous_issue_ids:
+        planned_record = inline_plan.record
+        if inline_plan.ambiguous:
             result["warnings"].append(
-                f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
+                f"ambiguous existing discussion match for {issue_id}; "
                 "skipped inline creation"
             )
             summary_fallback_groups.append(group)
@@ -453,7 +451,7 @@ def post_inline(
         if planned_record is not None and planned_record.get("status") in {"wontfix", "resolved"}:
             result["skipped_unchanged"] += 1
             continue
-        existing = state_plan.planned_matches.get(issue_id)
+        existing = inline_plan.existing
         if existing is not None and existing.get("discussion_id") in used_discussion_ids:
             result["warnings"].append(
                 f"ambiguous existing discussion match for {group.get('issue_id') or 'unassigned'}; "
@@ -813,7 +811,6 @@ def post_consensus(
         consensus,
         result,
         state_plan,
-        inline_candidates,
         summary_fallback_groups,
         context.version,
         posting_mode=posting_mode,

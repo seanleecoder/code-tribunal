@@ -1533,6 +1533,64 @@ class PostTests(PostCase):
         self.assertEqual(state_after["records"][0]["status"], "open")
         validate_instance(result, "post_result.schema.json")
 
+    def test_signature_collisions_keep_each_groups_accepted_thread_match(self) -> None:
+        # Complete-link grouping splits [10, 12] from [100, 100]. The primary
+        # findings at 10 and 100 share a signature, so both groups have one ID.
+        claude = _batch("claude", _finding("claude", "1" * 64, line=10))
+        claude["findings"].append(_finding("claude", "3" * 64, line=100))
+        claude.update(raw_finding_count=2, accepted_finding_count=2)
+        consensus = build_consensus(
+            self._manifest("head"),
+            [
+                claude,
+                _batch("codex", _finding("codex", "2" * 64, line=12, context_hash="e" * 64)),
+                _batch("opencode", _finding("opencode", "4" * 64, line=100)),
+            ],
+            self._config(),
+        )
+        validate_instance(consensus, "consensus.schema.json")
+        groups = consensus["groups"]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["issue_id"], groups[1]["issue_id"])
+        self.assertEqual([group["decision"] for group in groups], ["surface", "surface"])
+
+        for history in ("shared record", "distinct records", "no records"):
+            with self.subTest(history=history):
+                if history == "shared record":
+                    records = [self._state_record(groups[0], anchor={})]
+                elif history == "distinct records":
+                    records = [
+                        self._state_record(
+                            group, issue_id=str(index) * 64,
+                            discussion_id=f"thread-{index}", anchor={},
+                        )
+                        for index, group in enumerate(groups, 8)
+                    ]
+                else:
+                    records = []
+                client = StatePostClient("head", self._state_with_records(records))
+
+                result = post_consensus(
+                    client, self._config(), self._manifest("head"), consensus
+                )
+
+                validate_instance(result, "post_result.schema.json")
+                expected_updates = 2 if history == "distinct records" else len(records)
+                self.assertEqual(result["updated_discussions"], expected_updates)
+                self.assertEqual(result["created_discussions"], int(not records))
+                self.assertEqual(
+                    result["summary_comment"]["surface_findings"],
+                    0 if history == "distinct records" else 1,
+                )
+                self.assertEqual(client.resolve_calls, [])
+                self.assertEqual(
+                    {entry["issue_id"] for entry in result["posted_discussions"]},
+                    {record["issue_id"] for record in records} or {groups[0]["issue_id"]},
+                )
+                state_after = decode_state_note_body(client.state_notes[0]["body"])
+                self.assertEqual(len(state_after["records"]), max(1, len(records)))
+                self.assertEqual({record["status"] for record in state_after["records"]}, {"open"})
+
     def test_post_ambiguous_match_protects_candidates_from_resolution(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
@@ -1738,7 +1796,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [group],
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
@@ -1792,7 +1849,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [group],
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",

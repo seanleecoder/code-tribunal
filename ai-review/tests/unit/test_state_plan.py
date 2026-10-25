@@ -209,7 +209,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
 
                 self.assertEqual(len(plan.planned_records), 1)
                 self.assertEqual(self._status_of(plan, previous_id), expected)
-                self.assertEqual(plan.planned_by_issue[issue_id]["issue_id"], previous_id)
+                self.assertEqual(plan.inline_plans[0].record["issue_id"], previous_id)
 
     def test_human_commands_drive_status_on_a_disappeared_record(self) -> None:
         gone = "d" * 64
@@ -247,7 +247,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         )
 
         self.assertEqual(self._status_of(plan, issue_id), "wontfix")
-        self.assertEqual(plan.planned_by_issue["9" * 64]["issue_id"], issue_id)
+        self.assertEqual(plan.inline_plans[0].record["issue_id"], issue_id)
 
     def _ambiguous_candidates(self) -> list[dict[str, Any]]:
         candidates = [
@@ -356,8 +356,8 @@ class PlanStateWithoutClientTests(unittest.TestCase):
 
         plan = _plan(persisted=[strong, weak], inline=[_group("1" * 64), later])
 
-        self.assertEqual(plan.ambiguous_issue_ids, {"9" * 64})
-        self.assertNotIn("9" * 64, plan.planned_by_issue)
+        self.assertEqual([item.ambiguous for item in plan.inline_plans], [False, True])
+        self.assertIsNone(plan.inline_plans[1].record)
         self.assertEqual(self._status_of(plan, "1" * 64), "open")
         self.assertEqual(self._status_of(plan, "2" * 64), "resolved")
 
@@ -368,8 +368,8 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         plan = _plan(persisted=[record], inline=[_group("8" * 64), _group("9" * 64)])
 
         self.assertEqual(len(plan.planned_records), 1)
-        self.assertEqual(plan.ambiguous_issue_ids, {"9" * 64})
-        self.assertEqual(plan.planned_by_issue["8" * 64]["issue_id"], "1" * 64)
+        self.assertEqual([item.ambiguous for item in plan.inline_plans], [False, True])
+        self.assertEqual(plan.inline_plans[0].record["issue_id"], "1" * 64)
 
     def test_later_unambiguous_match_updates_only_that_candidate(self) -> None:
         first = _plan(persisted=self._ambiguous_candidates(), fyi=[self._ambiguous_group()])
@@ -380,13 +380,13 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         assert untouched is not None
         self.assertEqual((untouched["status"], untouched["remap_status"]), ("stale", "ambiguous"))
 
-    def test_retention_overflow_is_reported_and_clears_the_issue_index(self) -> None:
+    def test_retention_overflow_is_reported_and_clears_inline_plans(self) -> None:
         config = _config(retention={"max_state_bytes": 1})
         plan = _plan(config=config, inline=[_group("a" * 64)])
 
         self.assertIsNotNone(plan.outcome.overflow)
-        # An overflowing plan must not hand callers a record index to mutate.
-        self.assertEqual(plan.planned_by_issue, {})
+        # An overflowing plan must not hand callers inline plans to mutate.
+        self.assertEqual(plan.inline_plans, [])
 
     def test_planned_state_drops_run_history(self) -> None:
         persisted = _state([])
