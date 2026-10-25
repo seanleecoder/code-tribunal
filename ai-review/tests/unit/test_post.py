@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import ai_review.post as post_module
 import ai_review.posting as posting_module
-import ai_review.state_plan as state_plan_module
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.canonical import stable_json_hash
 from ai_review.config import (
@@ -451,7 +450,7 @@ class PostTests(PostCase):
         self.assertNotIn("sk-1234567890abcdef1234567890abcdef123456789012", body)
         self.assertNotIn("eyJhbGciOiJIUzI1NiJ9", body)
 
-    def test_diff_fetch_failure_surfaces_warning(self) -> None:
+    def test_post_uses_prepared_anchors_without_fetching_another_diff(self) -> None:
         client = DiffFailPostClient("head")
         result = post_consensus(
             client,
@@ -460,9 +459,8 @@ class PostTests(PostCase):
             self._consensus(),
         )
 
-        self.assertTrue(
-            any("diff_fetch_failed: inline remap skipped" in item for item in result["warnings"])
-        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["warnings"], [])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_consensus_redacts_created_discussion_body(self) -> None:
@@ -481,7 +479,6 @@ class PostTests(PostCase):
             self._config(),
             self._manifest("head"),
             consensus,
-            diff_text="",
         )
 
         self.assertEqual(result["created_discussions"], 1)
@@ -553,6 +550,7 @@ class PostTests(PostCase):
                     {
                         "id": 123,
                         "author": {"id": 10},
+                        "position": self._position(),
                         "body": (
                             "existing\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=run "
@@ -587,6 +585,7 @@ class PostTests(PostCase):
                     {
                         "id": 123,
                         "author": {"id": 10},
+                        "position": self._position(),
                         # A pre-2.1.0 marker still carries `source=`; the thread is
                         # refreshed in place, not duplicated.
                         "body": (
@@ -621,47 +620,15 @@ class PostTests(PostCase):
         )
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_state_match_updates_same_anchor_category_and_title_with_changed_id(
-        self,
-    ) -> None:
+    def test_marker_recovery_does_not_guess_identity_from_title_and_position(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
-        existing_group = copy.deepcopy(consensus["groups"][0])
-        existing_group["issue_id"] = "c" * 64
-        client.discussions = [
-            self._existing_discussion(
-                existing_group,
-                position=self._position(),
-                discussion_id="semantic-match",
-            )
-        ]
-        consensus["groups"][0]["body"] = "Updated Body"
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 1)
-        self.assertEqual(client.created, 0)
-        self.assertEqual(client.updated, 1)
-        self.assertIn(
-            f"issue_id={existing_group['issue_id']}",
-            client.updated_notes[0]["body"],
-        )
-        self.assertEqual(
-            result["posted_discussions"],
-            [
-                {
-                    "issue_id": existing_group["issue_id"],
-                    "action": "updated",
-                    "discussion_id": "semantic-match",
-                    "root_note_id": 123,
-                }
-            ],
-        )
-        validate_instance(result, "post_result.schema.json")
+        old = copy.deepcopy(consensus["groups"][0])
+        old["issue_id"] = "c" * 64
+        client.discussions = [self._existing_discussion(old, position=self._position())]
+        result = post_consensus(client, self._config(), self._manifest("head"), consensus)
+        self.assertEqual(result["created_discussions"], 1)
+        self.assertEqual(result["updated_discussions"], 0)
 
     def test_post_fallback_does_not_merge_different_failure_signatures(self) -> None:
         client = FakePostClient("head")
@@ -689,64 +656,18 @@ class PostTests(PostCase):
         self.assertEqual(client.updated, 0)
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_state_match_does_not_create_when_multiple_candidates_match(self) -> None:
-        client = FakePostClient("head")
-        consensus = self._consensus()
-        first_group = copy.deepcopy(consensus["groups"][0])
-        first_group["issue_id"] = "c" * 64
-        second_group = copy.deepcopy(consensus["groups"][0])
-        second_group["issue_id"] = "d" * 64
-        client.discussions = [
-            self._existing_discussion(
-                first_group,
-                position=self._position(),
-                discussion_id="first",
-            ),
-            self._existing_discussion(
-                second_group,
-                position=self._position(),
-                discussion_id="second",
-                note_id=124,
-            ),
-        ]
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(client.created, 0)
-        self.assertEqual(client.updated, 0)
-        self.assertTrue(
-            any("ambiguous existing discussion match" in item for item in result["warnings"])
-        )
-        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        validate_instance(result, "post_result.schema.json")
-
-    def test_post_fallback_requires_position_and_matching_head_sha(self) -> None:
-        for name, position in {
-            "missing-position": None,
-            "mismatched-head": self._position("old-head"),
-        }.items():
-            with self.subTest(name=name):
-                client = FakePostClient("head")
-                consensus = self._consensus()
-                existing_group = copy.deepcopy(consensus["groups"][0])
-                existing_group["issue_id"] = "c" * 64
-                client.discussions = [self._existing_discussion(existing_group, position=position)]
-                result = post_consensus(
-                    client,  # type: ignore[arg-type]
-                    self._config(),
-                    self._manifest("head"),
-                    consensus,
-                )
-                self.assertEqual(result["created_discussions"], 1)
-                self.assertEqual(result["updated_discussions"], 0)
-                self.assertEqual(client.created, 1)
-                self.assertEqual(client.updated, 0)
-                validate_instance(result, "post_result.schema.json")
+    def test_missing_ledger_with_older_or_unbound_threads_requires_repair(self) -> None:
+        for position in (None, self._position("old-head")):
+            client = FakePostClient("head")
+            consensus = self._consensus()
+            client.discussions = [
+                self._existing_discussion(consensus["groups"][0], position=position)
+            ]
+            with self.assertRaisesRegex(ValueError, "restore state"):
+                post_consensus(client, self._config(), self._manifest("head"), consensus)
+            self.assertEqual(client.created, 0)
+            self.assertEqual(client.updated, 0)
+            self.assertEqual(client.mr_notes, [])
 
     def test_post_fallback_does_not_overwrite_same_discussion_twice(self) -> None:
         # Bug #1: two surface groups whose recovered state match both resolve to one
@@ -766,6 +687,10 @@ class PostTests(PostCase):
                 existing_group, position=self._position(), discussion_id="shared"
             )
         ]
+        client = StatePostClient(
+            "head",
+            self._state_with_records([self._state_record(existing_group, discussion_id="shared")]),
+        )
         result = post_consensus(
             client,  # type: ignore[arg-type]
             self._config(),
@@ -1212,6 +1137,7 @@ class PostTests(PostCase):
                     {
                         "id": 123,
                         "author": {"id": 10},
+                        "position": self._position(),
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
@@ -1277,6 +1203,7 @@ class PostTests(PostCase):
                     {
                         "id": 123,
                         "author": {"id": 10},
+                        "position": self._position(),
                         "body": (
                             "stale body\n\n"
                             f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id=old "
@@ -1300,29 +1227,18 @@ class PostTests(PostCase):
         self.assertEqual(result["summary_comment"]["action"], "created")
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_fallback_ignores_resolved_discussion(self) -> None:
+    def test_missing_ledger_with_resolved_history_requires_repair(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
-        existing_group = copy.deepcopy(consensus["groups"][0])
-        existing_group["issue_id"] = "c" * 64
         client.discussions = [
             self._existing_discussion(
-                existing_group,
-                position=self._position(),
-                resolved=True,
+                consensus["groups"][0], position=self._position(), resolved=True
             )
         ]
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(result["created_discussions"], 1)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(client.created, 1)
+        with self.assertRaisesRegex(ValueError, "restore state"):
+            post_consensus(client, self._config(), self._manifest("head"), consensus)
+        self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
-        validate_instance(result, "post_result.schema.json")
 
     def test_post_state_overflow_fails_closed_before_mutation(self) -> None:
         client = FakePostClient("head")
@@ -1361,8 +1277,9 @@ class PostTests(PostCase):
         self.assertEqual(result["created_discussions"], 1)
         self.assertEqual(len(client.state_notes), 1)
         self.assertEqual(len(client.summary_notes), 1)
-        self.assertEqual(len(client.updated_mr_notes), 1)
-        state = decode_state_note_body(client.updated_mr_notes[-1]["body"])
+        self.assertEqual(len(client.mr_notes), 1)
+        self.assertEqual(len(client.updated_mr_notes), 0)
+        state = decode_state_note_body(client.mr_notes[-1]["body"])
         validate_instance(state, "state.schema.json")
         self.assertEqual(state["records"][0]["discussion_id"], "discussion")
         self.assertEqual(state["records"][0]["status"], "open")
@@ -1410,7 +1327,13 @@ class PostTests(PostCase):
                     config = self._config(mode=mode)
                     client = StatePostClient("head", state)
                     plan = plan_state(
-                        config, manifest, consensus, state, [], [], [],
+                        config,
+                        manifest,
+                        consensus,
+                        state,
+                        [],
+                        [],
+                        [],
                         {record["issue_id"]: command},
                     )
                     result = _initial_post_result(
@@ -1420,9 +1343,18 @@ class PostTests(PostCase):
                         client, "resolve_thread", side_effect=platform.resolve_thread
                     ):
                         posting_module.finalize_state(
-                            client, manifest, consensus, result, plan, [], [], [],
-                            posting_mode=mode, max_fyi=0,
-                            bot_author_id=client.BOT_ID, dry_run=False,
+                            client,
+                            manifest,
+                            consensus,
+                            result,
+                            plan,
+                            [],
+                            [],
+                            [],
+                            posting_mode=mode,
+                            max_fyi=0,
+                            bot_author_id=client.BOT_ID,
+                            dry_run=False,
                         )
                     self.assertEqual(len(session.calls), 1)
                     self.assertEqual(result["status"], "partial_failed")
@@ -1436,77 +1368,34 @@ class PostTests(PostCase):
 
                     retry = StatePostClient("head", saved)
                     retry_plan = plan_state(
-                        config, manifest, consensus, saved, [], [], [],
+                        config,
+                        manifest,
+                        consensus,
+                        saved,
+                        [],
+                        [],
+                        [],
                         {record["issue_id"]: command},
                     )
                     retry_result = _initial_post_result(
                         consensus=consensus, manifest=manifest, current_head_sha="head"
                     )
                     posting_module.finalize_state(
-                        retry, manifest, consensus, retry_result, retry_plan, [], [], [],
-                        posting_mode=mode, max_fyi=0,
-                        bot_author_id=retry.BOT_ID, dry_run=False,
+                        retry,
+                        manifest,
+                        consensus,
+                        retry_result,
+                        retry_plan,
+                        [],
+                        [],
+                        [],
+                        posting_mode=mode,
+                        max_fyi=0,
+                        bot_author_id=retry.BOT_ID,
+                        dry_run=False,
                     )
                     self.assertEqual(retry_result["status"], "success")
                     self.assertEqual(len(retry.resolve_calls), 1)
-
-    def test_post_state_processing_runs_before_and_after_mutations(self) -> None:
-        consensus = self._consensus()
-        group = consensus["groups"][0]
-        persisted_state = self._state_with_records([self._state_record(group)])
-        client = StatePostClient("head", persisted_state)
-
-        normalize_calls = 0
-        compact_calls = 0
-        overflow_calls = 0
-        real_normalize_state = posting_module.normalize_state
-        real_compact_state = state_plan_module.compact_state
-        real_state_overflow_reason = state_plan_module.state_overflow_reason
-
-        def spy_normalize_state(*args: Any, **kwargs: Any) -> Any:
-            nonlocal normalize_calls
-            normalize_calls += 1
-            return real_normalize_state(*args, **kwargs)
-
-        def spy_compact_state(*args: Any, **kwargs: Any) -> Any:
-            nonlocal compact_calls
-            compact_calls += 1
-            return real_compact_state(*args, **kwargs)
-
-        def spy_state_overflow_reason(*args: Any, **kwargs: Any) -> Any:
-            nonlocal overflow_calls
-            overflow_calls += 1
-            return real_state_overflow_reason(*args, **kwargs)
-
-        # normalize_state is called from both modules: once by
-        # posting.load_persisted_state, and twice by
-        # state_plan._process_state_for_persistence. Both are patched so the
-        # counter still totals every call.
-        with (
-            patch.object(posting_module, "normalize_state", side_effect=spy_normalize_state),
-            patch.object(state_plan_module, "normalize_state", side_effect=spy_normalize_state),
-            patch.object(state_plan_module, "compact_state", side_effect=spy_compact_state),
-            patch.object(
-                state_plan_module,
-                "state_overflow_reason",
-                side_effect=spy_state_overflow_reason,
-            ),
-        ):
-            result = post_consensus(
-                client,  # type: ignore[arg-type]
-                self._config(),
-                self._manifest("head"),
-                consensus,
-            )
-
-        validate_instance(result, "post_result.schema.json")
-        self.assertEqual(result["status"], "success")
-        # Loading the persisted state normalizes once. Posting state is checked
-        # before GitLab writes to fail closed on overflow, then re-checked after
-        # inline mutations add discussion ids and body hashes.
-        self.assertEqual(normalize_calls, 3)
-        self.assertEqual(compact_calls, 2)
-        self.assertEqual(overflow_calls, 2)
 
     def test_post_state_match_changed_issue_id_does_not_auto_resolve_prior_record(self) -> None:
         consensus = self._consensus()
@@ -1561,8 +1450,10 @@ class PostTests(PostCase):
                 elif history == "distinct records":
                     records = [
                         self._state_record(
-                            group, issue_id=str(index) * 64,
-                            discussion_id=f"thread-{index}", anchor={},
+                            group,
+                            issue_id=str(index) * 64,
+                            discussion_id=f"thread-{index}",
+                            anchor={},
                         )
                         for index, group in enumerate(groups, 8)
                     ]
@@ -1570,9 +1461,7 @@ class PostTests(PostCase):
                     records = []
                 client = StatePostClient("head", self._state_with_records(records))
 
-                result = post_consensus(
-                    client, self._config(), self._manifest("head"), consensus
-                )
+                result = post_consensus(client, self._config(), self._manifest("head"), consensus)
 
                 validate_instance(result, "post_result.schema.json")
                 expected_updates = 2 if history == "distinct records" else len(records)
@@ -1646,20 +1535,19 @@ class PostTests(PostCase):
             self._config(),
             self._manifest("head"),
             consensus,
-            diff_text=diff_text,
         )
 
         self.assertEqual(result["updated_discussions"], 1)
         self.assertEqual(result["created_discussions"], 0)
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
-        self.assertEqual(state_after["records"][0]["remap_status"], "exact")
+        self.assertEqual(state_after["records"][0]["anchor"], group["representative_anchor"])
         validate_instance(result, "post_result.schema.json")
 
     def test_post_remapped_anchor_updates_existing_discussion_without_duplicate(self) -> None:
         consensus = self._consensus()
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
-        current_diff = self._single_line_diff(4)
+        group["representative_anchor"] = self._anchor_with_context(4, self._single_line_diff(4))
         anchor = self._anchor_with_context(2, old_diff)
         state = self._state_with_records([self._state_record(group, anchor=anchor)])
         client = StatePostClient("head", state)
@@ -1669,7 +1557,6 @@ class PostTests(PostCase):
             self._config(),
             self._manifest("head"),
             consensus,
-            diff_text=current_diff,
         )
 
         self.assertEqual(result["created_discussions"], 0)
@@ -1707,12 +1594,16 @@ class PostTests(PostCase):
                     },
                 }
                 old_diff = self._one_sided_diff(added=added, line=2)
-                current_diff = self._one_sided_diff(added=added, line=4)
                 anchor = copy.deepcopy(group["representative_anchor"])
                 anchor["hunk_header"] = ""
                 anchor["symbol"] = None
                 anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
                 state = self._state_with_records([self._state_record(group, anchor=anchor)])
+                group["representative_anchor"] = copy.deepcopy(anchor)
+                group["representative_anchor"]["start"]["new_line" if added else "old_line"] = 4
+                group["representative_anchor"]["end"] = dict(
+                    group["representative_anchor"]["start"]
+                )
                 client = StatePostClient("head", state)
                 config = self._config(v1_inline_sides=["new", "old"])
 
@@ -1721,7 +1612,6 @@ class PostTests(PostCase):
                     config,
                     self._manifest("head"),
                     consensus,
-                    diff_text=current_diff,
                 )
 
                 self.assertEqual(result["created_discussions"], 0)
@@ -1745,7 +1635,7 @@ class PostTests(PostCase):
         consensus = self._consensus()
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
-        current_diff = self._single_line_diff(4)
+        group["representative_anchor"] = self._anchor_with_context(4, self._single_line_diff(4))
         anchor = self._anchor_with_context(2, old_diff)
         record = self._state_record(group, anchor=anchor)
         record["root_note_id"] = None
@@ -1757,7 +1647,6 @@ class PostTests(PostCase):
             self._config(),
             self._manifest("head"),
             consensus,
-            diff_text=current_diff,
         )
 
         self.assertEqual(result["created_discussions"], 1)
@@ -1770,7 +1659,7 @@ class PostTests(PostCase):
         manifest = self._manifest("head")
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
-        current_diff = self._single_line_diff(4)
+        group["representative_anchor"] = self._anchor_with_context(4, self._single_line_diff(4))
         anchor = self._anchor_with_context(2, old_diff)
         state = self._state_with_records([self._state_record(group, anchor=anchor)])
         state_plan = plan_state(
@@ -1800,7 +1689,6 @@ class PostTests(PostCase):
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
             inline_multiline=False,
-            current_diff_text=current_diff,
             dry_run=True,
         )
 
@@ -1816,7 +1704,7 @@ class PostTests(PostCase):
         manifest = self._manifest("head")
         group = consensus["groups"][0]
         old_diff = self._single_line_diff(2)
-        current_diff = self._single_line_diff(4)
+        group["representative_anchor"] = self._anchor_with_context(4, self._single_line_diff(4))
         anchor = self._anchor_with_context(2, old_diff)
         _body, body_hash = render_body(
             group,
@@ -1853,7 +1741,6 @@ class PostTests(PostCase):
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
             inline_multiline=False,
-            current_diff_text=current_diff,
             dry_run=True,
         )
 
@@ -1863,89 +1750,6 @@ class PostTests(PostCase):
         self.assertEqual(client.created, 0)
         self.assertEqual(client.updated, 0)
         self.assertEqual(client.updated_notes, [])
-        validate_instance(result, "post_result.schema.json")
-
-    def test_post_missing_remap_falls_back_without_resolving(self) -> None:
-        consensus = self._consensus()
-        group = consensus["groups"][0]
-        old_diff = self._single_line_diff(2)
-        anchor = self._anchor_with_context(2, old_diff)
-        state = self._state_with_records([self._state_record(group, anchor=anchor)])
-        client = StatePostClient("head", state)
-
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-            diff_text=self._single_line_diff(2, "different"),
-        )
-
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        self.assertEqual(client.resolve_calls, [])
-        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
-        self.assertEqual(state_after["records"][0]["status"], "stale_unverified")
-        self.assertEqual(state_after["records"][0]["remap_status"], "missing")
-        validate_instance(result, "post_result.schema.json")
-
-    def test_post_ambiguous_remap_marks_stale_without_mutation(self) -> None:
-        consensus = self._consensus()
-        group = consensus["groups"][0]
-        block = (
-            [f"+ctx-{index}" for index in range(6)]
-            + ["+target"]
-            + [f"+tail-{index}" for index in range(6)]
-        )
-        old_diff = "\n".join(
-            [
-                "diff --git a/src/foo.py b/src/foo.py",
-                "--- a/src/foo.py",
-                "+++ b/src/foo.py",
-                "@@ -1,1 +10,13 @@",
-                *block,
-            ]
-        )
-        ambiguous_diff = "\n".join(
-            [
-                "diff --git a/src/foo.py b/src/foo.py",
-                "--- a/src/foo.py",
-                "+++ b/src/foo.py",
-                "@@ -1,1 +30,13 @@",
-                *block,
-                "@@ -20,1 +70,13 @@",
-                *block,
-            ]
-        )
-        anchor = {
-            "new_path": "src/foo.py",
-            "old_path": "src/foo.py",
-            "side": "new",
-            "start": {"old_line": None, "new_line": 16, "line_code": None},
-            "end": {"old_line": None, "new_line": 16, "line_code": None},
-            "hunk_header": "@@ -1,1 +10,13 @@",
-            "context_hash": "",
-            "symbol": None,
-        }
-        anchor["context_hash"] = context_hash_from_unified_diff(old_diff, anchor)
-        state = self._state_with_records([self._state_record(group, anchor=anchor)])
-        client = StatePostClient("head", state)
-
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-            diff_text=ambiguous_diff,
-        )
-
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(result["updated_discussions"], 0)
-        self.assertTrue(any("ambiguous remap" in item for item in result["warnings"]))
-        state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
-        self.assertEqual(state_after["records"][0]["status"], "stale")
-        self.assertEqual(state_after["records"][0]["remap_status"], "ambiguous")
         validate_instance(result, "post_result.schema.json")
 
 

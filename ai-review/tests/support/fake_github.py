@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import STATE_NOTE_RE, state_note_candidates
+from ai_review.memory import STATE_NOTE_RE
 from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.github import (
-    STATE_MARKER,
     GitHubReviewPlatformError,
     PullRequestVersion,
     build_position,
@@ -156,18 +155,14 @@ class FakeGitHubClient:
     def list_state_notes(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> list[dict[str, Any]]:
-        return [
-            self._normalize_issue_comment(comment)
-            for comment in self._issue_comments
-            if STATE_MARKER in str(comment.get("body", ""))
-        ]
+        return [self._normalize_issue_comment(comment) for comment in self._issue_comments]
 
     def create_state_note(
         self, project_id_or_path: str | int, change_id: str | int, body: str
     ) -> dict[str, Any]:
         note = {
             "id": self._id(),
-            "body": self._with_state_marker(body),
+            "body": body,
             "user": {"id": self.bot_id, "login": self.bot_login},
         }
         self._issue_comments.append(note)
@@ -187,7 +182,7 @@ class FakeGitHubClient:
             if note["id"] == note_id:
                 if note["user"]["id"] != self.bot_id:
                     raise GitHubReviewPlatformError(f"403 Forbidden: comment {note_id}")
-                note["body"] = self._with_state_marker(body)
+                note["body"] = body
                 return self._normalize_issue_comment(note)
         raise RuntimeError("missing note")
 
@@ -238,8 +233,12 @@ class FakeGitHubClient:
     # one and read as 2 whenever both were present.
     @property
     def state_notes(self) -> list[dict[str, Any]]:
-        candidates, _warnings, _mismatches = state_note_candidates(self._issue_comments)
-        return candidates
+        return [
+            note
+            for note in self._issue_comments
+            if STATE_NOTE_RE.search(str(note.get("body", ""))) is not None
+        ]
+
     @property
     def summary_notes(self) -> list[dict[str, Any]]:
         return [
@@ -269,12 +268,6 @@ class FakeGitHubClient:
             "resolved": resolved,
             "position": note["position"],
         }
-
-    @staticmethod
-    def _with_state_marker(body: str) -> str:
-        if STATE_NOTE_RE.search(body) is None:
-            return body
-        return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
 
     @staticmethod
     def _normalize_issue_comment(comment: dict[str, Any]) -> dict[str, Any]:

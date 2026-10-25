@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -308,16 +307,13 @@ class StatePlanningTests(PostCase):
 
         context = prepare_post_context(
             client,
-            self._config(),
             manifest,
             result,
             dry_run=False,
-            diff_text="diff text",
         )
 
         self.assertEqual(context.version, MergeRequestVersion("base", "start", "head"))
-        self.assertEqual(context.current_diff_text, "diff text")
-        self.assertEqual(context.raw_discussions, [discussion])
+        self.assertIn(discussion, context.raw_discussions)
         self.assertEqual(context.persisted_state["records"][0]["issue_id"], group["issue_id"])
         self.assertEqual(context.human_commands, {group["issue_id"]: "resolve"})
         self.assertEqual(result["warnings"], [])
@@ -354,7 +350,6 @@ class StatePlanningTests(PostCase):
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
             inline_multiline=False,
-            current_diff_text=None,
             dry_run=False,
         )
 
@@ -745,9 +740,7 @@ class AlwaysOnStateTests(PostCase):
             "author": {"id": 10},
             "body": (
                 "AI review state. Machine-owned; do not edit.\n"
-                "<!-- ai-review-state:v1 bm90LWpzb24 state_hash="
-                + "0" * 64
-                + " -->"
+                "<!-- ai-review-state:v1 bm90LWpzb24 state_hash=" + "0" * 64 + " -->"
             ),
         }
 
@@ -777,7 +770,6 @@ class AlwaysOnStateTests(PostCase):
             self._config(mode="github_reviews"),
             manifest,
             self._consensus(),
-            diff_text="",
         )
 
         self.assertEqual(result["status"], "success")
@@ -785,9 +777,7 @@ class AlwaysOnStateTests(PostCase):
         # One PR comment, holding the state the GitLab run puts in an MR note.
         self.assertEqual(len(client.state_notes), 1)
 
-    def _context_for(
-        self, *, notes: list[dict[str, Any]], recovery: bool
-    ) -> tuple[PostContext, PostResult]:
+    def _context_for(self, *, notes: list[dict[str, Any]]) -> tuple[PostContext, PostResult]:
         """Prepare a post context over one marked discussion and the given notes."""
         consensus = self._consensus()
         client = FakePostClient("head")
@@ -802,11 +792,9 @@ class AlwaysOnStateTests(PostCase):
         )
         context = prepare_post_context(
             client,
-            self._config(state={"recover_from_discussion_markers": recovery}),
             self._manifest("head"),
             result,
             dry_run=False,
-            diff_text="",
         )
         return context, result
 
@@ -814,64 +802,28 @@ class AlwaysOnStateTests(PostCase):
     def _recovered_ids(context: PostContext) -> list[str]:
         return [record["discussion_id"] for record in context.persisted_state["records"]]
 
-    def test_absent_note_with_recovery_enabled_uses_trusted_markers(self) -> None:
-        context, _result = self._context_for(notes=[], recovery=True)
+    def test_absent_note_uses_trusted_current_revision_markers(self) -> None:
+        context, _result = self._context_for(notes=[])
 
         self.assertEqual(self._recovered_ids(context), ["existing-discussion"])
 
-    def test_absent_note_with_recovery_disabled_uses_normalized_empty_state(self) -> None:
-        context, _result = self._context_for(notes=[], recovery=False)
+    def test_corrupt_state_aborts_before_marker_recovery(self) -> None:
+        with self.assertRaises(ValueError):
+            self._context_for(notes=[self._corrupt_note()])
 
-        # A concrete State, not None: absence is resolved before the caller sees it.
-        self.assertEqual(context.persisted_state["records"], [])
-        self.assertEqual(context.persisted_state["project_id"], "1")
-
-    def test_unusable_note_warns_then_follows_the_recovery_policy(self) -> None:
-        """Corrupt, wrong-author, and checksum-failure notes share one path.
-
-        Each yields "no valid persisted note" plus warnings; the configured
-        marker-recovery policy then decides what state the run starts from.
-        """
-        good_state = self._state_with_records(
-            [self._state_record(self._consensus()["groups"][0])]
-        )
-        cases = {
-            "corrupt": (self._corrupt_note(), "corrupt state note"),
-            "wrong-author": (
+    def test_foreign_state_is_ignored_and_authenticated_markers_can_recover(self) -> None:
+        good = self._state_with_records([])
+        context, result = self._context_for(
+            notes=[
                 {
                     "id": 1,
                     "author": {"id": 99},
-                    "body": encode_state_note(good_state),
-                },
-                "non-bot author",
-            ),
-            "checksum-failure": (
-                {
-                    "id": 1,
-                    "author": {"id": 10},
-                    # Well-formed marker, payload intact, declared hash wrong.
-                    "body": re.sub(
-                        r"state_hash=[0-9a-f]{64}",
-                        "state_hash=" + "f" * 64,
-                        encode_state_note(good_state),
-                    ),
-                },
-                "state_hash mismatch",
-            ),
-        }
-        for name, (note, expected_warning) in cases.items():
-            for recovery in (True, False):
-                with self.subTest(case=name, recovery=recovery):
-                    context, result = self._context_for(notes=[note], recovery=recovery)
-
-                    self.assertTrue(
-                        any(expected_warning in warning for warning in result["warnings"]),
-                        result["warnings"],
-                    )
-                    self.assertEqual(
-                        self._recovered_ids(context),
-                        ["existing-discussion"] if recovery else [],
-                    )
+                    "body": encode_state_note(good),
+                }
+            ],
+        )
+        self.assertEqual(self._recovered_ids(context), ["existing-discussion"])
+        self.assertTrue(any("non-bot author" in w for w in result["warnings"]))
 
     def test_dry_run_performs_no_state_mutation(self) -> None:
         client = FakePostClient("head")

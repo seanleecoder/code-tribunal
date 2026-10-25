@@ -8,6 +8,7 @@ from typing import Any, overload
 from .canonical import sha256_hex
 from .consensus_policy import demoted_by_noise
 from .constants import SEVERITY_RANK
+from .memory import encode_state_note
 from .render import (
     encode_marker_token,
     literal_span,
@@ -145,7 +146,6 @@ class SummarySectionDescriptor:
 
 def _compose_summary_sections(sections: list[SummarySectionDescriptor], health: str) -> str:
     # The health section is reserved space; only finding sections are truncated.
-    # SPEC-66/N04: persisted state later claims its own reserved block here.
     rendered_sections = ["**AI review summary**", health]
     for section in sections:
         total = len(section.entries)
@@ -162,9 +162,7 @@ def _drop_lowest_priority_trailing_entry(
     sections: list[SummarySectionDescriptor],
 ) -> bool:
     candidates = [
-        (index, section)
-        for index, section in enumerate(sections)
-        if section.retained_count > 0
+        (index, section) for index, section in enumerate(sections) if section.retained_count > 0
     ]
     if not candidates:
         return False
@@ -181,6 +179,7 @@ def render_summary_body(
     max_fyi: int,
     *,
     posting_mode: str,
+    state: Mapping[str, Any],
 ) -> tuple[str, str]:
     fallback_sorted = _sort_groups(fallback_groups)
     fyi_sorted = _sort_groups(fyi_groups)
@@ -188,10 +187,9 @@ def render_summary_body(
     fallback_entries = [_summary_line(group) for group in fallback_sorted]
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
-    health = run_health_section(run_health)
+    health = run_health_section(run_health) + "\n\n" + encode_state_note(state)
     placeholder_marker = (
-        "<!-- ai-review-summary:v1 run_id="
-        f"{encode_marker_token(run_id)} body_hash={'0' * 64} -->"
+        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={'0' * 64} -->"
     )
     configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
 
@@ -247,8 +245,7 @@ def render_summary_body(
 
     body_hash = sha256_hex(body_without_marker)
     marker = (
-        "<!-- ai-review-summary:v1 run_id="
-        f"{encode_marker_token(run_id)} body_hash={body_hash} -->"
+        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={body_hash} -->"
     )
     if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")

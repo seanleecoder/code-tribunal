@@ -90,18 +90,10 @@ posting:
   stale_head_guard: true # Abort posting if MR commit HEAD changes during job execution
 
 # Persistent state management across pipeline runs. Always on: posting.mode
-# selects the platform adapter that stores it (a GitLab MR state note or a GitHub
-# PR comment), and there is no `backend` key to set. A document that still
-# carries one is rejected.
+# selects the platform adapter storing the ledger inside the bot summary.
+# There is no `backend` key. Author checks and payload integrity are mandatory.
 state:
-  recover_from_discussion_markers: true # Reconstruct state from inline comments if state note is lost or corrupted
-  checksum_required: true # Require SHA256 integrity check on state note content
-  fail_closed_on_load_error: false # If true, prepare fails instead of starting with empty state when persisted state cannot be loaded. Enforcing installs should set true (see getting-started).
   retention:
-    keep_open: true # Preserve state records for open findings
-    keep_wontfix: true # Preserve state records marked as won't fix
-    keep_resolved_records: 5 # Number of resolved finding records to retain
-    keep_stale_records: 2 # Number of stale/stale_unverified records to retain
     max_records: 200 # Max state entry count
     max_state_bytes: 50000 # Max byte size for state payload note
 

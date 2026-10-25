@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from .anchors import title_fingerprint
 from .config import ReviewConfig, StateRetention
 from .memory import (
     compact_state,
@@ -16,7 +15,6 @@ from .memory import (
     normalize_state_record,
     ordered_unique,
     state_overflow_reason,
-    title_aliases,
 )
 from .notes import ExistingReviewDiscussion
 from .schema import now_iso
@@ -106,11 +104,6 @@ def _record_for_group(
         "context_hashes": _recent_aliases(
             match_keys.get("context_hashes"), aliases.get("context_hashes")
         ),
-        "title_fingerprints": _recent_aliases(
-            title_aliases(title, match_keys.get("title_fingerprints")),
-            aliases.get("title_fingerprints"),
-        ),
-        "symbols": _recent_aliases(match_keys.get("symbols"), aliases.get("symbols")),
     }
     return normalize_state_record(
         {
@@ -206,25 +199,20 @@ def state_from_existing_discussions(
             continue
         if discussion.discussion_id is None or discussion.root_note_id is None:
             continue
-        if (
-            current_head_sha is not None
-            and isinstance(discussion.position, dict)
-            and discussion.position.get("head_sha") not in {None, current_head_sha}
+        if current_head_sha is not None and (
+            not isinstance(discussion.position, dict)
+            or discussion.position.get("head_sha") != current_head_sha
         ):
             continue
         anchor = _anchor_from_position(discussion.position or {})
-        title_fp = title_fingerprint(discussion.title) if discussion.title else None
         records.append(
             {
                 "issue_id": discussion.marker["issue_id"],
                 "category": discussion.category or "",
                 "title": discussion.title,
                 "aliases": {
-                    "candidate_issue_signatures": [],
                     "source_finding_ids": [],
                     "context_hashes": [],
-                    "title_fingerprints": [title_fp] if title_fp else [],
-                    "symbols": [],
                 },
                 "discussion_id": str(discussion.discussion_id),
                 "root_note_id": discussion.root_note_id,
@@ -233,7 +221,7 @@ def state_from_existing_discussions(
                 "last_posted_body_hash": discussion.marker["body_hash"],
             }
         )
-    return {"state_schema_version": 1, "records": records}
+    return {"state_schema_version": 2, "records": records}
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -246,14 +234,6 @@ def position_side(position: dict[str, Any]) -> str | None:
     if has_new:
         return "new"
     return None
-
-
-def _can_remap_anchor(anchor: Any) -> bool:
-    return (
-        isinstance(anchor, dict)
-        and isinstance(anchor.get("context_hash"), str)
-        and bool(anchor.get("context_hash"))
-    )
 
 
 def _desired_discussion_resolved(
@@ -343,9 +323,7 @@ def _process_state_for_persistence(
     pipeline_id: str,
     retention: StateRetention,
 ) -> tuple[State, str | None]:
-    compacted = compact_state(
-        normalize_state(state, manifest=manifest, pipeline_id=pipeline_id), retention
-    )
+    compacted = compact_state(normalize_state(state, manifest=manifest, pipeline_id=pipeline_id))
     overflow = state_overflow_reason(
         compacted,
         max_records=retention.max_records,

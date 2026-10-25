@@ -8,7 +8,6 @@ from typing import Any
 from urllib.parse import quote
 
 from ai_review.http_retry import send_with_retries
-from ai_review.memory import STATE_NOTE_RE
 from ai_review.types import Anchor
 
 from .base import Position, ReviewPlatformError, ReviewStateNote, Thread
@@ -30,8 +29,6 @@ class PullRequestVersion:
 _PULL_NUMBER_RE = re.compile(r"[1-9][0-9]{0,9}")
 _GIT_OBJECT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 
-STATE_MARKER = "<!-- ai-review-state:v1 github-pr-comment -->"
-
 
 def _github_side(anchor: Anchor) -> str:
     return "LEFT" if anchor.get("side") == "old" else "RIGHT"
@@ -51,9 +48,7 @@ def build_position(
     line_key = "old_line" if anchor.get("side") == "old" else "new_line"
     position: Position = {
         "commit_id": version.head_sha,
-        "path": anchor.get("old_path")
-        if anchor.get("side") == "old"
-        else anchor.get("new_path"),
+        "path": anchor.get("old_path") if anchor.get("side") == "old" else anchor.get("new_path"),
         "line": end.get(line_key) or start.get(line_key),
         "side": _github_side(anchor),
     }
@@ -100,7 +95,7 @@ class GitHubReviewPlatform:
     def _derive_graphql_url(api_url: str) -> str:
         base = api_url.rstrip("/")
         if base.endswith("/api/v3"):
-            return f"{base[:-len('/api/v3')]}/api/graphql"
+            return f"{base[: -len('/api/v3')]}/api/graphql"
         return f"{base}/graphql"
 
     def _headers(
@@ -164,9 +159,7 @@ class GitHubReviewPlatform:
                     f"GitHub rejected the raw diff request ({detail}); "
                     f"no review bundle was produced{suffix}"
                 )
-            return GitHubReviewPlatformError(
-                f"GitHub API {method} {path} failed: {status}"
-            )
+            return GitHubReviewPlatformError(f"GitHub API {method} {path} failed: {status}")
 
         # kwargs are captured once for every attempt. Callers must not pass
         # one-shot streaming bodies (e.g. data=<file>) that cannot be re-read.
@@ -193,9 +186,7 @@ class GitHubReviewPlatform:
             )
         errors = response.get("errors")
         if errors:
-            raise GitHubReviewPlatformError(
-                f"GitHub GraphQL {operation} failed: {errors}"
-            )
+            raise GitHubReviewPlatformError(f"GitHub GraphQL {operation} failed: {errors}")
         data = response.get("data")
         if not isinstance(data, dict):
             raise GitHubReviewPlatformError(
@@ -494,9 +485,7 @@ class GitHubReviewPlatform:
             raise GitHubReviewPlatformError(
                 f"GitHub pull request number must be an integer, got {change_id!r}"
             ) from exc
-        target_node_id = self._review_thread_node_id(
-            owner, name, pull_request_number, thread_id
-        )
+        target_node_id = self._review_thread_node_id(owner, name, pull_request_number, thread_id)
 
         mutation = (
             """
@@ -557,15 +546,10 @@ class GitHubReviewPlatform:
     def list_state_notes(
         self, project_id_or_path: str | int, change_id: str | int
     ) -> list[ReviewStateNote]:
-        bot = self._bot_login or self._current_user_login()
         notes = self._get_all_pages(
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments"
         )
-        return [
-            self._normalize_issue_comment(note)
-            for note in notes
-            if self._is_bot_state_note(note, bot)
-        ]
+        return [self._normalize_issue_comment(note) for note in notes]
 
     def create_state_note(
         self, project_id_or_path: str | int, change_id: str | int, body: str
@@ -573,7 +557,7 @@ class GitHubReviewPlatform:
         note = self._request(
             "POST",
             f"/repos/{self._repo(project_id_or_path)}/issues/{change_id}/comments",
-            json={"body": self._with_state_marker(body)},
+            json={"body": body},
         )
         return self._verified_state_write(note, action="create")
 
@@ -583,7 +567,7 @@ class GitHubReviewPlatform:
         note = self._request(
             "PATCH",
             f"/repos/{self._repo(project_id_or_path)}/issues/comments/{note_id}",
-            json={"body": self._with_state_marker(body)},
+            json={"body": body},
         )
         return self._verified_state_write(note, action="update")
 
@@ -648,24 +632,6 @@ class GitHubReviewPlatform:
         if not isinstance(notes, list) or not notes or not isinstance(notes[0].get("id"), int):
             raise GitHubReviewPlatformError("GitHub review comment response did not include id")
         return int(notes[0]["id"])
-
-    @staticmethod
-    def _with_state_marker(body: str) -> str:
-        if STATE_NOTE_RE.search(body) is None:
-            return body
-        return body if STATE_MARKER in body else f"{body}\n\n{STATE_MARKER}"
-
-    @staticmethod
-    def _is_bot_state_note(note: dict[str, Any], bot_login: str | None) -> bool:
-        body = note.get("body")
-        raw_user = note.get("user")
-        user = raw_user if isinstance(raw_user, dict) else {}
-        return (
-            isinstance(body, str)
-            and STATE_MARKER in body
-            and STATE_NOTE_RE.search(body) is not None
-            and user.get("login") == bot_login
-        )
 
     @staticmethod
     def _normalize_issue_comment(comment: dict[str, Any]) -> dict[str, Any]:

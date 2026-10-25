@@ -146,7 +146,7 @@ def parse_review_note(body: str) -> dict[str, str] | None:
         # The first header-shaped line decides, whether or not it parses. A
         # refused header must refuse the note: scanning on would let a v2
         # note's unfenced model body supply its own header further down, and
-        # the recovered category and title feed ``title_anchor`` matching.
+        # the recovered category and title become trusted state metadata.
         # Skipping non-candidates keeps the tolerance for leading preamble.
         header_category = _parse_review_header(stripped)
         if header_category is not None:
@@ -233,7 +233,7 @@ def find_summary_note(
         if not isinstance(body, str):
             continue
         match = SUMMARY_MARKER_RE.search(body)
-        if match is None:
+        if match is None and re.search(r"<!--\s*ai-review-state:v2\b", body) is None:
             continue
         note_id = root.get("id")
         if not isinstance(note_id, int):
@@ -242,5 +242,5 @@ def find_summary_note(
         if author_id != expected_author_id:
             warnings.append(f"ignored summary note {note_id} from non-bot author {author_id}")
             continue
-        return note_id, match.group("body_hash")
+        return note_id, match.group("body_hash") if match else ""
     return None

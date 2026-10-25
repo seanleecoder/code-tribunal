@@ -294,11 +294,10 @@ def _state_note_body(pipeline_id: str) -> str:
     """
     return encode_state_note(
         {
-            "state_schema_version": 1,
+            "state_schema_version": 2,
             "project_id": "1",
             "merge_request_iid": "2",
             "last_head_sha": "0" * 40,
-            "state_note_id": None,
             "written_by_pipeline_id": pipeline_id,
             "updated_at": "2026-06-29T00:00:00Z",
             "records": [],

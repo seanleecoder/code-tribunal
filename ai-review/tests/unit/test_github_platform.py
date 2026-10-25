@@ -7,7 +7,6 @@ from unittest import mock
 import pytest
 from ai_review.memory import encode_state_note
 from ai_review.platform.github import (
-    STATE_MARKER,
     GitHubReviewPlatform,
     GitHubReviewPlatformError,
 )
@@ -36,7 +35,7 @@ class Session:
         if url.endswith("/issues/7/comments"):
             state = encode_state_note(
                 {
-                    "state_schema_version": 1,
+                    "state_schema_version": 2,
                     "project_id": "octo/repo",
                     "merge_request_iid": "7",
                     "last_head_sha": "h" * 40,
@@ -48,12 +47,12 @@ class Session:
                 [
                     {
                         "id": 1,
-                        "body": f"{state}\n\n{STATE_MARKER}",
+                        "body": state,
                         "user": {"id": 42, "login": "bot"},
                     },
                     {
                         "id": 2,
-                        "body": f"{state}\n\n{STATE_MARKER}",
+                        "body": state,
                         "user": {"id": 99, "login": "alice"},
                     },
                     {"id": 3, "body": "summary", "user": {"id": 42, "login": "bot"}},
@@ -119,13 +118,13 @@ class MissingBotSession:
         return Response(404, {"message": "Not Found"})
 
 
-def test_state_notes_are_author_verified_and_normalized() -> None:
+def test_state_note_transport_preserves_authorship_for_strict_loading() -> None:
     session = Session()
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
 
     notes = platform.list_state_notes("octo/repo", 7)
 
-    assert len(notes) == 1
+    assert len(notes) == 3
     assert notes[0]["id"] == 1
     assert notes[0]["author"]["id"] == 42
     assert notes[0]["author"]["username"] == "bot"

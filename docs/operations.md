@@ -64,7 +64,7 @@ Remove `--state` from custom consensus commands. Prepare no longer writes
 `state_aliases.json`; posting reads the latest platform state itself and keeps
 historical thread IDs and commands. Ambiguous matches appear in the summary
 without mutating or automatically resolving their candidate threads. Persisted
-state keeps its version 1 format.
+state uses version 2 inside the summary comment; see the migration below.
 
 ## Failure behavior
 
@@ -75,8 +75,7 @@ state keeps its version 1 format.
 | Critique disabled or optional evidence absent | Consensus uses valid reviewer evidence without critique | Confirm this matches rollout policy |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
 | Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with identical project-scoped overrides |
-| State load fails and `fail_closed_on_load_error=false` | Prepare warns and begins from empty recoverable state | Investigate ownership/API/checksum; expect conservative repost risk |
-| State load fails and option is true | Prepare fails | Restore state/API access or make a deliberate policy change |
+| State is inaccessible, corrupt, duplicated, or still v1 | Prepare/post stop before publication | Restore state/API access or complete the explicit v2 migration |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
 | Head changes before posting | No stale mutation; `post` reports `stale_head` and exits 0 | Let the newer revision's run own the review |
 | Consensus surfaces a `blocker` finding | A thread is posted; `post` exits 0 | Treat it as review input. Merge policy is the repository's, not Code Tribunal's |
@@ -96,6 +95,59 @@ A failed thread resolution or reopening also reports `partial_failed`. The state
 retains the previous status and human disposition, so repairing platform access
 and rerunning can retry the command. The structured result includes the platform
 error before the CLI exits nonzero.
+
+## State v2 migration
+
+The next major release stores its checksummed ledger inside the bot's summary,
+with one top-level bot comment per change request. Runtime accepts only v2.
+Existing v1 ledgers must be converted before switching images; never delete a
+ledger and start empty. Keep the original export for rollback. State v2 cannot
+be read by 2.1.x: rollback requires restoring the exported v1 note and summary
+while reviews are paused.
+
+For each open change request with previous state:
+
+1. Pause all review triggers and wait for active prepare/post jobs to finish.
+2. Export **all pages** of top-level comments/notes from the platform API using
+   the bot identity. Keep author IDs and note IDs. For GitHub, for example:
+   `gh api --paginate --slurp repos/OWNER/REPO/issues/NUMBER/comments > notes.json`.
+   For GitLab, export every page of
+   `projects/PROJECT/merge_requests/IID/notes` into one JSON array. Keep this
+   original export until the upgrade and any rollback window have closed.
+3. From the new source checkout, run the offline converter:
+
+   ```sh
+   PYTHONPATH=ai-review/src .venv/bin/python scripts/migrate_state_v2.py \
+     --notes notes.json --bot-author-id BOT_USER_ID \
+     --project-id OWNER/REPO --change-id NUMBER \
+     --posting-mode github_reviews --out update.json
+   ```
+
+   For GitLab, use the ledger's project ID and MR IID and
+   `--posting-mode gitlab_discussions`. The command emits a `{"body": ...}`
+   API update payload and prints the existing target note ID and obsolete IDs.
+   It sends no requests. Missing/ambiguous ledgers, corrupt checksums, wrong
+   change identities, invalid records, and oversized summaries stop conversion
+   without writing an update. Resolve ambiguity from the preserved evidence;
+   the converter never guesses which ledger to keep.
+4. Review `update.json`. Update the printed target through the platform API,
+   read it back, and verify its body equals the emitted body. Then delete only
+   the printed obsolete state-note IDs. The existing summary is reused when
+   present; otherwise the old state note becomes the summary. Resume with the
+   new images only after both steps succeed. A failed update leaves the v1
+   ledger intact; a failed deletion leaves reviews paused until cleanup finishes.
+5. Remove retired state controls listed in [configuration](configuration.md#posting-and-state),
+   rerun from prepare, and verify thread IDs and human dismissals remain intact.
+
+The conversion preserves every record and disposition, maps old `drop` decisions
+to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
+No online legacy decoder or automatic migration runs during prepare/post.
+
+If publication fails after creating threads but before writing the combined
+summary, a retry reconciles bot-authored thread roots on that same revision.
+It never replaces authoritative ledger records or human dispositions. Missing
+older history requires deliberate repair from the saved export; corrupt state
+is not treated as absence.
 
 ## Concurrency
 

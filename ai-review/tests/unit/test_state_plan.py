@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from ai_review.anchors import title_fingerprint
 from ai_review.config import ReviewConfig
 from ai_review.memory import find_matching_record
 from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
@@ -110,7 +109,7 @@ def _matching_record(issue_id: str, **overrides: Any) -> dict[str, Any]:
 
 
 def _state(records: list[dict[str, Any]]) -> Any:
-    return cast(Any, {"state_schema_version": 1, "records": records})
+    return cast(Any, {"state_schema_version": 2, "records": records})
 
 
 def _plan(
@@ -416,9 +415,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             aliases["source_finding_ids"], ["f" * 64, older[3], *older[:3], *older[4:7]]
         )
         self.assertEqual(aliases["context_hashes"], ["f" * 64, *older[:7]])
-        self.assertEqual(aliases["symbols"], ["current", *[f"symbol{i}" for i in range(7)]])
-        self.assertEqual(aliases["title_fingerprints"], [title_fingerprint("Title")])
-        self.assertEqual(aliases["candidate_issue_signatures"], [])
+        self.assertEqual(set(aliases), {"source_finding_ids", "context_hashes"})
 
     def test_alias_families_never_trim_this_runs_keys(self) -> None:
         # Consensus sorts a group's keys by hash, so a cut could drop the
@@ -480,10 +477,9 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             records = _plan(persisted=records, inline=[group]).planned_state["records"]
 
         aliases = records[0]["aliases"]
-        for family in ("source_finding_ids", "context_hashes", "title_fingerprints", "symbols"):
+        for family in ("source_finding_ids", "context_hashes"):
             self.assertEqual(len(aliases[family]), MAX_ALIASES_PER_FAMILY, family)
         self.assertEqual(aliases["source_finding_ids"][0], f"{29:064x}")
-        self.assertEqual(aliases["title_fingerprints"][0], title_fingerprint("Title"))
 
     def test_unmatched_records_keep_their_stored_aliases(self) -> None:
         older = [f"{index:064x}" for index in range(1, 11)]

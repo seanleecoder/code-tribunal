@@ -13,12 +13,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from .anchors import remap_anchor
 from .commands import collect_human_commands
 from .config import ReviewConfig
 from .memory import (
-    encode_state_note,
-    newest_valid_state_from_notes,
+    load_state_from_notes,
     normalize_state,
 )
 from .notes import (
@@ -30,7 +28,6 @@ from .render import platform_comment_limit, render_body
 from .schema import now_iso
 from .state_plan import (
     StatePlan,
-    _can_remap_anchor,
     _desired_discussion_resolved,
     _pipeline_id,
     _process_state_for_persistence,
@@ -52,88 +49,22 @@ from .types import (
 )
 
 
-def _list_state_notes(
-    client: ReviewPlatform,
-    project_id: str,
-    change_id: str,
-) -> list[dict[str, Any]]:
-    notes = client.list_state_notes(project_id, change_id)
-    return notes if isinstance(notes, list) else []
-
-
 def load_persisted_state(
     client: ReviewPlatform,
-    config: ReviewConfig,
     manifest: dict[str, Any],
     *,
     bot_author_id: int,
 ) -> tuple[State | None, list[str]]:
-    """Load the persisted state note, or report its absence.
-
-    ``None`` means "no valid persisted note" and nothing else — never "state is
-    off". Normalizing an empty state here instead would make the caller's
-    discussion-marker recovery branch unreachable, so absence stays visible at
-    this boundary and ``prepare_post_context`` decides what to put in its place.
-    """
-    notes = _list_state_notes(
-        client,
-        manifest["project_id"],
-        manifest["merge_request_iid"],
-    )
-    state, warnings = newest_valid_state_from_notes(
-        notes,
-        checksum_required=config.state.checksum_required,
-        expected_author_id=bot_author_id,
-    )
+    notes = client.list_state_notes(manifest["project_id"], manifest["merge_request_iid"])
+    state, warnings = load_state_from_notes(notes, expected_author_id=bot_author_id)
     if state is None:
         return None, warnings
-    return (
-        normalize_state(
-            state,
-            manifest=manifest,
-            pipeline_id=_pipeline_id(manifest),
-        ),
-        warnings,
-    )
-
-
-def write_persisted_state(
-    client: ReviewPlatform,
-    manifest: dict[str, Any],
-    state: Mapping[str, Any],
-    *,
-    dry_run: bool = False,
-) -> dict[str, Any] | None:
-    """Persist state unless this is a dry run.
-
-    No config argument: nothing in the state section decides whether the write
-    happens, and the platform adapter that receives it is already bound to
-    ``client``.
-    """
-    if dry_run:
-        return None
-    state_without_hash = {key: value for key, value in state.items() if key != "state_hash"}
-    body = encode_state_note(state_without_hash)
-    note_id = state.get("state_note_id")
-    if isinstance(note_id, int):
-        return client.update_state_note(
-            manifest["project_id"],
-            manifest["merge_request_iid"],
-            note_id,
-            body,
-        )
-    created = client.create_state_note(manifest["project_id"], manifest["merge_request_iid"], body)
-    created_id = created.get("id") if isinstance(created, dict) else None
-    if isinstance(created_id, int):
-        state_with_id = dict(state_without_hash, state_note_id=created_id)
-        body_with_id = encode_state_note(state_with_id)
-        return client.update_state_note(
-            manifest["project_id"],
-            manifest["merge_request_iid"],
-            created_id,
-            body_with_id,
-        )
-    return created if isinstance(created, dict) else None
+    if (state["project_id"], state["merge_request_iid"]) != (
+        str(manifest["project_id"]),
+        str(manifest["merge_request_iid"]),
+    ):
+        raise ValueError("persisted state belongs to another change")
+    return normalize_state(state, manifest=manifest, pipeline_id=_pipeline_id(manifest)), warnings
 
 
 def _note_id_from_response(response: Any) -> int | None:
@@ -151,6 +82,7 @@ def upsert_summary_comment(
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     max_fyi: int,
+    state: Mapping[str, Any],
     *,
     posting_mode: str,
     bot_author_id: int,
@@ -175,6 +107,7 @@ def upsert_summary_comment(
         fyi_groups,
         max_fyi,
         posting_mode=posting_mode,
+        state=state,
     )
     if dry_run:
         summary["action"] = "created"
@@ -249,7 +182,6 @@ def _classify_post_groups(
     because a configured count was reached.
     """
 
-
     inline_candidates: list[FindingGroup] = []
     summary_fallback_groups: list[FindingGroup] = []
     fyi_groups: list[FindingGroup] = []
@@ -279,24 +211,6 @@ def _classify_post_groups(
         fyi_groups=fyi_groups,
         warnings=warnings,
     )
-
-
-def _load_current_diff_text(
-    client: ReviewPlatform,
-    manifest: dict[str, Any],
-    diff_text: str | None,
-    warnings: list[str],
-) -> str | None:
-    if diff_text is not None:
-        return diff_text
-    try:
-        fetched = client.fetch_diff(manifest["project_id"], manifest["merge_request_iid"])
-        return fetched if isinstance(fetched, str) else None
-    except Exception as exc:
-        warnings.append(
-            f"diff_fetch_failed: inline remap skipped, anchors may be stale ({type(exc).__name__})"
-        )
-        return None
 
 
 @dataclass(frozen=True)
@@ -391,9 +305,7 @@ def _update_existing_inline_discussion(
         # Mirror create-path degradation: keep posting the rest of the run and
         # write a structured post_result instead of aborting before the artifact.
         result["status"] = "partial_failed"
-        result["warnings"].append(
-            f"update_comment for {post_group['issue_id']} failed: {exc}"
-        )
+        result["warnings"].append(f"update_comment for {post_group['issue_id']} failed: {exc}")
         summary_fallback_groups.append(group)
         return
     planned_record["discussion_id"] = existing_discussion_id
@@ -421,7 +333,6 @@ def post_inline(
     *,
     posting_mode: str,
     inline_multiline: bool,
-    current_diff_text: str | None,
     dry_run: bool,
 ) -> InlinePostOutcome:
     """Post inline discussions and return the mutated posting/state phase outputs.
@@ -452,37 +363,9 @@ def post_inline(
         if existing is not None:
             if existing["issue_id"] != group["issue_id"]:
                 post_group = dict(group, issue_id=existing["issue_id"])
-            existing_anchor = existing.get("anchor")
-            if current_diff_text is not None and _can_remap_anchor(existing_anchor):
-                remap = remap_anchor(current_diff_text, cast(dict[str, Any], existing_anchor))
-                remap_status = str(remap.get("status"))
-                if remap_status == "exact":
-                    planned_record["remap_status"] = "exact"
-                elif remap_status == "remapped" and isinstance(remap.get("anchor"), dict):
-                    remapped_anchor = remap["anchor"]
-                    planned_record["anchor"] = remapped_anchor
-                    planned_record["remap_status"] = "remapped"
-                    # Preserve thread identity and state after deterministic
-                    # remap. Visible placement is platform-specific and requires
-                    # separate live validation; create only without a reusable thread.
-                    post_group = dict(post_group, representative_anchor=remapped_anchor)
-                elif remap_status == "missing":
-                    planned_record["status"] = "stale_unverified"
-                    planned_record["remap_status"] = "missing"
-                    result["stale_unverified"] += 1
-                    result["warnings"].append(
-                        f"missing remap for {post_group['issue_id']}; posting summary fallback"
-                    )
-                    summary_fallback_groups.append(group)
-                    continue
-                else:
-                    planned_record["status"] = "stale"
-                    planned_record["remap_status"] = "ambiguous"
-                    result["warnings"].append(
-                        f"ambiguous remap for {post_group['issue_id']}; skipped inline update"
-                    )
-                    summary_fallback_groups.append(group)
-                    continue
+            planned_record["remap_status"] = (
+                "exact" if existing.get("anchor") == group["representative_anchor"] else "remapped"
+            )
 
         body, body_hash = render_body(
             cast(FindingGroup, post_group),
@@ -569,27 +452,6 @@ def finalize_state(
     bot_author_id: int,
     dry_run: bool,
 ) -> PostResult:
-    # Summary fallback is unconditional. A surfaced finding that could not be
-    # anchored is still a finding two reviewers supported independently; the
-    # configuration key that used to suppress this list erased it from all
-    # product output, leaving it only in persisted state and a warning.
-    result["summary_comment"] = cast(
-        SummaryComment,
-        upsert_summary_comment(
-            client,
-            manifest,
-            consensus["run_id"],
-            consensus["run_health"],
-            raw_discussions,
-            summary_fallback_groups,
-            fyi_groups,
-            max_fyi,
-            posting_mode=posting_mode,
-            bot_author_id=bot_author_id,
-            warnings=result["warnings"],
-            dry_run=dry_run,
-        ),
-    )
     prior_records = {record["issue_id"]: record for record in state_plan.base_records}
     prior_status: dict[str, StateRecordStatus | None] = {
         issue_id: record.get("status") for issue_id, record in prior_records.items()
@@ -613,9 +475,7 @@ def finalize_state(
         except ReviewPlatformError as exc:
             action = "resolve" if desired else "unresolve"
             result["status"] = "partial_failed"
-            result["warnings"].append(
-                f"failed to {action} thread {discussion_id}: {exc}"
-            )
+            result["warnings"].append(f"failed to {action} thread {discussion_id}: {exc}")
             previous = prior_records.get(record["issue_id"])
             record["status"] = previous.get("status", "open") if previous else "open"
             record["human_disposition"] = previous.get("human_disposition") if previous else None
@@ -634,7 +494,28 @@ def finalize_state(
         result["warnings"].append(f"state overflow after mutations: {overflow}")
         return result
     try:
-        write_persisted_state(client, manifest, final_state, dry_run=dry_run)
+        # Summary fallback is unconditional. A surfaced finding that could not be
+        # anchored is still a finding two reviewers supported independently; the
+        # configuration key that used to suppress this list erased it from all
+        # product output, leaving it only in persisted state and a warning.
+        result["summary_comment"] = cast(
+            SummaryComment,
+            upsert_summary_comment(
+                client,
+                manifest,
+                consensus["run_id"],
+                consensus["run_health"],
+                raw_discussions,
+                summary_fallback_groups,
+                fyi_groups,
+                max_fyi,
+                final_state,
+                posting_mode=posting_mode,
+                bot_author_id=bot_author_id,
+                warnings=result["warnings"],
+                dry_run=dry_run,
+            ),
+        )
     except Exception as exc:
         result["status"] = (
             "partial_failed"
@@ -651,7 +532,6 @@ def finalize_state(
 @dataclass(frozen=True)
 class PostContext:
     version: Any
-    current_diff_text: str | None
     raw_discussions: list[dict[str, Any]]
     persisted_state: State
     human_commands: dict[str, str]
@@ -660,15 +540,12 @@ class PostContext:
 
 def prepare_post_context(
     client: ReviewPlatform,
-    config: ReviewConfig,
     manifest: dict[str, Any],
     result: PostResult,
     *,
     dry_run: bool,
-    diff_text: str | None,
 ) -> PostContext:
     version = client.fetch_version(manifest["project_id"], manifest["merge_request_iid"])
-    current_diff_text = _load_current_diff_text(client, manifest, diff_text, result["warnings"])
     raw_discussions = (
         []
         if dry_run
@@ -681,28 +558,39 @@ def prepare_post_context(
     if bot_author_id is None:
         raise RuntimeError("post requires current_user lookup to verify note authors")
     persisted_state, state_warnings = load_persisted_state(
-        client, config, manifest, bot_author_id=bot_author_id
+        client, manifest, bot_author_id=bot_author_id
     )
+    indexed = index_ai_review_discussions(raw_discussions)
     if persisted_state is None:
-        # Absence, not disablement. Recovery runs only on this branch: when a
-        # valid note was loaded its records are authoritative, and the marker
-        # scan would be wasted on a discarded result.
-        # Normalizing `None` yields the same empty document the recovery-off
-        # path wants, so the two only differ in what they hand to normalize.
-        recovered = (
-            state_from_existing_discussions(
-                index_ai_review_discussions(raw_discussions),
-                current_head_sha=manifest["head_sha"],
-                expected_author_id=bot_author_id,
+        if any(
+            discussion.author_id == bot_author_id
+            and (
+                discussion.resolved
+                or not isinstance(discussion.position, dict)
+                or discussion.position.get("head_sha") != manifest["head_sha"]
             )
-            if config.state.recover_from_discussion_markers
-            else None
-        )
+            for discussion in indexed
+        ):
+            raise ValueError("existing review history has no ledger; restore state from an export")
         persisted_state = normalize_state(
-            recovered,
-            manifest=manifest,
-            pipeline_id=_pipeline_id(manifest),
+            None, manifest=manifest, pipeline_id=_pipeline_id(manifest)
         )
+    # A previous write may have created a thread before the combined summary
+    # failed. Reconcile only bot-authored roots on this revision, preserving
+    # every authoritative ledger record and disposition.
+    known_ids = {record["issue_id"] for record in persisted_state["records"]}
+    known_threads = {record["discussion_id"] for record in persisted_state["records"]}
+    recovered = state_from_existing_discussions(
+        indexed,
+        current_head_sha=manifest["head_sha"],
+        expected_author_id=bot_author_id,
+        exclude_discussion_ids=known_threads,
+    )
+    persisted_state["records"].extend(
+        cast(StateRecord, record)
+        for record in recovered["records"]
+        if record["issue_id"] not in known_ids
+    )
     result["warnings"].extend(state_warnings)
     human_commands = collect_human_commands(
         client,
@@ -712,7 +600,6 @@ def prepare_post_context(
     )
     return PostContext(
         version=version,
-        current_diff_text=current_diff_text,
         raw_discussions=raw_discussions,
         persisted_state=persisted_state,
         human_commands=human_commands,
@@ -727,7 +614,6 @@ def post_consensus(
     consensus: Consensus,
     *,
     dry_run: bool = False,
-    diff_text: str | None = None,
 ) -> PostResult:
     posting = config.posting
     posting_mode = posting.mode
@@ -751,11 +637,9 @@ def post_consensus(
     max_fyi = config.limits.max_fyi_findings
     context = prepare_post_context(
         client,
-        config,
         manifest,
         result,
         dry_run=dry_run,
-        diff_text=diff_text,
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
@@ -786,6 +670,22 @@ def post_consensus(
         result["status"] = "state_overflow"
         result["warnings"].append(state_plan.outcome.overflow)
         return result
+    # Reserve health and the complete ledger before any platform mutation. Only
+    # visible finding entries may be truncated to fit the combined comment.
+    try:
+        render_summary_body(
+            consensus["run_id"],
+            consensus["run_health"],
+            summary_fallback_groups,
+            fyi_groups,
+            max_fyi,
+            posting_mode=posting_mode,
+            state=state_plan.planned_state,
+        )
+    except ValueError as exc:
+        result["status"] = "state_overflow"
+        result["warnings"].append(str(exc))
+        return result
     inline_outcome = post_inline(
         client,
         manifest,
@@ -796,7 +696,6 @@ def post_consensus(
         context.version,
         posting_mode=posting_mode,
         inline_multiline=inline_multiline,
-        current_diff_text=context.current_diff_text,
         dry_run=dry_run,
     )
 

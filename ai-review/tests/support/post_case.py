@@ -8,7 +8,7 @@ from typing import Any
 
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import ReviewConfig
-from ai_review.memory import attach_state_hash
+from ai_review.memory import normalize_state
 from ai_review.render import render_body
 
 from .config_yaml import runtime_config
@@ -132,17 +132,17 @@ class PostCase(unittest.TestCase):
         }
 
     def _state_with_records(self, records: list[dict[str, Any]]) -> dict[str, Any]:
-        return attach_state_hash(
+        return normalize_state(
             {
-                "state_schema_version": 1,
+                "state_schema_version": 2,
                 "project_id": "1",
                 "merge_request_iid": "2",
                 "last_head_sha": "old-head",
-                "state_note_id": None,
                 "written_by_pipeline_id": "old",
                 "updated_at": "2026-06-29T00:00:00Z",
                 "records": records,
-            }
+            },
+            manifest={},
         )
 
     def _existing_discussion(
@@ -178,9 +178,7 @@ class PostCase(unittest.TestCase):
         or ``panel`` section. Sections merge all the way down, so a test that
         raises one retention bound keeps the shipped defaults for the others.
         """
-        sections = {
-            name: overrides.pop(name, {}) for name in ("limits", "state", "panel")
-        }
+        sections = {name: overrides.pop(name, {}) for name in ("limits", "state", "panel")}
         sections["posting"] = overrides
 
         def mutate(config: dict[str, Any]) -> None:

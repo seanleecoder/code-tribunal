@@ -48,11 +48,9 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
-- **Done, unreleased for the next major:** N11 (`consensus.v3`).
+- **Done, unreleased for the next major:** N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary).
 - **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
-  SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
-  decoder, deleted on
-  2026-10-18), S18, S19.
+  SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
     canaries every release and the hostile canary when the trust boundary changes
@@ -153,8 +151,10 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
     `summary.drop_count`, and requires `run_health`. Posting alone matches the
     latest state and preserves thread identity; prepare no longer writes the
     state-alias artifact. COMPAT-003, COMPAT-006 and COMPAT-007 are removed.
-13. One S14 state migration: state moves into the summary comment (N04), and the
-    anchor remap uses context hashes (N14).
+13. Done, unreleased: S14 state v2 moves state into the summary (N04), uses
+    current group anchors and context aliases (N14), and provides an explicit
+    offline v1 migration. COMPAT-005 is removed; COMPAT-009 tracks the offline
+    converter. Corrupt or inaccessible state fails closed.
 14. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in

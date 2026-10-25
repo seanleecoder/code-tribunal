@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ai_review.memory import state_note_candidates
+from ai_review.memory import STATE_NOTE_RE
 from ai_review.notes import SUMMARY_MARKER_RE
 from ai_review.platform.gitlab import (
     GitLabReviewPlatformError,
@@ -220,8 +220,11 @@ class FakeGitLabClient:
 
     @property
     def state_notes(self) -> list[dict[str, Any]]:
-        candidates, _warnings, _mismatches = state_note_candidates(self.mr_notes)
-        return candidates
+        return [
+            note
+            for note in self.mr_notes
+            if STATE_NOTE_RE.search(str(note.get("body", ""))) is not None
+        ]
 
     def _allocate_note_id(self) -> int:
         note_id = self._next_note_id
