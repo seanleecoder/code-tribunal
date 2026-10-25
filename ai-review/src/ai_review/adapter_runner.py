@@ -184,14 +184,10 @@ def run_adapter(reviewer: str, stage: str) -> int:
         elif stage == "critique":
             tmp_dir = output_dir / ".tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            pooled_out = output_dir / "pooled_findings" / f"{reviewer}.json"
             rendered, pooled = render_critique_prompt(
-                input_dir,
-                config,
-                reviewer,
-                output_dir / "findings",
-                pooled_findings_out=pooled_out,
+                input_dir, config, reviewer, output_dir / "findings"
             )
+            write_canonical_json(output_dir / "pooled_findings" / f"{reviewer}.json", pooled)
             prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
             prompt_tmp.write_text(rendered, encoding="utf-8")
 

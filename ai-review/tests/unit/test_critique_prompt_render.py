@@ -9,7 +9,7 @@ from ai_review.config import CritiqueConfig, ReviewConfig, effective_config_bind
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
 from ai_review.reviewers import trusted_runtime_root
-from ai_review.schema import load_json_file, write_canonical_json
+from ai_review.schema import write_canonical_json
 
 from .test_consensus_state_matching import _batch as _unbound_batch
 from .test_consensus_state_matching import _config, _finding
@@ -86,12 +86,11 @@ class CritiquePromptRenderTests(unittest.TestCase):
         self.assertEqual(pooled_finding["body"], "The codex setting is a real input name.")
         self.assertEqual(pooled_finding["evidence"], ["claude_config['codex']"])
 
-    def test_render_critique_prompt_writes_audit_copy(self) -> None:
+    def test_render_critique_prompt_returns_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
             findings_dir = root / "out" / "findings"
-            pooled_out = root / "out" / "pooled_findings" / "opencode.json"
             for path in [input_dir / "rules", findings_dir]:
                 path.mkdir(parents=True, exist_ok=True)
             # A stray bundle copy must not reach the prompt: rules come from the image.
@@ -103,21 +102,15 @@ class CritiquePromptRenderTests(unittest.TestCase):
             )
 
             rendered, pool = render_critique_prompt(
-                input_dir,
-                _full_config(),
-                "opencode",
-                findings_dir,
-                pooled_findings_out=pooled_out,
+                input_dir, _full_config(), "opencode", findings_dir
             )
 
             self.assertIn("<POOLED_FINDINGS_JSON>", rendered)
             self.assertIn(_SHIPPED_CRITIQUE_PROMPT, rendered)
             self.assertIn(f"### README.md\n{_SHIPPED_RULES}", rendered)
             self.assertNotIn("Bundle rule.", rendered)
-            audit = load_json_file(pooled_out)
-            self.assertEqual(audit, pool)
-            self.assertEqual(audit["source_finding_ids"], {"F001": "1" * 64})
-            self.assertEqual(audit["findings"][0]["reviewer"], "reviewer_A")
+            self.assertEqual(pool["source_finding_ids"], {"F001": "1" * 64})
+            self.assertEqual(pool["findings"][0]["reviewer"], "reviewer_A")
             self.assertNotIn("source_finding_ids", rendered)
             self.assertNotIn("1" * 64, rendered)
 

@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .anchors import anchor_path_key, finding_sort_key
+from .anchors import anchor_location, finding_sort_key
 from .canonical import canonical_json_text
 from .config import ReviewConfig
 from .consensus import validate_consensus_inputs
 from .reviewers import trusted_runtime_root
-from .schema import load_json_file, validate_instance, write_canonical_json
+from .schema import load_json_file, validate_instance
 
 
 class PromptRenderError(ValueError):
@@ -150,19 +150,11 @@ def build_pooled_findings(
     for index, finding in enumerate(ordered, start=1):
         short_id = f"F{index:03d}"
         mapping[short_id] = finding["source_finding_id"]
-        anchor = finding["anchor"]
-        number = "old_line" if anchor["side"] == "old" else "new_line"
         findings.append(
             {
                 "id": short_id,
                 "reviewer": aliases[finding["reviewer"]] if blind else finding["reviewer"],
-                "location": {
-                    "path": anchor_path_key(anchor),
-                    "side": anchor["side"],
-                    "start_line": anchor["start"][number],
-                    "end_line": anchor["end"][number],
-                    "symbol": anchor["symbol"],
-                },
+                "location": anchor_location(finding["anchor"]),
                 **{
                     key: finding[key]
                     for key in ("severity", "category", "title", "body", "evidence", "suggestion")
@@ -194,8 +186,6 @@ def render_critique_prompt(
     config: ReviewConfig,
     critic: str,
     findings_dir: str | Path,
-    *,
-    pooled_findings_out: str | Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
     input_dir = Path(input_dir)
     manifest = load_json_file(input_dir / "manifest.json")
@@ -205,8 +195,6 @@ def render_critique_prompt(
         config,
         critic,
     )
-    if pooled_findings_out is not None:
-        write_canonical_json(pooled_findings_out, pooled_findings)
     rendered = _render(
         "critique",
         config,

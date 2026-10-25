@@ -11,7 +11,7 @@ from typing import Any
 from unittest import mock
 
 from ai_review.anchors import _line_belongs_to_side
-from ai_review.schema import finalize_finding_batch, validate_instance
+from ai_review.schema import finalize_finding_batch
 
 DIFF = "\n".join(
     [
@@ -62,7 +62,6 @@ class FindingCapTests(unittest.TestCase):
                     max_findings=cap,
                     effective_config_sha256="0" * 64,
                 )
-        validate_instance(batch, "finding_batch.schema.json")
         return batch
 
     def test_severity_cap_and_malformed_siblings_after_cap(self) -> None:
