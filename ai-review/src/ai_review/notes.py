@@ -18,6 +18,10 @@ SUMMARY_MARKER_RE = re.compile(
     r"<!--\s*ai-review-summary:v1\s+run_id=(?P<run_id>[^\s]+)\s+"
     r"body_hash=(?P<body_hash>[a-f0-9]{64})\s*-->"
 )
+# Any state marker, well-formed or not; ``version`` is empty when it has none.
+STATE_MARKER_RE = re.compile(r"<!--\s*ai-review-state:(?:v(?P<version>[0-9]+)\b)?")
+# Any bot container that may hold the ledger, including malformed and old ones.
+LEDGER_CONTAINER_RE = re.compile(r"<!--\s*ai-review-(?:state|summary):")
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
 
@@ -233,7 +237,7 @@ def find_summary_note(
         if not isinstance(body, str):
             continue
         match = SUMMARY_MARKER_RE.search(body)
-        if match is None and re.search(r"<!--\s*ai-review-state:v2\b", body) is None:
+        if match is None and "2" not in STATE_MARKER_RE.findall(body):
             continue
         note_id = root.get("id")
         if not isinstance(note_id, int):

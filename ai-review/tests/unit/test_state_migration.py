@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import base64
-import importlib
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -17,8 +15,10 @@ from ai_review.memory import (
 )
 from ai_review.notes import SUMMARY_MARKER_RE
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-migration = importlib.import_module("migrate_state_v2")
+from tests.support.repository_script import load_repository_script
+
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "migrate_state_v2.py"
+migration = load_repository_script("migrate_state_v2", SCRIPT)
 
 
 def legacy_note() -> dict:

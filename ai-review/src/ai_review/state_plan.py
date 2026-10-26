@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from functools import cache
+from typing import Any, cast, get_args
 
 from .config import ReviewConfig, StateRetention
 from .memory import (
@@ -19,6 +20,7 @@ from .memory import (
 from .notes import ExistingReviewDiscussion
 from .schema import load_schema, now_iso
 from .types import (
+    Category,
     Consensus,
     FindingGroup,
     State,
@@ -191,9 +193,7 @@ def state_from_existing_discussions(
     expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
-    category_schema = load_schema("state.schema.json")["properties"]["records"]["items"][
-        "properties"
-    ]["category"]
+    categories = get_args(Category.__value__)
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
         if discussion.resolved or discussion.discussion_id in excluded:
@@ -211,9 +211,7 @@ def state_from_existing_discussions(
         records.append(
             {
                 "issue_id": discussion.marker["issue_id"],
-                "category": discussion.category
-                if discussion.category in category_schema["enum"]
-                else "other",
+                "category": discussion.category if discussion.category in categories else "other",
                 "title": discussion.title,
                 "aliases": {
                     "source_finding_ids": [],
@@ -229,32 +227,44 @@ def state_from_existing_discussions(
     return {"state_schema_version": 2, "records": records}
 
 
-def reserve_thread_ids(plan: StatePlan) -> State:
-    """Size the ledger with the largest supported IDs before creating threads."""
-    properties = load_schema("state.schema.json")["properties"]["records"]["items"]["properties"]
-    pending = {
+@cache
+def _state_record_properties() -> dict[str, Any]:
+    return load_schema("state.schema.json")["properties"]["records"]["items"]["properties"]
+
+
+def _threadless_issue_ids(inline_plans: Iterable[InlinePlan]) -> set[str]:
+    return {
         inline.record["issue_id"]
-        for inline in plan.inline_plans
+        for inline in inline_plans
         if inline.record is not None
         and inline.record["status"] not in {"wontfix", "resolved"}
         and (inline.record["discussion_id"] is None or inline.record["root_note_id"] is None)
     }
+
+
+def _with_reserved_thread_ids(state: State, issue_ids: set[str]) -> State:
+    properties = _state_record_properties()
     return cast(
         State,
         {
-            **plan.planned_state,
+            **state,
             "records": [
                 dict(
                     record,
                     discussion_id="x" * properties["discussion_id"]["maxLength"],
                     root_note_id=properties["root_note_id"]["maximum"],
                 )
-                if record["issue_id"] in pending
+                if record["issue_id"] in issue_ids
                 else record
-                for record in plan.planned_state["records"]
+                for record in state["records"]
             ],
         },
     )
+
+
+def reserve_thread_ids(plan: StatePlan) -> State:
+    """Size the ledger with the largest supported IDs before creating threads."""
+    return _with_reserved_thread_ids(plan.planned_state, _threadless_issue_ids(plan.inline_plans))
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -355,14 +365,19 @@ def _process_state_for_persistence(
     manifest: dict[str, Any],
     pipeline_id: str,
     retention: StateRetention,
+    threadless_issue_ids: set[str] | None = None,
 ) -> tuple[State, str | None]:
-    compacted = compact_state(normalize_state(state, manifest=manifest, pipeline_id=pipeline_id))
+    compacted = cast(
+        State, compact_state(normalize_state(state, manifest=manifest, pipeline_id=pipeline_id))
+    )
+    # Threads not yet created are sized at their largest supported IDs, so the
+    # ledger cannot outgrow its budget after inline posting has begun.
     overflow = state_overflow_reason(
-        compacted,
+        _with_reserved_thread_ids(compacted, threadless_issue_ids or set()),
         max_records=retention.max_records,
         max_state_bytes=retention.max_state_bytes,
     )
-    return cast(State, compacted), overflow
+    return compacted, overflow
 
 
 def plan_state(
@@ -483,11 +498,13 @@ def plan_state(
         planned_records=planned_records,
     )
     retention = config.state.retention
+    inline_plans = group_plans[: len(inline_candidates)]
     processed_state, overflow = _process_state_for_persistence(
         planned_state,
         manifest=manifest,
         pipeline_id=pipeline_id,
         retention=retention,
+        threadless_issue_ids=_threadless_issue_ids(inline_plans),
     )
     outcome.overflow = overflow
 
@@ -495,7 +512,7 @@ def plan_state(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        inline_plans=[] if outcome.overflow is not None else group_plans[: len(inline_candidates)],
+        inline_plans=[] if outcome.overflow is not None else inline_plans,
         pipeline_id=pipeline_id,
         planned_state=processed_state,
         retention=retention,

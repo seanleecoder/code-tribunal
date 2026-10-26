@@ -16,9 +16,9 @@ from typing import Any
 
 from ai_review.canonical import sha256_hex
 from ai_review.memory import attach_state_hash, encode_state_note, validate_state_hash
-from ai_review.notes import SUMMARY_MARKER_RE
+from ai_review.notes import STATE_MARKER_RE, SUMMARY_MARKER_RE
 from ai_review.render import platform_comment_limit
-from ai_review.schema import validate_instance
+from ai_review.summary_render import summary_marker
 
 # COMPAT-009: this offline decoder goes after the first-major upgrade window;
 # ordinary prepare/post never decode v1 or run this migration.
@@ -41,9 +41,7 @@ def migrate_comments(
         for note in notes
         if (note.get("author") or note.get("user") or {}).get("id") == bot_author_id
     ]
-    states = [
-        note for note in owned if re.search(r"<!--\s*ai-review-state:", str(note.get("body", "")))
-    ]
+    states = [note for note in owned if STATE_MARKER_RE.search(str(note.get("body", "")))]
     summaries = [
         note for note in owned if re.search(r"<!--\s*ai-review-summary:", str(note.get("body", "")))
     ]
@@ -94,7 +92,6 @@ def migrate_comments(
     for key in ("state_note_id", "run_history"):
         state.pop(key, None)
     state = attach_state_hash(state)
-    validate_instance(state, "state.schema.json")
     target = summaries[0] if summaries else source
     visible = (
         SUMMARY_MARKER_RE.sub("", target["body"]).strip()
@@ -104,9 +101,7 @@ def migrate_comments(
     if summaries and SUMMARY_MARKER_RE.search(target["body"]) is None:
         raise ValueError("summary marker is corrupt")
     content = visible + "\n\n" + encode_state_note(state)
-    body = content + (
-        f"\n\n<!-- ai-review-summary:v1 run_id=state-migration body_hash={sha256_hex(content)} -->"
-    )
+    body = content + "\n\n" + summary_marker("state-migration", sha256_hex(content))
     if len(body) > platform_comment_limit(posting_mode):
         raise ValueError("migrated summary exceeds the platform comment limit; no output written")
     target_id = int(target["id"])

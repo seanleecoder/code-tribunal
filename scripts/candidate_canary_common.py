@@ -281,7 +281,6 @@ def saved_wontfix(
     note = candidates[0]
     try:
         state = decode_state_note_body(note["body"])
-        validate_instance(state, "state.schema.json")
     except ValueError:
         raise LifecycleFailure("saved state note failed checksum or schema validation") from None
     if str(state["project_id"]) != project_id or str(state["merge_request_iid"]) != change_id:

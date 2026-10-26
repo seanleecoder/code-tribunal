@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from .anchors import anchor_path_key
 from .canonical import canonical_json, canonical_json_text, sha256_hex
-from .notes import note_author_id
+from .notes import LEDGER_CONTAINER_RE, STATE_MARKER_RE, note_author_id
 from .schema import now_iso, validate_instance
 from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
@@ -154,7 +154,7 @@ def encode_state_note(state: Mapping[str, Any]) -> str:
 
 def decode_state_note_body(body: str) -> dict[str, Any]:
     matches = list(STATE_NOTE_RE.finditer(body))
-    if len(matches) != 1 or len(re.findall(r"<!--\s*ai-review-state:", body)) != 1:
+    if len(matches) != 1 or len(STATE_MARKER_RE.findall(body)) != 1:
         raise ValueError("expected exactly one state v2 marker")
     encoded = matches[0].group("payload")
     try:
@@ -182,10 +182,7 @@ def state_note_candidates(
         body = note.get("body")
         # Recognize malformed and old markers too: corruption or an outstanding
         # migration must never look like an initial empty ledger.
-        if (
-            not isinstance(body, str)
-            or re.search(r"<!--\s*ai-review-(?:state|summary):", body) is None
-        ):
+        if not isinstance(body, str) or LEDGER_CONTAINER_RE.search(body) is None:
             continue
         if expected_author_id is not None and note_author_id(note) != expected_author_id:
             author_mismatches += 1
@@ -219,9 +216,10 @@ def load_state_from_notes(
             "multiple bot state/summary notes; migrate or repair state before retrying"
         )
     body = candidates[0]["body"]
-    if re.search(r"<!--\s*ai-review-state:", body) is None:
+    versions = STATE_MARKER_RE.findall(body)
+    if not versions:
         raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
-    if re.findall(r"<!--\s*ai-review-state:v([0-9]+)\b", body) != ["2"]:
+    if [version for version in versions if version] != ["2"]:
         raise ValueError(
             "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
         )
@@ -235,21 +233,22 @@ def load_state_from_notes(
     return attach_state_hash(dict(state, project_id=str(project_id))), warnings
 
 
+KEEP_AUTO_RESOLVED_RECORDS = 5
+
+
 def compact_state(state: Mapping[str, Any]) -> dict[str, Any]:
     # Active threads and explicit human dispositions are never evicted. Keep a
     # fixed tail of automatically resolved records; overflow fails before writes.
-    records = [
-        record
-        for record in state.get("records", [])
-        if record.get("status") != "resolved" or record.get("human_disposition")
-    ]
-    resolved = [
-        record
-        for record in state.get("records", [])
-        if record.get("status") == "resolved" and not record.get("human_disposition")
-    ]
+    records = []
+    auto_resolved = []
+    for record in state.get("records", []):
+        if record.get("status") == "resolved" and not record.get("human_disposition"):
+            auto_resolved.append(record)
+        else:
+            records.append(record)
+    newest_resolved = sorted(auto_resolved, key=_retention_sort_key, reverse=True)
     return attach_state_hash(
-        dict(state, records=records + sorted(resolved, key=_retention_sort_key, reverse=True)[:5])
+        dict(state, records=records + newest_resolved[:KEEP_AUTO_RESOLVED_RECORDS])
     )
 
 

@@ -18,7 +18,6 @@ from .config import ReviewConfig
 from .memory import (
     load_state_from_notes,
     normalize_state,
-    state_overflow_reason,
 )
 from .notes import (
     find_summary_note,
@@ -681,14 +680,6 @@ def post_consensus(
     # Reserve health and the complete ledger before any platform mutation. Only
     # visible finding entries may be truncated to fit the combined comment.
     try:
-        reserved_state = reserve_thread_ids(state_plan)
-        overflow = state_overflow_reason(
-            reserved_state,
-            max_records=state_plan.retention.max_records,
-            max_state_bytes=state_plan.retention.max_state_bytes,
-        )
-        if overflow is not None:
-            raise ValueError(overflow)
         render_summary_body(
             consensus["run_id"],
             consensus["run_health"],
@@ -696,7 +687,7 @@ def post_consensus(
             fyi_groups,
             max_fyi,
             posting_mode=posting_mode,
-            state=reserved_state,
+            state=reserve_thread_ids(state_plan),
         )
     except ValueError as exc:
         result["status"] = "state_overflow"

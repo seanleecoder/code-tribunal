@@ -218,7 +218,7 @@ class InputBundleLimitTests(unittest.TestCase):
 
 
 class PrepareStateLoadTests(unittest.TestCase):
-    """`_load_platform_state` always looks; only failure policy is configurable."""
+    """`_load_platform_state` always looks; missing state is empty, load failures abort."""
 
     def _default_state(self) -> dict[str, object]:
         return empty_state(

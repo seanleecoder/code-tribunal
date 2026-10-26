@@ -67,6 +67,13 @@ def _table_literal(value: str) -> str:
     return _literal(value).replace("|", "\\|")
 
 
+def summary_marker(run_id: str, body_hash: str) -> str:
+    """The trailing summary marker; ``body_hash`` covers everything before it."""
+    return (
+        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={body_hash} -->"
+    )
+
+
 def run_health_section(run_health: RunHealth) -> str:
     """The summary comment's health section: always present, never truncated."""
     jobs = run_health["jobs"]
@@ -188,9 +195,7 @@ def render_summary_body(
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
     health = run_health_section(run_health) + "\n\n" + encode_state_note(state)
-    placeholder_marker = (
-        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={'0' * 64} -->"
-    )
+    placeholder_marker = summary_marker(run_id, "0" * 64)
     configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
 
     def section_header(label: str, shown: int, total: int) -> str:
@@ -244,9 +249,7 @@ def render_summary_body(
         body_without_marker = _compose_summary_sections(sections, health)
 
     body_hash = sha256_hex(body_without_marker)
-    marker = (
-        f"<!-- ai-review-summary:v1 run_id={encode_marker_token(run_id)} body_hash={body_hash} -->"
-    )
+    marker = summary_marker(run_id, body_hash)
     if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")
     return body_without_marker + "\n\n" + marker, body_hash
