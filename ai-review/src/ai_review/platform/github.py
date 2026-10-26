@@ -413,7 +413,7 @@ class GitHubReviewPlatform:
                 nodes {
                   id
                   isResolved
-                  comments(first: 1) { nodes { databaseId } }
+                  comments(first: 1) { nodes { fullDatabaseId } }
                 }
               }
             }
@@ -476,7 +476,7 @@ class GitHubReviewPlatform:
                         raise GitHubReviewPlatformError(
                             "GitHub GraphQL review thread lookup returned no resolution state"
                         )
-                    database_id = root_comment.get("databaseId")
+                    database_id = root_comment.get("fullDatabaseId")
                     if database_id is not None:
                         review_threads[str(database_id)] = _ReviewThread(node_id, resolved)
 

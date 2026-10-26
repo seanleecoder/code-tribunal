@@ -451,7 +451,7 @@ class GraphQLSession:
                     {
                         "id": node_id,
                         "isResolved": self.thread_resolutions.get(database_id, False),
-                        "comments": {"nodes": [{"databaseId": database_id}]},
+                        "comments": {"nodes": [{"fullDatabaseId": str(database_id)}]},
                     }
                     for database_id, node_id in self.thread_node_ids.items()
                 ]
@@ -508,7 +508,7 @@ def test_thread_lookup_rejects_unverified_resolution(resolution: Any) -> None:
                                 {
                                     "id": "node-1",
                                     "isResolved": resolution,
-                                    "comments": {"nodes": [{"databaseId": 123}]},
+                                    "comments": {"nodes": [{"fullDatabaseId": "123"}]},
                                 }
                             ],
                         }
@@ -531,6 +531,25 @@ def test_list_threads_rejects_a_root_missing_from_graphql() -> None:
         pytest.raises(GitHubReviewPlatformError, match="not found via GraphQL"),
     ):
         platform.list_threads("octo/repo", 7)
+
+
+@pytest.mark.parametrize("comment_id", [1 << 31, (1 << 63) - 1])
+def test_large_comment_ids_can_be_listed_and_resolved(comment_id: int) -> None:
+    session = GraphQLSession(thread_node_ids={comment_id: "node-large"})
+    session.thread_resolutions[comment_id] = True
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch.object(
+        platform, "_get_all_pages", side_effect=[[{"id": comment_id, "body": "Human review"}], []]
+    ):
+        threads = platform.list_threads("octo/repo", 7)
+    assert threads[0]["id"] == str(comment_id)
+    assert threads[0]["resolved"] is True
+    assert threads[0]["notes"][0]["id"] == comment_id
+    assert "fullDatabaseId" in session.calls[0][2]["json"]["query"]
+
+    platform.resolve_thread("octo/repo", 7, str(comment_id), False)
+    assert len(session.calls) == 2
+    assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-large"
 
 
 def test_resolve_thread_uses_graphql_mutation() -> None:

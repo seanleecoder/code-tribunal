@@ -199,6 +199,104 @@ def test_planned_inline_fallback_space_is_checked_before_updating_threads(match:
     assert "Findings not posted inline" in client.state_notes[0]["body"]
 
 
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+def test_failed_inline_update_fallback_is_reserved_before_mutation(mode: str) -> None:
+    config, manifest, client, consensus = _setup(mode)
+    assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+    original_summary = client.state_notes[0]["body"]
+    original_hash = decode_state_note_body(original_summary)["records"][0]["last_posted_body_hash"]
+    consensus["groups"][0]["body"] = "Updated inline finding"
+    with (
+        patch.object(
+            client, "update_comment", side_effect=ReviewPlatformError("unavailable")
+        ) as update,
+        patch(
+            "ai_review.summary_render.platform_comment_limit", return_value=len(original_summary)
+        ),
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "state_overflow"
+    update.assert_not_called()
+    assert client.state_notes[0]["body"] == original_summary
+
+    with (
+        patch.object(client, "update_comment", side_effect=ReviewPlatformError("unavailable")),
+        patch(
+            "ai_review.summary_render.platform_comment_limit",
+            return_value=len(original_summary) + 500,
+        ),
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "partial_failed"
+    assert result["summary_comment"]["action"] == "updated"
+    assert "Updated inline finding" in client.state_notes[0]["body"]
+    state = decode_state_note_body(client.state_notes[0]["body"])
+    assert state["records"][0]["last_posted_body_hash"] == original_hash
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+@pytest.mark.parametrize(
+    ("capacity", "failed_count"), [("comment", 6), ("records", 6), ("fits", 1), ("fits", 6)]
+)
+def test_resolution_failure_capacity_is_reserved_before_creating_threads(
+    mode: str, capacity: str, failed_count: int
+) -> None:
+    config, manifest, client, consensus = _setup(mode)
+    if capacity == "records":
+        config = PostCase()._config(mode=mode, state={"retention": {"max_records": 6}})
+    title = "t" * {"comment": 6800, "records": 5, "fits": 5000}[capacity]
+    base = consensus["groups"][0]
+    consensus["groups"] = [
+        dict(
+            copy.deepcopy(base),
+            issue_id=f"{n:064x}",
+            source_finding_ids=[f"{n + 100:064x}"],
+            title=title,
+        )
+        for n in range(6)
+    ]
+    with patch("ai_review.summary_render.platform_comment_limit", return_value=65536):
+        assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+        original_summary = client.state_notes[0]["body"]
+        failed_ids = {
+            record["discussion_id"]
+            for record in decode_state_note_body(original_summary)["records"][:failed_count]
+        }
+        original_resolve = client.resolve_thread
+
+        def resolve_thread(
+            project_id: str, change_id: str, thread_id: str, resolved: bool = True
+        ) -> dict:
+            if thread_id in failed_ids:
+                raise ReviewPlatformError("unavailable")
+            return original_resolve(project_id, change_id, thread_id, resolved)
+
+        consensus["groups"] = [dict(copy.deepcopy(base), title=title)]
+        with (
+            patch.object(client, "resolve_thread", side_effect=resolve_thread) as resolve,
+            patch.object(
+                client, "create_inline_comment", wraps=client.create_inline_comment
+            ) as create,
+        ):
+            result = post_consensus(client, config, manifest, consensus)
+    if capacity == "fits":
+        assert result["status"] == "partial_failed"
+        assert result["created_discussions"] == 1
+        assert resolve.call_count == 6
+        assert result["summary_comment"]["action"] == "updated"
+        state = decode_state_note_body(client.state_notes[0]["body"])
+        assert len(state["records"]) == 7
+        assert sum(record["status"] == "open" for record in state["records"]) == failed_count + 1
+        assert all(
+            record["discussion_id"] and record["root_note_id"] for record in state["records"]
+        )
+    else:
+        assert result["status"] == "state_overflow"
+        create.assert_not_called()
+        resolve.assert_not_called()
+        assert client.state_notes[0]["body"] == original_summary
+
+
 @pytest.mark.parametrize("decision", ["surface", "fyi"])
 @pytest.mark.parametrize("marker_version", [1, 2])
 def test_marker_text_in_model_content_is_not_an_extra_state_container(
@@ -320,7 +418,7 @@ def test_resurfaced_compacted_github_finding_gets_a_visible_thread() -> None:
                                     "isResolved": client.resolved_threads.get(
                                         str(comment["id"]), False
                                     ),
-                                    "comments": {"nodes": [{"databaseId": comment["id"]}]},
+                                    "comments": {"nodes": [{"fullDatabaseId": str(comment["id"])}]},
                                 }
                                 for comment in client._comments
                             ],

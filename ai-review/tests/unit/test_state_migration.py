@@ -111,6 +111,22 @@ def test_migration_without_summary_reuses_the_old_note() -> None:
     assert len(decode_state_note_body(body)["records"]) == 4
 
 
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+def test_migration_only_refreshes_a_changed_project_identity_on_github(mode: str) -> None:
+    kwargs = dict(bot_author_id=42, project_id="new-owner/repo", change_id="7", posting_mode=mode)
+    if mode == "gitlab_discussions":
+        with pytest.raises(ValueError, match="change identity does not match"):
+            migration.migrate_comments([legacy_note()], **kwargs)
+        return
+
+    _, _, body = migration.migrate_comments([legacy_note()], **kwargs)
+    state = decode_state_note_body(body)
+    assert state["project_id"] == "new-owner/repo"
+    assert state["merge_request_iid"] == "7"
+    assert len(state["records"]) == 4
+    assert state["records"][1]["human_disposition"] == "wontfix"
+
+
 @pytest.mark.parametrize(
     "case",
     ["duplicate", "corrupt", "wrong-change", "foreign", "already-migrated", "incomplete-record"],
@@ -125,7 +141,7 @@ def test_ambiguous_corrupt_or_inapplicable_exports_are_refused(case: str) -> Non
     elif case in {"wrong-change", "incomplete-record"}:
         state = json.loads(base64.urlsafe_b64decode(note["body"].split()[2] + "=="))
         if case == "wrong-change":
-            state["project_id"] = "another-project"
+            state["merge_request_iid"] = "8"
         else:
             state["records"][0].pop("issue_id")
         payload = canonical_json_text(attach_state_hash(state))

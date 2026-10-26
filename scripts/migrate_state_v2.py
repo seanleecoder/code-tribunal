@@ -65,10 +65,11 @@ def migrate_comments(
     old = json.loads(payload)
     if not isinstance(old, dict) or not validate_state_hash(old):
         raise ValueError("v1 payload state hash mismatch")
-    if old.get("state_schema_version") != 1 or (
-        old.get("project_id"),
-        old.get("merge_request_iid"),
-    ) != (project_id, change_id):
+    if (
+        old.get("state_schema_version") != 1
+        or old.get("merge_request_iid") != change_id
+        or (posting_mode != "github_reviews" and old.get("project_id") != project_id)
+    ):
         raise ValueError("v1 state version or change identity does not match")
     records = old.get("records")
     if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
@@ -89,7 +90,7 @@ def migrate_comments(
         if item.get("last_decision") == "drop":
             item["last_decision"] = "fyi"
         converted.append(item)
-    state = dict(old, state_schema_version=2, records=converted)
+    state = dict(old, state_schema_version=2, project_id=project_id, records=converted)
     for key in ("state_note_id", "run_history"):
         state.pop(key, None)
     state = attach_state_hash(state)

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any, cast, get_args
 
+from .canonical import canonical_json_text
 from .config import ReviewConfig, StateRetention
 from .memory import (
     compact_state,
@@ -296,6 +297,52 @@ def _desired_discussion_resolved(
     return None
 
 
+def _reserve_resolution_failures(state: State, base_records: list[StateRecord]) -> State:
+    """A sizing bound for every mix of resolution outcomes, never persisted."""
+    prior_records = {record["issue_id"]: record for record in base_records}
+    prior_status: dict[str, StateRecordStatus | None] = {
+        issue_id: record.get("status") for issue_id, record in prior_records.items()
+    }
+    retention_records = []
+    largest_records = {}
+    for record in state["records"]:
+        if (
+            record["discussion_id"] is None
+            or _desired_discussion_resolved(record, prior_status) is None
+        ):
+            retention_records.append(record)
+            continue
+        previous = prior_records.get(record["issue_id"])
+        failed = cast(
+            StateRecord,
+            dict(
+                record,
+                status=previous.get("status", "open") if previous else "open",
+                human_disposition=previous.get("human_disposition") if previous else None,
+            ),
+        )
+        # Keep anything that could survive compaction on either outcome. The
+        # automatic-resolved tail is then reserved in addition to those records.
+        retention_records.append(
+            failed if record["status"] == "resolved" and not record["human_disposition"] else record
+        )
+        largest_records[record["issue_id"]] = max(
+            (record, failed), key=lambda variant: len(canonical_json_text(variant))
+        )
+    compacted = compact_state(dict(state, records=retention_records))
+    # Choose the larger representation after compaction: it may itself look
+    # auto-resolved, but the failure outcome can still require retaining it.
+    return cast(
+        State,
+        dict(
+            compacted,
+            records=[
+                largest_records.get(record["issue_id"], record) for record in compacted["records"]
+            ],
+        ),
+    )
+
+
 def _plan_stale_records(
     *,
     base_records: list[StateRecord],
@@ -491,22 +538,32 @@ def plan_state(
         pipeline_id=pipeline_id,
         retention=retention,
     )
+    reserved_state = _reserve_resolution_failures(
+        {**processed_state, "records": planned_records}, base_records
+    )
+    overflow = overflow or state_overflow_reason(reserved_state, max_records=retention.max_records)
     if overflow is None:
         # Reserve health and the complete ledger before any platform mutation. Only
         # visible finding entries may be truncated to fit the combined comment.
         # Threads not yet created are sized at their largest supported IDs, so the
-        # ledger cannot outgrow the comment after inline posting has begun.
+        # ledger cannot outgrow the comment after inline posting has begun. Any
+        # failed inline operation can also add a fallback section at runtime.
         try:
             render_summary_body(
                 consensus["run_id"],
                 consensus["run_health"],
                 summary_fallback_groups
-                + [inline.group for inline in inline_plans if inline.ambiguous],
+                + [
+                    inline.group
+                    for inline in inline_plans
+                    if inline.record is None
+                    or inline.record["status"] not in {"wontfix", "resolved"}
+                ],
                 fyi_groups,
                 config.limits.max_fyi_findings,
                 posting_mode=config.posting.mode,
                 state=_with_reserved_thread_ids(
-                    processed_state, _threadless_issue_ids(inline_plans)
+                    reserved_state, _threadless_issue_ids(inline_plans)
                 ),
             )
         except ValueError as exc:
