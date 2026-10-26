@@ -26,6 +26,12 @@ class PullRequestVersion:
     target_branch: str = field(compare=False)
 
 
+@dataclass(frozen=True)
+class _ReviewThread:
+    node_id: str
+    resolved: bool
+
+
 _PULL_NUMBER_RE = re.compile(r"[1-9][0-9]{0,9}")
 _GIT_OBJECT_SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 
@@ -81,7 +87,7 @@ class GitHubReviewPlatform:
         self._resolution_token = resolution_token or token
         self._uses_dedicated_resolution_token = bool(resolution_token)
         self._bot_login = bot_login
-        self._review_thread_node_ids: dict[tuple[str, str, int], dict[str, str]] = {}
+        self._review_threads: dict[tuple[str, str, int], dict[str, _ReviewThread]] = {}
         if session is None:
             session = importlib.import_module("requests").Session()
         self.session = session
@@ -310,12 +316,29 @@ class GitHubReviewPlatform:
             if not comment.get("in_reply_to_id"):
                 threads_by_id[comment["id"]] = self._thread_from_comment(comment)
 
+        if threads_by_id:
+            owner, name = self._repo_parts(project_id_or_path)
+            pull_request_number = int(change_id)
+            # REST omits resolution. Read it before any root can be reused by
+            # marker recovery, including records evicted by state compaction.
+            review_threads = self._fetch_review_threads(owner, name, pull_request_number)
+            self._review_threads[(owner, name, pull_request_number)] = review_threads
+            for comment_id, thread in threads_by_id.items():
+                review_thread = review_threads.get(str(comment_id))
+                if review_thread is None:
+                    raise GitHubReviewPlatformError(
+                        f"review thread {comment_id} not found via GraphQL"
+                    )
+                thread["resolved"] = review_thread.resolved
+                thread["notes"][0]["resolved"] = review_thread.resolved
+
         # Second pass: append replies or fallback to orphans
         for comment in comments:
             reply_to = comment.get("in_reply_to_id")
             if reply_to:
                 if reply_to in threads_by_id:
                     note = self._thread_from_comment(comment)["notes"][0]
+                    note["resolved"] = threads_by_id[reply_to]["resolved"]
                     threads_by_id[reply_to]["notes"].append(note)
                 else:
                     orphans.append(self._thread_from_comment(comment))
@@ -367,9 +390,9 @@ class GitHubReviewPlatform:
         )
         return comment if isinstance(comment, dict) else {}
 
-    def _fetch_review_thread_node_ids(
+    def _fetch_review_threads(
         self, owner: str, name: str, pull_request_number: int
-    ) -> dict[str, str]:
+    ) -> dict[str, _ReviewThread]:
         query = """
         query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
           repository(owner: $owner, name: $name) {
@@ -378,6 +401,7 @@ class GitHubReviewPlatform:
                 pageInfo { hasNextPage endCursor }
                 nodes {
                   id
+                  isResolved
                   comments(first: 1) { nodes { databaseId } }
                 }
               }
@@ -386,7 +410,7 @@ class GitHubReviewPlatform:
         }
         """
         cursor = None
-        node_ids: dict[str, str] = {}
+        review_threads: dict[str, _ReviewThread] = {}
 
         while True:
             variables = {
@@ -436,9 +460,14 @@ class GitHubReviewPlatform:
                         raise GitHubReviewPlatformError(
                             "GitHub GraphQL review thread lookup returned no thread id"
                         )
+                    resolved = node.get("isResolved")
+                    if not isinstance(resolved, bool):
+                        raise GitHubReviewPlatformError(
+                            "GitHub GraphQL review thread lookup returned no resolution state"
+                        )
                     database_id = root_comment.get("databaseId")
                     if database_id is not None:
-                        node_ids[str(database_id)] = node_id
+                        review_threads[str(database_id)] = _ReviewThread(node_id, resolved)
 
             page_info = threads.get("pageInfo")
             if not isinstance(page_info, dict):
@@ -446,7 +475,7 @@ class GitHubReviewPlatform:
                     "GitHub GraphQL review thread lookup returned malformed pagination"
                 )
             if not page_info.get("hasNextPage"):
-                return node_ids
+                return review_threads
             cursor = page_info.get("endCursor")
             if not isinstance(cursor, str) or not cursor:
                 raise GitHubReviewPlatformError(
@@ -457,19 +486,17 @@ class GitHubReviewPlatform:
         self, owner: str, name: str, pull_request_number: int, thread_id: str
     ) -> str:
         cache_key = (owner, name, pull_request_number)
-        was_cached = cache_key in self._review_thread_node_ids
-        if not was_cached:
-            self._review_thread_node_ids[cache_key] = self._fetch_review_thread_node_ids(
+        if (
+            cache_key not in self._review_threads
+            or thread_id not in self._review_threads[cache_key]
+        ):
+            self._review_threads[cache_key] = self._fetch_review_threads(
                 owner, name, pull_request_number
             )
-        node_id = self._review_thread_node_ids[cache_key].get(thread_id)
-        if node_id is None and was_cached:
-            refreshed = self._fetch_review_thread_node_ids(owner, name, pull_request_number)
-            self._review_thread_node_ids[cache_key] = refreshed
-            node_id = refreshed.get(thread_id)
-        if node_id is None:
+        review_thread = self._review_threads[cache_key].get(thread_id)
+        if review_thread is None:
             raise GitHubReviewPlatformError(f"review thread {thread_id} not found via GraphQL")
-        return node_id
+        return review_thread.node_id
 
     def resolve_thread(
         self,

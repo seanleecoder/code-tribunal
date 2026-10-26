@@ -561,6 +561,7 @@ def prepare_post_context(
     persisted_state, state_warnings = load_persisted_state(
         client, manifest, bot_author_id=bot_author_id, posting_mode=posting_mode
     )
+    missing_ledger = persisted_state is None
     indexed = index_ai_review_discussions(raw_discussions)
     if persisted_state is None:
         if any(
@@ -585,14 +586,18 @@ def prepare_post_context(
         raw_discussions,
         warnings=result["warnings"],
     )
-    # Recover only identities this publication or an authorized command needs.
-    # Sweeping absent roots resurrects deliberately compacted resolved records:
-    # GitHub's REST listing does not expose their GraphQL resolution state.
+    # Without a ledger, recover every eligible root so absence planning can
+    # resolve or preserve orphaned threads after an interrupted first write.
+    # An existing ledger may have deliberately compacted absent records.
     needed_issue_ids = current_issue_ids | human_commands.keys()
     known_ids = {record["issue_id"] for record in persisted_state["records"]}
     known_threads = {record["discussion_id"] for record in persisted_state["records"]}
     recovered = state_from_existing_discussions(
-        [discussion for discussion in indexed if discussion.marker["issue_id"] in needed_issue_ids],
+        [
+            discussion
+            for discussion in indexed
+            if missing_ledger or discussion.marker["issue_id"] in needed_issue_ids
+        ],
         current_head_sha=manifest["head_sha"],
         expected_author_id=bot_author_id,
         exclude_discussion_ids=known_threads,

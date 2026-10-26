@@ -144,8 +144,12 @@ to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
 No online legacy decoder or automatic migration runs during prepare/post.
 
 If publication fails after creating threads but before writing the combined
-summary, a retry reconciles bot-authored thread roots needed by current findings
-or authorized commands on that same revision.
+summary, a retry reconciles bot-authored thread roots on that same revision.
+With an existing ledger, recovery is limited to current findings or authorized
+commands. Without a ledger, every eligible open root is recovered so absent
+findings can be resolved with resolution quorum, or tracked as `stale_unverified`
+without it. GitHub checks GraphQL resolution before reusing a root; a resurfaced
+finding whose compacted thread is already resolved gets a new visible thread.
 It never replaces authoritative ledger records or human dispositions. Missing
 older history requires the deliberate repair below; corrupt state is not
 treated as absence.
@@ -174,9 +178,10 @@ no ledger to convert. The `missing-ledger-repair` error identifies this path.
    to the appropriate new finding threads and verify their saved dispositions.
 
 Runtime never performs this deletion or silently starts over when older review
-history exists. Same-revision reconciliation reuses roots needed by current
-findings or explicit authorized commands. It does not re-import absent,
-automatically resolved threads that state compaction already retired.
+history exists. With an existing ledger, same-revision reconciliation reuses
+roots needed by current findings or explicit authorized commands. It does not
+re-import absent, automatically resolved threads that state compaction already
+retired.
 
 ## Concurrency
 

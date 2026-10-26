@@ -1021,15 +1021,18 @@ class PostTests(PostCase):
 
         actions = []
         bodies = []
-        for consensus in (degraded, recovered, recovered):
-            result = post_consensus(
-                client,  # type: ignore[arg-type]
-                self._config(),
-                self._manifest("head"),
-                consensus,
-            )
-            actions.append(result["summary_comment"]["action"])
-            bodies.append(client.summary_notes[0]["body"])
+        # The ledger timestamp is part of the summary hash. This test compares
+        # health changes, so keep wall-clock rollover out of the comparison.
+        with patch("ai_review.posting.now_iso", return_value="2026-06-29T00:00:00Z"):
+            for consensus in (degraded, recovered, recovered):
+                result = post_consensus(
+                    client,  # type: ignore[arg-type]
+                    self._config(),
+                    self._manifest("head"),
+                    consensus,
+                )
+                actions.append(result["summary_comment"]["action"])
+                bodies.append(client.summary_notes[0]["body"])
 
         self.assertEqual(actions, ["created", "updated", "unchanged"])
         self.assertEqual(len(client.summary_notes), 1)

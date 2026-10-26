@@ -22,8 +22,10 @@ versioning.
   finding IDs and path/category/context hashes. Posting uses each current
   group's prepared anchor instead of fetching another diff and remapping old
   coordinates (N14). Same-revision bot-thread reconciliation recovers from
-  interrupted publication for current finding/command identities. Compacted,
-  absent roots are not re-imported. State is validated before writing, supported
+  interrupted publication for current finding/command identities, or all eligible
+  open roots when no ledger exists. GitHub checks thread resolution before reuse
+  so resurfaced compacted findings stay visible. Compacted, absent roots are not
+  re-imported. State is validated before writing, supported
   returned thread-ID sizes are reserved before publication, and GitHub repository
   renames/transfers refresh the stored slug on load. See the state migration and
   missing-ledger repair in `docs/operations.md`.

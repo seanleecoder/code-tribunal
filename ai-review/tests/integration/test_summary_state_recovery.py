@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from ai_review.memory import decode_state_note_body
 from ai_review.platform import ReviewPlatformError
+from ai_review.platform.github import GitHubReviewPlatform
 from ai_review.posting import post_consensus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -54,6 +55,44 @@ def test_retry_recovers_created_thread_after_summary_write_failure(
     state = decode_state_note_body(client.state_notes[0]["body"])
     assert len(state["records"]) == len(consensus["groups"])
     assert all(record["discussion_id"] and record["root_note_id"] for record in state["records"])
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+@pytest.mark.parametrize("resolution_quorum", [True, False])
+def test_absent_orphan_is_tracked_after_first_summary_write_fails(
+    mode: str, resolution_quorum: bool
+) -> None:
+    fixtures = PostCase()
+    config = fixtures._config(mode=mode)
+    manifest = fixtures._manifest("head")
+    client = (
+        FakeGitHubClient(head_sha="head", diff_text="")
+        if mode == "github_reviews"
+        else FakeGitLabClient(head_sha="head", diff_text="")
+    )
+    consensus = fixtures._consensus()
+    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
+        failed = post_consensus(client, config, manifest, consensus)
+    assert failed["status"] == "partial_failed"
+    assert failed["created_discussions"] == 1
+    assert not client.state_notes
+    orphan = client.list_threads("1", "2")[0]
+    consensus["groups"] = []
+    if not resolution_quorum:
+        consensus["resolution_eligible_reviewers"] = []
+    for attempt in range(2):
+        result = post_consensus(client, config, manifest, consensus)
+        assert result["status"] == "success"
+        assert result["resolved_discussions"] == int(resolution_quorum and attempt == 0)
+        records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+        assert len(records) == 1
+        assert records[0]["discussion_id"] == orphan["id"]
+        assert records[0]["root_note_id"] == orphan["notes"][0]["id"]
+        assert records[0]["status"] == ("resolved" if resolution_quorum else "stale_unverified")
+    if not resolution_quorum:
+        consensus["resolution_eligible_reviewers"] = ["claude"]
+        assert post_consensus(client, config, manifest, consensus)["resolved_discussions"] == 1
+    assert next(t for t in client.list_threads("1", "2") if t["id"] == orphan["id"])["resolved"]
 
 
 @pytest.mark.parametrize("decision", ["surface", "fyi"])
@@ -133,6 +172,81 @@ def test_compacted_github_threads_are_not_recovered_as_absent_findings(
             records = decode_state_note_body(client.state_notes[0]["body"])["records"]
             assert len(records) == 5
             assert {record["status"] for record in records} == {"resolved"}
+
+
+def test_resurfaced_compacted_github_finding_gets_a_visible_thread() -> None:
+    fixtures = PostCase()
+    client = FakeGitHubClient(head_sha="head", diff_text="")
+    config = fixtures._config(mode="github_reviews")
+    manifest = fixtures._manifest("head")
+    consensus = fixtures._consensus()
+    base = consensus["groups"][0]
+    groups = [
+        dict(copy.deepcopy(base), issue_id=f"{n:064x}", source_finding_ids=[f"{n + 100:064x}"])
+        for n in range(7)
+    ]
+    consensus["groups"] = groups
+    assert post_consensus(client, config, manifest, consensus)["created_discussions"] == 7
+    consensus["groups"] = []
+    assert post_consensus(client, config, manifest, consensus)["resolved_discussions"] == 7
+    retained_ids = {
+        record["issue_id"]
+        for record in decode_state_note_body(client.state_notes[0]["body"])["records"]
+    }
+    assert len(retained_ids) == 5
+    consensus["groups"] = [next(group for group in groups if group["issue_id"] not in retained_ids)]
+
+    # Exercise the real GitHub listing: REST comment payloads carry no resolution
+    # flag, while GraphQL supplies the state of the corresponding review thread.
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=object())
+
+    def pages(path: str) -> list[dict]:
+        return copy.deepcopy(client._comments if "/pulls/" in path else client._issue_comments)
+
+    def graphql(*args: object, **kwargs: object) -> dict:
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False},
+                            "nodes": [
+                                {
+                                    "id": f"node-{comment['id']}",
+                                    "isResolved": client.resolved_threads.get(
+                                        str(comment["id"]), False
+                                    ),
+                                    "comments": {"nodes": [{"databaseId": comment["id"]}]},
+                                }
+                                for comment in client._comments
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+
+    with (
+        patch.object(platform, "_get_all_pages", side_effect=pages),
+        patch.object(platform, "_request", side_effect=graphql),
+        patch.object(
+            client,
+            "list_threads",
+            side_effect=lambda _, change: platform.list_threads("octo/repo", change),
+        ),
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "success"
+    assert result["created_discussions"] == 1
+    record = next(
+        record
+        for record in decode_state_note_body(client.state_notes[0]["body"])["records"]
+        if record["issue_id"] == consensus["groups"][0]["issue_id"]
+    )
+    assert not client.resolved_threads.get(record["discussion_id"], False)
+    rerun = post_consensus(client, config, manifest, consensus)
+    assert rerun["status"] == "success"
+    assert rerun["created_discussions"] == 0
 
 
 @pytest.mark.parametrize("new_slug", ["owner/renamed", "new-owner/repo"])
