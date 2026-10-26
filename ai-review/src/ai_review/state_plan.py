@@ -229,7 +229,10 @@ def state_from_existing_discussions(
 
 @cache
 def _state_record_properties() -> dict[str, Any]:
-    return load_schema("state.schema.json")["properties"]["records"]["items"]["properties"]
+    return cast(
+        dict[str, Any],
+        load_schema("state.schema.json")["properties"]["records"]["items"]["properties"],
+    )
 
 
 def _threadless_issue_ids(inline_plans: Iterable[InlinePlan]) -> set[str]:
