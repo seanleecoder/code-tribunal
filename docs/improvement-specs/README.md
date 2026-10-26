@@ -65,7 +65,7 @@ recommendation's disposition.
   below.
 - **Not on the roadmap:** X01.
 
-## Maintainer decisions (2026-10-13 to 2026-10-19)
+## Maintainer decisions (2026-10-13 to 2026-10-26)
 
 | Question | Decision | Consequence |
 |---|---|---|
@@ -113,6 +113,10 @@ recommendation's disposition.
 | N18 validation (2026-10-19) | `lifecycle,hostile` on the 2.1.0 candidate after each merge | Neither campaign spends model tokens. The step names and counts are compared with run `39315351495`. The panel is first exercised by the next release's canary, which is also verified locally against `check_release`. |
 | N18 polling retries (2026-10-19) | One GitLab polling helper with transient-error tolerance | The lifecycle and hostile loops gain the panel's retries in the deduplication pull request. Publication accepts only a first-attempt run, so a transient API error no longer costs a fresh dispatch. |
 | N18 estimate (2026-10-19) | About −350 lines, not −950 | The shared layer already exists in `candidate_canary_common.py`: the move nets about −60 and the deduplication about −280. N18 does not trim the hostile campaign; N02 rewrites its composition in the next major release. |
+| S14 `remap_status` (2026-10-26) | Drop it from state v2 | N14 deleted remapping and nothing read the field. v2 is unreleased, so no v3 is needed; the offline migration drops it. |
+| S14 ledger budget (2026-10-26) | Remove `state.retention.max_state_bytes` | The platform comment limit, checked during planning with reserved thread IDs, is the only size bound. `max_records` stays. |
+| S14 change binding (2026-10-26) | Keep the GitHub/GitLab asymmetry; callers pass `bind_project_id` | `memory` no longer branches on posting-mode names. Behavior is unchanged. |
+| Missing-ledger check in prepare (2026-10-26) | A follow-up spec, not part of S14 | Post aborts when bot history has no ledger, but prepare runs the model stages first. Failing earlier needs a thread listing in prepare. |
 
 ## Recommended order
 

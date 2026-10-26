@@ -316,9 +316,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # blocking_alt's body change makes rev 2 an observable in-place update
         self.assertEqual(p2["updated_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
-        # the persisted anchor actually followed the marker to revision 2's line,
-        # and the move was recorded as a deterministic remap (not an exact match)
-        self.assertEqual(record["remap_status"], "remapped")
+        # the persisted anchor actually followed the marker to revision 2's line
         self.assertEqual(record["anchor"]["start"]["new_line"], marker_line_2)
         self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
 

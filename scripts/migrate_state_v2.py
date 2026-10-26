@@ -18,7 +18,7 @@ from ai_review.canonical import sha256_hex
 from ai_review.memory import attach_state_hash, encode_state_note, validate_state_hash
 from ai_review.notes import STATE_MARKER_RE, SUMMARY_MARKER_RE
 from ai_review.render import platform_comment_limit
-from ai_review.summary_render import summary_marker
+from ai_review.summary_render import seal_summary_body
 
 # COMPAT-009: this offline decoder goes after the first-major upgrade window;
 # ordinary prepare/post never decode v1 or run this migration.
@@ -85,6 +85,7 @@ def migrate_comments(
         for key in ("candidate_issue_signatures", "title_fingerprints", "symbols"):
             aliases.pop(key, None)
         item["aliases"] = aliases
+        item.pop("remap_status", None)
         if item.get("last_decision") == "drop":
             item["last_decision"] = "fyi"
         converted.append(item)
@@ -101,7 +102,7 @@ def migrate_comments(
     if summaries and SUMMARY_MARKER_RE.search(target["body"]) is None:
         raise ValueError("summary marker is corrupt")
     content = visible + "\n\n" + encode_state_note(state)
-    body = content + "\n\n" + summary_marker("state-migration", sha256_hex(content))
+    body, _ = seal_summary_body(content, "state-migration")
     if len(body) > platform_comment_limit(posting_mode):
         raise ValueError("migrated summary exceeds the platform comment limit; no output written")
     target_id = int(target["id"])

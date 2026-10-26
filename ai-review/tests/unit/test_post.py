@@ -1083,13 +1083,7 @@ class PostTests(PostCase):
             consensus["groups"].append(group)
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(
-                limits={"max_fyi_findings": 50},
-                # 60 tracked findings do not fit the default byte budget, and
-                # state overflow fails the run closed before any summary is
-                # written. This test is about the FYI cap, so give state room.
-                state={"retention": {"max_state_bytes": 500000}},
-            ),
+            self._config(limits={"max_fyi_findings": 50}),
             self._manifest("head"),
             consensus,
         )
@@ -1248,7 +1242,7 @@ class PostTests(PostCase):
         client.list_state_notes = lambda project_id, mr_iid: []  # type: ignore[attr-defined]
         result = post_consensus(
             client,  # type: ignore[arg-type]
-            self._config(state={"retention": {"max_records": 0, "max_state_bytes": 50000}}),
+            self._config(state={"retention": {"max_records": 0}}),
             self._manifest("head"),
             self._consensus(),
         )
@@ -1351,12 +1345,11 @@ class PostTests(PostCase):
                             consensus,
                             result,
                             plan,
-                            [],
+                            None,
                             [],
                             [],
                             posting_mode=mode,
                             max_fyi=0,
-                            bot_author_id=client.BOT_ID,
                             dry_run=False,
                         )
                     self.assertEqual(len(session.calls), 1)
@@ -1389,12 +1382,11 @@ class PostTests(PostCase):
                         consensus,
                         retry_result,
                         retry_plan,
-                        [],
+                        None,
                         [],
                         [],
                         posting_mode=mode,
                         max_fyi=0,
-                        bot_author_id=retry.BOT_ID,
                         dry_run=False,
                     )
                     self.assertEqual(retry_result["status"], "success")
@@ -1518,10 +1510,6 @@ class PostTests(PostCase):
         )
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual({record["status"] for record in state_after["records"]}, {"stale"})
-        self.assertEqual(
-            {record["remap_status"] for record in state_after["records"]},
-            {"ambiguous"},
-        )
         validate_instance(result, "post_result.schema.json")
 
     def test_post_exact_remap_updates_existing_discussion(self) -> None:
@@ -1568,7 +1556,6 @@ class PostTests(PostCase):
         self.assertEqual(client.updated_notes[0]["discussion_id"], "existing-discussion")
         state_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])
         self.assertEqual(state_after["records"][0]["anchor"]["start"]["new_line"], 4)
-        self.assertEqual(state_after["records"][0]["remap_status"], "remapped")
         validate_instance(result, "post_result.schema.json")
 
     def test_post_one_sided_remap_updates_existing_discussion(self) -> None:
@@ -1625,7 +1612,6 @@ class PostTests(PostCase):
                 record_after = decode_state_note_body(client.updated_mr_notes[-1]["body"])[
                     "records"
                 ][0]
-                self.assertEqual(record_after["remap_status"], "remapped")
                 self.assertEqual(record_after["status"], "open")
                 line_key = "new_line" if added else "old_line"
                 self.assertEqual(record_after["anchor"]["start"][line_key], 4)

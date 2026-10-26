@@ -94,14 +94,15 @@ def test_migration_preserves_threads_dispositions_and_visible_summary() -> None:
     assert state["records"][2]["status"] == "resolved"
     assert state["records"][3]["last_decision"] == "fyi"
     assert set(state["records"][0]["aliases"]) == {"source_finding_ids", "context_hashes"}
-    loaded, _ = load_state_from_notes(
+    ledger, _ = load_state_from_notes(
         [{"id": target, "author": {"id": 42}, "body": body}],
         expected_author_id=42,
         project_id="project",
         change_id="7",
-        posting_mode="gitlab_discussions",
+        bind_project_id=True,
     )
-    assert loaded == state
+    assert ledger is not None and ledger.state == state
+    assert ledger.note_id == target
 
 
 def test_migration_without_summary_reuses_the_old_note() -> None:

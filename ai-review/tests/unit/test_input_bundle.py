@@ -248,7 +248,7 @@ class PrepareStateLoadTests(unittest.TestCase):
             self._default_state(),
             project_id="1",
             change_id="2",
-            posting_mode="gitlab_discussions",
+            bind_project_id=True,
         )
 
     def test_lookup_runs_and_a_valid_note_wins(self) -> None:

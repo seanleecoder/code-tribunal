@@ -262,7 +262,7 @@ def test_github_rename_or_transfer_rebinds_state_in_prepare_and_post(new_slug: s
     assert post_consensus(client, config, manifest, consensus)["status"] == "success"
     thread_id = decode_state_note_body(client.state_notes[0]["body"])["records"][0]["discussion_id"]
     prepared = _load_platform_state(
-        client, {}, project_id=new_slug, change_id="2", posting_mode="github_reviews"
+        client, {}, project_id=new_slug, change_id="2", bind_project_id=False
     )
     assert prepared["project_id"] == new_slug
     assert validate_state_hash(prepared)
@@ -347,7 +347,7 @@ def test_thread_id_growth_is_reserved_before_posting_a_nearly_full_summary() -> 
     consensus["groups"][0]["title"] = "t" * 47660
     result = post_consensus(
         client,
-        fixtures._config(mode="github_reviews", state={"retention": {"max_state_bytes": 100000}}),
+        fixtures._config(mode="github_reviews"),
         fixtures._manifest("head"),
         consensus,
     )
@@ -372,9 +372,7 @@ def test_supported_maximum_thread_ids_fit_the_preflight_reservation() -> None:
     with patch.object(client, "create_inline_comment", side_effect=create):
         result = post_consensus(
             client,
-            fixtures._config(
-                mode="github_reviews", state={"retention": {"max_state_bytes": 100000}}
-            ),
+            fixtures._config(mode="github_reviews"),
             fixtures._manifest("head"),
             consensus,
         )

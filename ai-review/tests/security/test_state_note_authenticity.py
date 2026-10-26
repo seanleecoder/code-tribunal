@@ -20,7 +20,7 @@ class StateNoteAuthenticityTests(unittest.TestCase):
         )
 
     def test_forged_author_note_is_dropped(self) -> None:
-        state, warnings = load_state_from_notes(
+        ledger, warnings = load_state_from_notes(
             [
                 {"id": 1, "body": encode_state_note(self._state("bot")), "author": {"id": 10}},
                 {
@@ -32,15 +32,15 @@ class StateNoteAuthenticityTests(unittest.TestCase):
             expected_author_id=10,
             project_id="1",
             change_id="2",
-            posting_mode="gitlab_discussions",
+            bind_project_id=True,
         )
 
-        self.assertIsNotNone(state)
-        self.assertEqual(state["last_head_sha"], "bot")
+        assert ledger is not None
+        self.assertEqual(ledger.state["last_head_sha"], "bot")
         self.assertTrue(any("non-bot author" in warning for warning in warnings))
 
     def test_only_forged_author_notes_yield_no_state(self) -> None:
-        state, warnings = load_state_from_notes(
+        ledger, warnings = load_state_from_notes(
             [
                 {
                     "id": 2,
@@ -51,10 +51,10 @@ class StateNoteAuthenticityTests(unittest.TestCase):
             expected_author_id=10,
             project_id="1",
             change_id="2",
-            posting_mode="gitlab_discussions",
+            bind_project_id=True,
         )
 
-        self.assertIsNone(state)
+        self.assertIsNone(ledger)
         self.assertTrue(any("non-bot author" in warning for warning in warnings))
         self.assertTrue(
             any("all state notes were rejected for author mismatch" in w for w in warnings)
@@ -75,7 +75,7 @@ class StateNoteAuthenticityTests(unittest.TestCase):
                 expected_author_id=10,
                 project_id="1",
                 change_id="2",
-                posting_mode="gitlab_discussions",
+                bind_project_id=True,
             )
 
 

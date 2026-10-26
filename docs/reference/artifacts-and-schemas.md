@@ -18,7 +18,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
 | `out/consensus/consensus.json` | consensus | post/operator | [`consensus.schema.json`](../../ai-review/schemas/consensus.schema.json); `consensus.v3` contains state-free groups, `surface`/`fyi` decisions and required `run_health` |
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
-| encoded summary comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and checksum |
+| encoded summary comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and the embedded `state_hash` |
 
 The bundle carries no prompt, rule, or configuration copy. Review and critique
 render prompts and rules from `prompts/` and `rules/` below the image's trusted

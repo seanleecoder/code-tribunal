@@ -127,7 +127,6 @@ class PostCase(unittest.TestCase):
             "created_by_pipeline_id": "old",
             "updated_by_pipeline_id": "old",
             "human_disposition": None,
-            "remap_status": "not_checked",
             "last_matched_run_id": "gl-1-1",
         }
 

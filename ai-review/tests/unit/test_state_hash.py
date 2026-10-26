@@ -91,14 +91,14 @@ class StateHashTests(unittest.TestCase):
                 ],
                 project_id="1",
                 change_id="2",
-                posting_mode="gitlab_discussions",
+                bind_project_id=True,
             )
         with self.assertRaises(ValueError):
             load_state_from_notes(
                 [{"id": 3, "body": "<!-- ai-review-state:v2 bad -->"}],
                 project_id="1",
                 change_id="2",
-                posting_mode="gitlab_discussions",
+                bind_project_id=True,
             )
 
     def test_newest_valid_state_ignores_non_bot_authors(self) -> None:
@@ -117,7 +117,7 @@ class StateHashTests(unittest.TestCase):
             dict(bot_state, last_head_sha="forged", updated_at="2026-06-30T00:00:00Z")
         )
 
-        state, warnings = load_state_from_notes(
+        ledger, warnings = load_state_from_notes(
             [
                 {"id": 1, "body": encode_state_note(bot_state), "author": {"id": 10}},
                 {"id": 2, "body": encode_state_note(forged_state), "author": {"id": 99}},
@@ -125,10 +125,12 @@ class StateHashTests(unittest.TestCase):
             expected_author_id=10,
             project_id="1",
             change_id="2",
-            posting_mode="gitlab_discussions",
+            bind_project_id=True,
         )
 
-        self.assertEqual(state["last_head_sha"], "bot")
+        assert ledger is not None
+        self.assertEqual(ledger.state["last_head_sha"], "bot")
+        self.assertEqual(ledger.note_id, 1)
         self.assertIn("non-bot author", warnings[0])
 
     def test_compaction_preserves_active_stale_records(self) -> None:
@@ -197,13 +199,13 @@ class StateHashTests(unittest.TestCase):
     def test_change_binding_rejects_wrong_change_and_gitlab_project(self) -> None:
         state = empty_state(project_id="1", merge_request_iid="2", head_sha="head")
         notes = [{"id": 1, "author": {"id": 10}, "body": encode_state_note(state)}]
-        for mode, project, change in (
-            ("github_reviews", "1", "3"),
-            ("gitlab_discussions", "1", "3"),
-            ("gitlab_discussions", "999", "2"),
+        for bind_project_id, project, change in (
+            (False, "1", "3"),
+            (True, "1", "3"),
+            (True, "999", "2"),
         ):
             with (
-                self.subTest(mode=mode, project=project, change=change),
+                self.subTest(bind_project_id=bind_project_id, project=project, change=change),
                 self.assertRaisesRegex(ValueError, "another change"),
             ):
                 load_state_from_notes(
@@ -211,7 +213,7 @@ class StateHashTests(unittest.TestCase):
                     expected_author_id=10,
                     project_id=project,
                     change_id=change,
-                    posting_mode=mode,
+                    bind_project_id=bind_project_id,
                 )
 
 

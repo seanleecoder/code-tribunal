@@ -15,9 +15,10 @@ versioning.
   reviews, apply its emitted update, and remove the obsolete state note before
   switching images. Runtime rejects v1, corrupt, duplicate and inaccessible
   state. The wrapper checksum, self-referential `state_note_id`, unread history,
-  candidate/title/symbol aliases and legacy `drop` state decisions are removed.
-  Checksum, load-error, marker-recovery and per-status retention controls are
-  removed; active records and human dispositions are preserved, with a fixed
+  candidate/title/symbol aliases, unread `remap_status` and legacy `drop` state
+  decisions are removed. Checksum, load-error, marker-recovery, per-status
+  retention and `max_state_bytes` controls are removed (the platform comment
+  limit bounds the ledger); active records and human dispositions are preserved, with a fixed
   tail of five automatically resolved records. Matching uses issue IDs, source
   finding IDs and path/category/context hashes. Posting uses each current
   group's prepared anchor instead of fetching another diff and remapping old

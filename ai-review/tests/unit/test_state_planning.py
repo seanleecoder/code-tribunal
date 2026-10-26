@@ -176,9 +176,7 @@ class StatePlanningTests(PostCase):
         )
         planned_by_id = {record["issue_id"]: record for record in plan.planned_records}
         self.assertEqual(planned_by_id["1" * 64]["status"], "stale")
-        self.assertEqual(planned_by_id["1" * 64]["remap_status"], "ambiguous")
         self.assertEqual(planned_by_id["2" * 64]["status"], "stale")
-        self.assertEqual(planned_by_id["2" * 64]["remap_status"], "ambiguous")
         self.assertTrue(plan.inline_plans[0].ambiguous)
         self.assertIsNone(plan.inline_plans[0].record)
 
@@ -315,7 +313,7 @@ class StatePlanningTests(PostCase):
         )
 
         self.assertEqual(context.version, MergeRequestVersion("base", "start", "head"))
-        self.assertIn(discussion, context.raw_discussions)
+        self.assertEqual(context.summary_note, (client.state_notes[0]["id"], ""))
         self.assertEqual(context.persisted_state["records"][0]["issue_id"], group["issue_id"])
         self.assertEqual(context.human_commands, {group["issue_id"]: "resolve"})
         self.assertEqual(result["warnings"], [])
@@ -395,12 +393,11 @@ class StatePlanningTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
+            None,
             [group],
             [],
             posting_mode="gitlab_discussions",
             max_fyi=50,
-            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -451,12 +448,11 @@ class StatePlanningTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
+            None,
             [group],
             [],
             posting_mode="gitlab_discussions",
             max_fyi=50,
-            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -502,12 +498,11 @@ class StatePlanningTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
+            None,
             [group],
             [],
             posting_mode="gitlab_discussions",
             max_fyi=50,
-            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -552,12 +547,11 @@ class StatePlanningTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
+            None,
             [group],
             [],
             posting_mode="gitlab_discussions",
             max_fyi=50,
-            bot_author_id=FakePostClient.BOT_ID,
             dry_run=False,
         )
 
@@ -845,41 +839,6 @@ class AlwaysOnStateTests(PostCase):
         self.assertEqual(client.mr_notes, [])
         self.assertEqual(client.updated_mr_notes, [])
         self.assertEqual(client.resolve_calls, [])
-
-    def test_state_id_growth_is_rejected_before_mutations(self) -> None:
-        """A budget fitting only null IDs must fail before creating a thread."""
-        consensus = self._consensus()
-        group = consensus["groups"][0]
-        client = FakePostClient("head")
-        planned_bytes = len(
-            encode_state_note(
-                plan_state(
-                    self._config(),
-                    self._manifest("head"),
-                    consensus,
-                    self._state_with_records([]),
-                    [group],
-                    [],
-                    [],
-                    {},
-                ).planned_state
-            )
-        )
-
-        result = post_consensus(
-            client,
-            self._config(state={"retention": {"max_state_bytes": planned_bytes}}),
-            self._manifest("head"),
-            consensus,
-        )
-
-        self.assertEqual(result["status"], "state_overflow")
-        self.assertTrue(
-            any("state.retention.max_state_bytes" in item for item in result["warnings"]),
-            result["warnings"],
-        )
-        self.assertEqual(client.state_notes, [])
-        self.assertEqual(client.created, 0)
 
 
 class StateSourceStructureTests(unittest.TestCase):

@@ -227,6 +227,16 @@ class GitHubReviewPlatform:
         return parts[0], parts[1]
 
     @classmethod
+    def _pull_request_key(cls, repo: str | int, change_id: str | int) -> tuple[str, str, int]:
+        owner, name = cls._repo_parts(repo)
+        try:
+            return owner, name, int(change_id)
+        except (TypeError, ValueError) as exc:
+            raise GitHubReviewPlatformError(
+                f"GitHub pull request number must be an integer, got {change_id!r}"
+            ) from exc
+
+    @classmethod
     def _repo(cls, repo: str | int) -> str:
         owner, name = cls._repo_parts(repo)
         return f"{quote(owner, safe='')}/{quote(name, safe='')}"
@@ -317,8 +327,9 @@ class GitHubReviewPlatform:
                 threads_by_id[comment["id"]] = self._thread_from_comment(comment)
 
         if threads_by_id:
-            owner, name = self._repo_parts(project_id_or_path)
-            pull_request_number = int(change_id)
+            owner, name, pull_request_number = self._pull_request_key(
+                project_id_or_path, change_id
+            )
             # REST omits resolution. Read it before any root can be reused by
             # marker recovery, including records evicted by state compaction.
             review_threads = self._fetch_review_threads(owner, name, pull_request_number)
@@ -505,13 +516,7 @@ class GitHubReviewPlatform:
         thread_id: str,
         resolved: bool = True,
     ) -> Thread:
-        owner, name = self._repo_parts(project_id_or_path)
-        try:
-            pull_request_number = int(change_id)
-        except (TypeError, ValueError) as exc:
-            raise GitHubReviewPlatformError(
-                f"GitHub pull request number must be an integer, got {change_id!r}"
-            ) from exc
+        owner, name, pull_request_number = self._pull_request_key(project_id_or_path, change_id)
         target_node_id = self._review_thread_node_id(owner, name, pull_request_number, thread_id)
 
         mutation = (

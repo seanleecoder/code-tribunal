@@ -34,7 +34,6 @@ class FrozenConfigTests(unittest.TestCase):
         for path in (
             ("limits", "max_fyi_findings"),
             ("state", "retention", "max_records"),
-            ("state", "retention", "max_state_bytes"),
             ("reviewers", "codex", "max_findings"),
         ):
             for value in (None, "invalid", [], {}, float("inf"), float("nan")):

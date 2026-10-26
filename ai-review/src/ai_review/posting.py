@@ -19,10 +19,7 @@ from .memory import (
     load_state_from_notes,
     normalize_state,
 )
-from .notes import (
-    find_summary_note,
-    index_ai_review_discussions,
-)
+from .notes import index_ai_review_discussions
 from .platform import ReviewPlatform, ReviewPlatformError
 from .render import platform_comment_limit, render_body
 from .schema import now_iso
@@ -31,8 +28,8 @@ from .state_plan import (
     _desired_discussion_resolved,
     _pipeline_id,
     _process_state_for_persistence,
+    open_at_head,
     plan_state,
-    reserve_thread_ids,
     state_from_existing_discussions,
 )
 from .summary_render import _sort_groups, render_summary_body
@@ -50,26 +47,6 @@ from .types import (
 )
 
 
-def load_persisted_state(
-    client: ReviewPlatform,
-    manifest: dict[str, Any],
-    *,
-    bot_author_id: int,
-    posting_mode: str,
-) -> tuple[State | None, list[str]]:
-    notes = client.list_state_notes(manifest["project_id"], manifest["merge_request_iid"])
-    state, warnings = load_state_from_notes(
-        notes,
-        expected_author_id=bot_author_id,
-        project_id=manifest["project_id"],
-        change_id=manifest["merge_request_iid"],
-        posting_mode=posting_mode,
-    )
-    if state is None:
-        return None, warnings
-    return normalize_state(state, manifest=manifest, pipeline_id=_pipeline_id(manifest)), warnings
-
-
 def _note_id_from_response(response: Any) -> int | None:
     if isinstance(response, dict) and isinstance(response.get("id"), int):
         return int(response["id"])
@@ -81,15 +58,13 @@ def upsert_summary_comment(
     manifest: dict[str, Any],
     run_id: str,
     run_health: RunHealth,
-    raw_discussions: list[dict[str, Any]],
+    summary_note: tuple[int, str] | None,
     fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     max_fyi: int,
     state: Mapping[str, Any],
     *,
     posting_mode: str,
-    bot_author_id: int,
-    warnings: list[str],
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Create or refresh the summary comment on every published run.
@@ -115,17 +90,14 @@ def upsert_summary_comment(
     if dry_run:
         summary["action"] = "created"
         return summary
-    existing = find_summary_note(
-        raw_discussions, expected_author_id=bot_author_id, warnings=warnings
-    )
-    if existing is None:
+    if summary_note is None:
         response = client.create_state_note(
             manifest["project_id"], manifest["merge_request_iid"], body
         )
         summary["action"] = "created"
         summary["note_id"] = _note_id_from_response(response)
         return summary
-    note_id, existing_hash = existing
+    note_id, existing_hash = summary_note
     summary["note_id"] = note_id
     if existing_hash == body_hash:
         summary["action"] = "unchanged"
@@ -442,13 +414,12 @@ def finalize_state(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    raw_discussions: list[dict[str, Any]],
+    summary_note: tuple[int, str] | None,
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     *,
     posting_mode: str,
     max_fyi: int,
-    bot_author_id: int,
     dry_run: bool,
 ) -> PostResult:
     prior_records = {record["issue_id"]: record for record in state_plan.base_records}
@@ -504,14 +475,12 @@ def finalize_state(
                 manifest,
                 consensus["run_id"],
                 consensus["run_health"],
-                raw_discussions,
+                summary_note,
                 summary_fallback_groups,
                 fyi_groups,
                 max_fyi,
                 final_state,
                 posting_mode=posting_mode,
-                bot_author_id=bot_author_id,
-                warnings=result["warnings"],
                 dry_run=dry_run,
             ),
         )
@@ -531,10 +500,10 @@ def finalize_state(
 @dataclass(frozen=True)
 class PostContext:
     version: Any
-    raw_discussions: list[dict[str, Any]]
     persisted_state: State
+    # The loaded ledger's own comment: the summary to update, and its body hash.
+    summary_note: tuple[int, str] | None
     human_commands: dict[str, str]
-    bot_author_id: int
 
 
 def prepare_post_context(
@@ -558,28 +527,26 @@ def prepare_post_context(
     bot_author_id = client.current_user_id()
     if bot_author_id is None:
         raise RuntimeError("post requires current_user lookup to verify note authors")
-    persisted_state, state_warnings = load_persisted_state(
-        client, manifest, bot_author_id=bot_author_id, posting_mode=posting_mode
+    ledger, state_warnings = load_state_from_notes(
+        client.list_state_notes(manifest["project_id"], manifest["merge_request_iid"]),
+        expected_author_id=bot_author_id,
+        project_id=manifest["project_id"],
+        change_id=manifest["merge_request_iid"],
+        bind_project_id=posting_mode != "github_reviews",
     )
-    missing_ledger = persisted_state is None
     indexed = index_ai_review_discussions(raw_discussions)
-    if persisted_state is None:
-        if any(
-            discussion.author_id == bot_author_id
-            and (
-                discussion.resolved
-                or not isinstance(discussion.position, dict)
-                or discussion.position.get("head_sha") != manifest["head_sha"]
-            )
-            for discussion in indexed
-        ):
-            raise ValueError(
-                "existing review history has no ledger; restore state from an export "
-                "or follow docs/operations.md#missing-ledger-repair"
-            )
-        persisted_state = normalize_state(
-            None, manifest=manifest, pipeline_id=_pipeline_id(manifest)
+    if ledger is None and any(
+        discussion.author_id == bot_author_id
+        and not open_at_head(discussion, manifest["head_sha"])
+        for discussion in indexed
+    ):
+        raise ValueError(
+            "existing review history has no ledger; restore state from an export "
+            "or follow docs/operations.md#missing-ledger-repair"
         )
+    persisted_state = normalize_state(
+        ledger.state if ledger else None, manifest=manifest, pipeline_id=_pipeline_id(manifest)
+    )
     human_commands = collect_human_commands(
         client,
         manifest["project_id"],
@@ -596,7 +563,7 @@ def prepare_post_context(
         [
             discussion
             for discussion in indexed
-            if missing_ledger or discussion.marker["issue_id"] in needed_issue_ids
+            if ledger is None or discussion.marker["issue_id"] in needed_issue_ids
         ],
         current_head_sha=manifest["head_sha"],
         expected_author_id=bot_author_id,
@@ -610,10 +577,9 @@ def prepare_post_context(
     result["warnings"].extend(state_warnings)
     return PostContext(
         version=version,
-        raw_discussions=raw_discussions,
         persisted_state=persisted_state,
+        summary_note=(ledger.note_id, ledger.summary_body_hash) if ledger else None,
         human_commands=human_commands,
-        bot_author_id=bot_author_id,
     )
 
 
@@ -682,22 +648,6 @@ def post_consensus(
         result["status"] = "state_overflow"
         result["warnings"].append(state_plan.outcome.overflow)
         return result
-    # Reserve health and the complete ledger before any platform mutation. Only
-    # visible finding entries may be truncated to fit the combined comment.
-    try:
-        render_summary_body(
-            consensus["run_id"],
-            consensus["run_health"],
-            summary_fallback_groups,
-            fyi_groups,
-            max_fyi,
-            posting_mode=posting_mode,
-            state=reserve_thread_ids(state_plan),
-        )
-    except ValueError as exc:
-        result["status"] = "state_overflow"
-        result["warnings"].append(str(exc))
-        return result
     inline_outcome = post_inline(
         client,
         manifest,
@@ -717,11 +667,10 @@ def post_consensus(
         consensus,
         inline_outcome.result,
         inline_outcome.state_plan,
-        context.raw_discussions,
+        context.summary_note,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         posting_mode=posting_mode,
         max_fyi=max_fyi,
-        bot_author_id=context.bot_author_id,
         dry_run=dry_run,
     )

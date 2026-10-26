@@ -41,7 +41,6 @@
           "created_by_pipeline_id",
           "updated_by_pipeline_id",
           "human_disposition",
-          "remap_status",
           "last_matched_run_id"
         ],
         "properties": {
@@ -92,9 +91,6 @@
           "human_disposition": {
             "type": ["string", "null"],
             "enum": ["wontfix", "reopen", "resolve", null]
-          },
-          "remap_status": {
-            "enum": ["exact", "remapped", "missing", "ambiguous", "not_checked"]
           },
           "last_matched_run_id": { "type": ["string", "null"] }
         }

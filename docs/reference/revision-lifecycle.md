@@ -7,12 +7,14 @@ Later runs reconcile new consensus against those records.
 ## Normal progression
 
 1. A new consensus group creates a new record and discussion.
-2. An unrelated edit may move the line; context-based remapping retains the
-   issue and updates its anchor.
+2. An unrelated edit may move the line; a group that still matches its record
+   by issue ID, source finding, or context hash keeps the record and its
+   discussion and adopts the group's current anchor.
 3. A changed explanation updates the existing discussion when identity still
    matches.
 4. Sufficient trustworthy reviewers can confirm absence and resolve the record.
-5. Ambiguous or missing context becomes stale rather than being guessed.
+5. An ambiguous match goes to the summary rather than being guessed, and an
+   absence too few trustworthy reviewers confirm becomes stale.
 
 Reruns against the same state and consensus are designed to update or skip the
 same platform object rather than create a duplicate. This behavior is covered

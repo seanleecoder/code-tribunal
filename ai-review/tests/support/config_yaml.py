@@ -49,7 +49,6 @@ def config_tail(
         "state:",
         "  retention:",
         "    max_records: 200",
-        "    max_state_bytes: 50000",
         "limits:",
         "  max_prompt_bytes: 500000",
         "security:",

@@ -46,7 +46,6 @@ type StateRecordStatus = Literal[
     "stale_unverified",
 ]
 type HumanDisposition = Literal["wontfix", "reopen", "resolve"]
-type RemapStatus = Literal["exact", "remapped", "missing", "ambiguous", "not_checked"]
 
 
 class LineRef(TypedDict):
@@ -189,7 +188,6 @@ class StateRecord(TypedDict):
     created_by_pipeline_id: str
     updated_by_pipeline_id: str
     human_disposition: HumanDisposition | None
-    remap_status: RemapStatus
     last_matched_run_id: RunId | None
 
 

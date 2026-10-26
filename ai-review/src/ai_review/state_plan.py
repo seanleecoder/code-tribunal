@@ -19,6 +19,7 @@ from .memory import (
 )
 from .notes import ExistingReviewDiscussion
 from .schema import load_schema, now_iso
+from .summary_render import render_summary_body
 from .types import (
     Category,
     Consensus,
@@ -87,7 +88,6 @@ def _record_for_group(
     root_note_id: int | None = None,
     status: str = "open",
     human_disposition: str | None = None,
-    remap_status: str = "exact",
 ) -> dict[str, Any]:
     # ``last_posted_body_hash`` is deliberately not set here: ``**previous``
     # carries it and only posting, which knows what a thread shows, writes it.
@@ -130,7 +130,6 @@ def _record_for_group(
             ),
             "updated_by_pipeline_id": pipeline_id,
             "human_disposition": human_disposition,
-            "remap_status": remap_status,
             "last_matched_run_id": manifest.get("run_id"),
         },
         manifest=manifest,
@@ -185,27 +184,31 @@ def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def open_at_head(discussion: ExistingReviewDiscussion, head_sha: str) -> bool:
+    """Whether marker recovery may adopt this thread at ``head_sha``."""
+    return (
+        not discussion.resolved
+        and isinstance(discussion.position, dict)
+        and discussion.position.get("head_sha") == head_sha
+    )
+
+
 def state_from_existing_discussions(
     existing_discussions: list[ExistingReviewDiscussion],
     *,
+    current_head_sha: str,
     exclude_discussion_ids: set[Any] | None = None,
-    current_head_sha: str | None = None,
     expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
     categories = get_args(Category.__value__)
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
-        if discussion.resolved or discussion.discussion_id in excluded:
+        if not open_at_head(discussion, current_head_sha) or discussion.discussion_id in excluded:
             continue
         if expected_author_id is not None and discussion.author_id != expected_author_id:
             continue
         if discussion.discussion_id is None or discussion.root_note_id is None:
-            continue
-        if current_head_sha is not None and (
-            not isinstance(discussion.position, dict)
-            or discussion.position.get("head_sha") != current_head_sha
-        ):
             continue
         anchor = _anchor_from_position(discussion.position or {})
         records.append(
@@ -263,11 +266,6 @@ def _with_reserved_thread_ids(state: State, issue_ids: set[str]) -> State:
             ],
         },
     )
-
-
-def reserve_thread_ids(plan: StatePlan) -> State:
-    """Size the ledger with the largest supported IDs before creating threads."""
-    return _with_reserved_thread_ids(plan.planned_state, _threadless_issue_ids(plan.inline_plans))
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -330,7 +328,6 @@ def _plan_stale_records(
         elif issue_id in protected_issue_ids:
             if updated.get("status") == "open":
                 updated["status"] = "stale"
-                updated["remap_status"] = "ambiguous"
         elif record.get("status") == "open":
             updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
             if not resolution_quorum:
@@ -368,19 +365,11 @@ def _process_state_for_persistence(
     manifest: dict[str, Any],
     pipeline_id: str,
     retention: StateRetention,
-    threadless_issue_ids: set[str] | None = None,
 ) -> tuple[State, str | None]:
     compacted = cast(
         State, compact_state(normalize_state(state, manifest=manifest, pipeline_id=pipeline_id))
     )
-    # Threads not yet created are sized at their largest supported IDs, so the
-    # ledger cannot outgrow its budget after inline posting has begun.
-    overflow = state_overflow_reason(
-        _with_reserved_thread_ids(compacted, threadless_issue_ids or set()),
-        max_records=retention.max_records,
-        max_state_bytes=retention.max_state_bytes,
-    )
-    return compacted, overflow
+    return compacted, state_overflow_reason(compacted, max_records=retention.max_records)
 
 
 def plan_state(
@@ -469,12 +458,6 @@ def plan_state(
                 existing=cast(dict[str, Any] | None, previous),
                 status=status,
                 human_disposition=human_disposition,
-                remap_status=(
-                    "remapped"
-                    if previous is not None
-                    and previous.get("anchor") != group["representative_anchor"]
-                    else "exact"
-                ),
             ),
         )
         group_plan.existing = previous
@@ -507,8 +490,26 @@ def plan_state(
         manifest=manifest,
         pipeline_id=pipeline_id,
         retention=retention,
-        threadless_issue_ids=_threadless_issue_ids(inline_plans),
     )
+    if overflow is None:
+        # Reserve health and the complete ledger before any platform mutation. Only
+        # visible finding entries may be truncated to fit the combined comment.
+        # Threads not yet created are sized at their largest supported IDs, so the
+        # ledger cannot outgrow the comment after inline posting has begun.
+        try:
+            render_summary_body(
+                consensus["run_id"],
+                consensus["run_health"],
+                summary_fallback_groups,
+                fyi_groups,
+                config.limits.max_fyi_findings,
+                posting_mode=config.posting.mode,
+                state=_with_reserved_thread_ids(
+                    processed_state, _threadless_issue_ids(inline_plans)
+                ),
+            )
+        except ValueError as exc:
+            overflow = str(exc)
     outcome.overflow = overflow
 
     return StatePlan(

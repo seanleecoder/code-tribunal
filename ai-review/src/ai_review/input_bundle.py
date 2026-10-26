@@ -499,7 +499,7 @@ def _load_platform_state(
     *,
     project_id: str,
     change_id: str,
-    posting_mode: str,
+    bind_project_id: bool,
 ) -> dict[str, Any]:
     """Missing initial state is empty; inaccessible or corrupt state aborts prepare."""
     bot_author_id = client.current_user_id()
@@ -513,11 +513,11 @@ def _load_platform_state(
         expected_author_id=bot_author_id,
         project_id=project_id,
         change_id=change_id,
-        posting_mode=posting_mode,
+        bind_project_id=bind_project_id,
     )
     for warning in warnings:
         print(f"ai-review prepare: {warning}")
-    return loaded if loaded is not None else default_state
+    return loaded.state if loaded is not None else default_state
 
 
 def _git_command(repo_path: Path, *args: str) -> str:
@@ -643,7 +643,7 @@ def prepare_github_bundle(
             default_state,
             project_id=repo,
             change_id=pr_number,
-            posting_mode="github_reviews",
+            bind_project_id=False,
         )
 
     def revalidate() -> None:
@@ -712,7 +712,7 @@ def prepare_gitlab_bundle(
             default_state,
             project_id=str(project_id),
             change_id=str(mr_iid),
-            posting_mode="gitlab_discussions",
+            bind_project_id=True,
         )
 
     def revalidate() -> None:

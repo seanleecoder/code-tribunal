@@ -151,9 +151,9 @@ class SummarySectionDescriptor:
             )
 
 
-def _compose_summary_sections(sections: list[SummarySectionDescriptor], health: str) -> str:
-    # The health section is reserved space; only finding sections are truncated.
-    rendered_sections = ["**AI review summary**", health]
+def _compose_summary_sections(sections: list[SummarySectionDescriptor], reserved: str) -> str:
+    # Health and the ledger are reserved space; only finding sections are truncated.
+    rendered_sections = ["**AI review summary**", reserved]
     for section in sections:
         total = len(section.entries)
         section_lines = [
@@ -194,7 +194,7 @@ def render_summary_body(
     fallback_entries = [_summary_line(group) for group in fallback_sorted]
     fyi_entries = [_summary_line(group) for group in capped_fyi]
     max_comment_size = platform_comment_limit(posting_mode)
-    health = run_health_section(run_health) + "\n\n" + encode_state_note(state)
+    reserved = run_health_section(run_health) + "\n\n" + encode_state_note(state)
     placeholder_marker = summary_marker(run_id, "0" * 64)
     configured_fyi_omitted = len(fyi_sorted) - len(capped_fyi)
 
@@ -242,14 +242,19 @@ def render_summary_body(
             )
         )
 
-    body_without_marker = _compose_summary_sections(sections, health)
+    body_without_marker = _compose_summary_sections(sections, reserved)
     while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
         if not _drop_lowest_priority_trailing_entry(sections):
             raise ValueError("platform comment limit is too small for summary marker")
-        body_without_marker = _compose_summary_sections(sections, health)
+        body_without_marker = _compose_summary_sections(sections, reserved)
 
-    body_hash = sha256_hex(body_without_marker)
-    marker = summary_marker(run_id, body_hash)
-    if len(body_without_marker) + len("\n\n") + len(marker) > max_comment_size:
+    body, body_hash = seal_summary_body(body_without_marker, run_id)
+    if len(body) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")
-    return body_without_marker + "\n\n" + marker, body_hash
+    return body, body_hash
+
+
+def seal_summary_body(content: str, run_id: str) -> tuple[str, str]:
+    """Append the summary marker that records ``content``'s hash."""
+    body_hash = sha256_hex(content)
+    return content + "\n\n" + summary_marker(run_id, body_hash), body_hash

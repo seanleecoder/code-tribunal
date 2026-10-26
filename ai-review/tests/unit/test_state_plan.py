@@ -21,6 +21,7 @@ from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
+from support.post_case import full_run_health  # noqa: E402
 
 
 def _manifest() -> dict[str, str]:
@@ -47,6 +48,7 @@ def _config(
 def _consensus(*, eligible: list[str] | None = None) -> dict[str, Any]:
     return {
         "run_id": "run",
+        "run_health": full_run_health(),
         "successful_reviewers": ["claude"],
         "resolution_eligible_reviewers": ["claude"] if eligible is None else eligible,
         "groups": [],
@@ -64,7 +66,11 @@ def _group(issue_id: str) -> dict[str, Any]:
         "category": "correctness",
         "title": "Title",
         "body": "Body",
+        "support_count": 1,
+        "agreeing_critics": [],
+        "contributing_reviewers": ["claude"],
         "source_finding_ids": [_SOURCE_FINDING_ID],
+        "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
         "match_keys": {"context_hashes": [], "title_fingerprints": [], "symbols": []},
         "representative_anchor": {
             "new_path": "src/foo.py",
@@ -267,9 +273,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
                 for issue_id in ("1" * 64, "2" * 64):
                     record = self._record_of(plan, issue_id)
                     assert record is not None
-                    self.assertEqual(
-                        (record["status"], record["remap_status"]), ("stale", "ambiguous")
-                    )
+                    self.assertEqual(record["status"], "stale")
                 self.assertEqual(len(plan.planned_records), 2)
                 self.assertEqual(plan.outcome.stale_unverified, 0)
                 self.assertEqual(
@@ -369,10 +373,10 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, "1" * 64), "open")
         untouched = self._record_of(plan, "2" * 64)
         assert untouched is not None
-        self.assertEqual((untouched["status"], untouched["remap_status"]), ("stale", "ambiguous"))
+        self.assertEqual(untouched["status"], "stale")
 
     def test_retention_overflow_is_reported_and_clears_inline_plans(self) -> None:
-        config = _config(retention={"max_state_bytes": 1})
+        config = _config(retention={"max_records": 0})
         plan = _plan(config=config, inline=[_group("a" * 64)])
 
         self.assertIsNotNone(plan.outcome.overflow)

@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from .anchors import anchor_path_key
 from .canonical import canonical_json, canonical_json_text, sha256_hex
-from .notes import LEDGER_CONTAINER_RE, STATE_MARKER_RE, note_author_id
+from .notes import LEDGER_CONTAINER_RE, STATE_MARKER_RE, SUMMARY_MARKER_RE, note_author_id
 from .schema import now_iso, validate_instance
 from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
 
@@ -105,7 +105,6 @@ def normalize_state_record(
         "created_by_pipeline_id": created_pipeline,
         "updated_by_pipeline_id": str(record.get("updated_by_pipeline_id") or pipeline_id),
         "human_disposition": record.get("human_disposition"),
-        "remap_status": str(record.get("remap_status") or "not_checked"),
         "last_matched_run_id": record.get("last_matched_run_id"),
     }
 
@@ -153,8 +152,16 @@ def encode_state_note(state: Mapping[str, Any]) -> str:
 
 
 def decode_state_note_body(body: str) -> dict[str, Any]:
+    versions = STATE_MARKER_RE.findall(body)
+    if not versions:
+        raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
+    explicit = [version for version in versions if version]
+    if not explicit or any(version != "2" for version in explicit):
+        raise ValueError(
+            "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
+        )
     matches = list(STATE_NOTE_RE.finditer(body))
-    if len(matches) != 1 or len(STATE_MARKER_RE.findall(body)) != 1:
+    if len(matches) != 1 or len(versions) != 1:
         raise ValueError("expected exactly one state v2 marker")
     encoded = matches[0].group("payload")
     try:
@@ -187,11 +194,20 @@ def state_note_candidates(
         if expected_author_id is not None and note_author_id(note) != expected_author_id:
             author_mismatches += 1
             warnings.append(
-                f"ignored state note {note.get('id')} from non-bot author {note_author_id(note)}"
+                f"ignored summary note {note.get('id')} from non-bot author {note_author_id(note)}"
             )
             continue
         candidates.append(note)
     return candidates, warnings, author_mismatches
+
+
+@dataclass(frozen=True)
+class PersistedLedger:
+    """The bot's one summary comment and the v2 ledger it carries."""
+
+    state: dict[str, Any]
+    note_id: int
+    summary_body_hash: str
 
 
 def load_state_from_notes(
@@ -199,9 +215,15 @@ def load_state_from_notes(
     *,
     project_id: str,
     change_id: str,
-    posting_mode: str,
+    bind_project_id: bool,
     expected_author_id: int | None = None,
-) -> tuple[dict[str, Any] | None, list[str]]:
+) -> tuple[PersistedLedger | None, list[str]]:
+    """Load the one bot summary's ledger, bound to ``change_id``.
+
+    ``bind_project_id`` is false on GitHub: the authenticated comment's hosting
+    PR is the repository binding, and its mutable owner/name slug is metadata,
+    so renames/transfers refresh it.
+    """
     candidates, warnings, author_mismatches = state_note_candidates(
         notes, expected_author_id=expected_author_id
     )
@@ -215,22 +237,25 @@ def load_state_from_notes(
         raise ValueError(
             "multiple bot state/summary notes; migrate or repair state before retrying"
         )
-    body = candidates[0]["body"]
-    versions = STATE_MARKER_RE.findall(body)
-    if not versions:
-        raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
-    if [version for version in versions if version] != ["2"]:
-        raise ValueError(
-            "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
-        )
+    note = candidates[0]
+    if not isinstance(note.get("id"), int):
+        raise ValueError("bot summary note has no numeric id")
+    body = note["body"]
     state = decode_state_note_body(body)
     if state["merge_request_iid"] != str(change_id) or (
-        posting_mode != "github_reviews" and state["project_id"] != str(project_id)
+        bind_project_id and state["project_id"] != str(project_id)
     ):
         raise ValueError("persisted state belongs to another change")
-    # The authenticated comment's hosting PR is the repository binding on GitHub;
-    # its mutable owner/name slug is metadata, so renames/transfers refresh it.
-    return attach_state_hash(dict(state, project_id=str(project_id))), warnings
+    summary = SUMMARY_MARKER_RE.search(body)
+    return (
+        PersistedLedger(
+            state=attach_state_hash(dict(state, project_id=str(project_id))),
+            note_id=note["id"],
+            # A ledger without a summary marker never matches, so post rewrites it.
+            summary_body_hash=summary.group("body_hash") if summary else "",
+        ),
+        warnings,
+    )
 
 
 KEEP_AUTO_RESOLVED_RECORDS = 5
@@ -252,22 +277,12 @@ def compact_state(state: Mapping[str, Any]) -> dict[str, Any]:
     )
 
 
-def state_overflow_reason(
-    state: Mapping[str, Any],
-    *,
-    max_records: int,
-    max_state_bytes: int,
-) -> str | None:
+def state_overflow_reason(state: Mapping[str, Any], *, max_records: int) -> str | None:
+    # The summary comment's platform limit bounds the ledger's size; see plan_state.
     record_count = len(state.get("records", []))
     if record_count > max_records:
         return (
             f"state has {record_count} records, exceeds state.retention.max_records ({max_records})"
-        )
-    encoded_bytes = len(encode_state_note(state).encode("utf-8"))
-    if encoded_bytes > max_state_bytes:
-        return (
-            f"state is {encoded_bytes} bytes, exceeds state.retention.max_state_bytes "
-            f"({max_state_bytes})"
         )
     return None
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -112,13 +113,24 @@ def load_schema(schema_name: str) -> dict[str, Any]:
     return loaded
 
 
+@cache
+def _named_validator(schema_name: str) -> Any:
+    import jsonschema  # type: ignore[import-untyped]
+
+    return jsonschema.Draft202012Validator(load_schema(schema_name))
+
+
 def validate_instance(instance: Any, schema: str | dict[str, Any]) -> None:
     import jsonschema  # type: ignore[import-untyped]
 
-    if isinstance(schema, str):
-        schema = load_schema(schema)
+    # Shipped schemas are immutable; state is validated on every encode and decode.
+    validator = (
+        _named_validator(schema)
+        if isinstance(schema, str)
+        else jsonschema.Draft202012Validator(schema)
+    )
     try:
-        jsonschema.Draft202012Validator(schema).validate(instance)
+        validator.validate(instance)
     except jsonschema.ValidationError as exc:
         raise SchemaValidationError(exc.message) from exc
 

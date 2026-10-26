@@ -95,7 +95,6 @@ posting:
 state:
   retention:
     max_records: 200 # Max state entry count
-    max_state_bytes: 50000 # Max byte size for state payload note
 
 # Safety limits for diff size, findings, and prompts
 limits:

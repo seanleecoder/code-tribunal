@@ -303,7 +303,7 @@ class PublishEndToEndTests(unittest.TestCase):
         config["posting"]["inline_multiline"] = False
         config["posting"]["v1_inline_sides"] = ["new"]
         config["panel"]["min_successful_reviewers_for_resolution"] = 1
-        config["state"]["retention"] = {"max_records": 200, "max_state_bytes": 50000}
+        config["state"]["retention"] = {"max_records": 200}
         manifest = load_json_file(bundle / "manifest.json")
         diff_text = (bundle / "mr.diff").read_text(encoding="utf-8")
         return validate_config(config), manifest, diff_text

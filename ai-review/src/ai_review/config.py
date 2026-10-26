@@ -196,7 +196,6 @@ class PostingConfig:
 @dataclass(frozen=True)
 class StateRetention:
     max_records: int = 200
-    max_state_bytes: int = 50000
 
 
 @dataclass(frozen=True)

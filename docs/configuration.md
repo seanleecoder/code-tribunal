@@ -222,15 +222,17 @@ Persistent cross-run state is always active and has no backend setting.
 comment on GitLab or GitHub. Checksums and author checks are mandatory. Prepare
 and post stop on inaccessible, corrupt, duplicate, or unmigrated existing state.
 Remove `state.checksum_required`, `state.fail_closed_on_load_error`,
-`state.recover_from_discussion_markers`, and the per-status retention keys when
-upgrading. Interrupted publication is reconciled from bot-authored thread markers
-on the current revision. Active records and human dispositions are always kept;
-only the newest five automatically resolved records are retained.
+`state.recover_from_discussion_markers`, the per-status retention keys, and
+`state.retention.max_state_bytes` when upgrading; the platform comment limit
+bounds the ledger, and a summary whose health section and complete ledger
+cannot fit fails before any platform write. Interrupted publication is
+reconciled from bot-authored thread markers on the current revision. Active
+records and human dispositions are always kept; only the newest five
+automatically resolved records are retained.
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `state.retention.max_records` | integer, `200` | Total record cap. |
-| `state.retention.max_state_bytes` | integer, `50000` | Encoded state payload byte cap. |
 
 ### Limits and security
 
