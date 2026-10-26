@@ -148,7 +148,9 @@ summary, a retry reconciles bot-authored thread roots on that same revision.
 With an existing ledger, recovery is limited to current findings or authorized
 commands. Without a ledger, every eligible open root is recovered so absent
 findings can be resolved with resolution quorum, or tracked as `stale_unverified`
-without it. GitHub checks GraphQL resolution before reusing a root; a resurfaced
+without it. Recovered open records are saved before any ledger-free thread is
+resolved, so repeated summary-write failures remain retryable. GitHub checks
+GraphQL resolution before reusing a root; a resurfaced
 finding whose compacted thread is already resolved gets a new visible thread.
 It never replaces authoritative ledger records or human dispositions. Missing
 older history requires the deliberate repair below; corrupt state is not

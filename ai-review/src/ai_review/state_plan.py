@@ -500,7 +500,8 @@ def plan_state(
             render_summary_body(
                 consensus["run_id"],
                 consensus["run_health"],
-                summary_fallback_groups,
+                summary_fallback_groups
+                + [inline.group for inline in inline_plans if inline.ambiguous],
                 fyi_groups,
                 config.limits.max_fyi_findings,
                 posting_mode=config.posting.mode,

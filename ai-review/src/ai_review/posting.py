@@ -66,13 +66,13 @@ def upsert_summary_comment(
     *,
     posting_mode: str,
     dry_run: bool = False,
-) -> dict[str, Any]:
+) -> SummaryComment:
     """Create or refresh the summary comment on every published run.
 
     Its health section is always present, so a later run that recovers replaces
     an earlier degraded body.
     """
-    summary = {
+    summary: SummaryComment = {
         "action": "none",
         "note_id": None,
         "surface_findings": len(fallback_groups),
@@ -423,16 +423,9 @@ def finalize_state(
     dry_run: bool,
 ) -> PostResult:
     prior_records = {record["issue_id"]: record for record in state_plan.base_records}
-    prior_status: dict[str, StateRecordStatus | None] = {
-        issue_id: record.get("status") for issue_id, record in prior_records.items()
-    }
-    for record in state_plan.planned_records:
-        discussion_id = record.get("discussion_id")
-        if discussion_id is None:
-            continue
-        desired = _desired_discussion_resolved(record, prior_status)
-        if desired is None or dry_run:
-            continue
+    resolutions = [] if dry_run else _planned_thread_resolutions(state_plan)
+    for record, desired in resolutions:
+        discussion_id = record["discussion_id"]
         try:
             client.resolve_thread(
                 manifest["project_id"],
@@ -463,26 +456,69 @@ def finalize_state(
         result["status"] = "partial_failed"
         result["warnings"].append(f"state overflow after mutations: {overflow}")
         return result
+    # Summary fallback is unconditional. A surfaced finding that could not be
+    # anchored is still a finding two reviewers supported independently; the
+    # configuration key that used to suppress this list erased it from all
+    # product output, leaving it only in persisted state and a warning.
+    _write_summary(
+        client,
+        manifest,
+        consensus,
+        result,
+        summary_note,
+        summary_fallback_groups,
+        fyi_groups,
+        final_state,
+        posting_mode=posting_mode,
+        max_fyi=max_fyi,
+        dry_run=dry_run,
+    )
+    return result
+
+
+def _planned_thread_resolutions(state_plan: StatePlan) -> list[tuple[StateRecord, bool]]:
+    """Return each planned thread whose resolution must change, with its target."""
+    prior_status: dict[str, StateRecordStatus | None] = {
+        record["issue_id"]: record.get("status") for record in state_plan.base_records
+    }
+    resolutions = []
+    for record in state_plan.planned_records:
+        if record.get("discussion_id") is None:
+            continue
+        desired = _desired_discussion_resolved(record, prior_status)
+        if desired is not None:
+            resolutions.append((record, desired))
+    return resolutions
+
+
+def _write_summary(
+    client: ReviewPlatform,
+    manifest: dict[str, Any],
+    consensus: Consensus,
+    result: PostResult,
+    summary_note: tuple[int, str] | None,
+    summary_fallback_groups: list[FindingGroup],
+    fyi_groups: list[FindingGroup],
+    state: State,
+    *,
+    posting_mode: str,
+    max_fyi: int,
+    dry_run: bool,
+) -> bool:
+    """Upsert the summary ledger, recording any failure on ``result``."""
     try:
-        # Summary fallback is unconditional. A surfaced finding that could not be
-        # anchored is still a finding two reviewers supported independently; the
-        # configuration key that used to suppress this list erased it from all
-        # product output, leaving it only in persisted state and a warning.
-        result["summary_comment"] = cast(
-            SummaryComment,
-            upsert_summary_comment(
-                client,
-                manifest,
-                consensus["run_id"],
-                consensus["run_health"],
-                summary_note,
-                summary_fallback_groups,
-                fyi_groups,
-                max_fyi,
-                final_state,
-                posting_mode=posting_mode,
-                dry_run=dry_run,
-            ),
+        result["summary_comment"] = upsert_summary_comment(
+            client,
+            manifest,
+            consensus["run_id"],
+            consensus["run_health"],
+            summary_note,
+            summary_fallback_groups,
+            fyi_groups,
+            max_fyi,
+            state,
+            posting_mode=posting_mode,
+            dry_run=dry_run,
         )
     except Exception as exc:
         result["status"] = (
@@ -494,7 +530,8 @@ def finalize_state(
             else "failed"
         )
         result["warnings"].append(f"state persistence failed: {exc}")
-    return result
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -648,6 +685,48 @@ def post_consensus(
         result["status"] = "state_overflow"
         result["warnings"].append(state_plan.outcome.overflow)
         return result
+    summary_note = context.summary_note
+    if (
+        summary_note is None
+        and not dry_run
+        and any(desired for _, desired in _planned_thread_resolutions(state_plan))
+    ):
+        # Recoverable roots must have a durable, still-open ledger before we
+        # resolve them. A failed first write can then retry marker recovery;
+        # a failed final update can retry from this ledger on the same head.
+        recovered_state, overflow = _process_state_for_persistence(
+            dict(context.persisted_state),
+            manifest=manifest,
+            pipeline_id=state_plan.pipeline_id,
+            retention=state_plan.retention,
+        )
+        if overflow is not None:
+            result["status"] = "state_overflow"
+            result["warnings"].append(overflow)
+            return result
+        if not _write_summary(
+            client,
+            manifest,
+            consensus,
+            result,
+            None,
+            summary_fallback_groups,
+            fyi_groups,
+            recovered_state,
+            posting_mode=posting_mode,
+            max_fyi=max_fyi,
+            dry_run=dry_run,
+        ):
+            return result
+        note_id = result["summary_comment"]["note_id"]
+        if note_id is None:
+            result["status"] = "partial_failed"
+            result["warnings"].append(
+                "state persistence failed: summary creation returned no note ID"
+            )
+            return result
+        # Resolution results still need to replace the recovered ledger.
+        summary_note = (note_id, "")
     inline_outcome = post_inline(
         client,
         manifest,
@@ -667,7 +746,7 @@ def post_consensus(
         consensus,
         inline_outcome.result,
         inline_outcome.state_plan,
-        context.summary_note,
+        summary_note,
         inline_outcome.summary_fallback_groups,
         fyi_groups,
         posting_mode=posting_mode,

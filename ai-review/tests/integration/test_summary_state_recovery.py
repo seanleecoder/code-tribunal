@@ -4,6 +4,7 @@ import copy
 import importlib
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -18,20 +19,22 @@ FakeGitHubClient = importlib.import_module("support.fake_github").FakeGitHubClie
 FakeGitLabClient = importlib.import_module("support.fake_gitlab").FakeGitLabClient
 
 
-@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
-@pytest.mark.parametrize("initial_state", [False, True])
-def test_retry_recovers_created_thread_after_summary_write_failure(
-    mode: str, initial_state: bool
-) -> None:
+def _setup(mode: str) -> tuple[Any, dict[str, Any], Any, Any]:
     fixtures = PostCase()
-    config = fixtures._config(mode=mode)
-    manifest = fixtures._manifest("head")
     client = (
         FakeGitHubClient(head_sha="head", diff_text="")
         if mode == "github_reviews"
         else FakeGitLabClient(head_sha="head", diff_text="")
     )
-    consensus = fixtures._consensus()
+    return fixtures._config(mode=mode), fixtures._manifest("head"), client, fixtures._consensus()
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+@pytest.mark.parametrize("initial_state", [False, True])
+def test_retry_recovers_created_thread_after_summary_write_failure(
+    mode: str, initial_state: bool
+) -> None:
+    config, manifest, client, consensus = _setup(mode)
     original_body = None
     if initial_state:
         assert post_consensus(client, config, manifest, consensus)["status"] == "success"
@@ -62,15 +65,7 @@ def test_retry_recovers_created_thread_after_summary_write_failure(
 def test_absent_orphan_is_tracked_after_first_summary_write_fails(
     mode: str, resolution_quorum: bool
 ) -> None:
-    fixtures = PostCase()
-    config = fixtures._config(mode=mode)
-    manifest = fixtures._manifest("head")
-    client = (
-        FakeGitHubClient(head_sha="head", diff_text="")
-        if mode == "github_reviews"
-        else FakeGitLabClient(head_sha="head", diff_text="")
-    )
-    consensus = fixtures._consensus()
+    config, manifest, client, consensus = _setup(mode)
     with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
         failed = post_consensus(client, config, manifest, consensus)
     assert failed["status"] == "partial_failed"
@@ -93,6 +88,115 @@ def test_absent_orphan_is_tracked_after_first_summary_write_fails(
         consensus["resolution_eligible_reviewers"] = ["claude"]
         assert post_consensus(client, config, manifest, consensus)["resolved_discussions"] == 1
     assert next(t for t in client.list_threads("1", "2") if t["id"] == orphan["id"])["resolved"]
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+@pytest.mark.parametrize("orphan_count", [1, 7])
+def test_repeated_first_summary_failures_preserve_orphan_recovery(
+    mode: str, orphan_count: int
+) -> None:
+    config, manifest, client, consensus = _setup(mode)
+    base = consensus["groups"][0]
+    consensus["groups"] = [
+        dict(copy.deepcopy(base), issue_id=f"{n:064x}", source_finding_ids=[f"{n + 100:064x}"])
+        for n in range(orphan_count)
+    ]
+    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
+        first = post_consensus(client, config, manifest, consensus)
+        assert first["created_discussions"] == orphan_count
+        consensus["groups"] = []
+        for _ in range(3):
+            retried = post_consensus(client, config, manifest, consensus)
+            assert retried["status"] == "failed"
+            assert retried["resolved_discussions"] == 0
+            assert not client.state_notes
+            assert all(not thread["resolved"] for thread in client.list_threads("1", "2"))
+
+    original_resolve = client.resolve_thread
+
+    def resolve(*args: object, **kwargs: object) -> dict:
+        # Every recovered root must be durable before resolution, including
+        # roots that final-state compaction will remove from the resolved tail.
+        records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+        assert len(records) == orphan_count
+        assert {record["status"] for record in records} == {"open"}
+        return original_resolve(*args, **kwargs)
+
+    with patch.object(client, "resolve_thread", side_effect=resolve):
+        recovered = post_consensus(client, config, manifest, consensus)
+    assert recovered["status"] == "success"
+    assert recovered["created_discussions"] == 0
+    assert recovered["resolved_discussions"] == orphan_count
+    assert len(client.state_notes) == len(client.summary_notes) == 1
+    records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+    assert len(records) == min(orphan_count, 5)
+    assert {record["status"] for record in records} == {"resolved"}
+    assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+def test_orphan_recovery_retries_after_final_summary_update_fails(mode: str) -> None:
+    config, manifest, client, consensus = _setup(mode)
+    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
+        assert post_consensus(client, config, manifest, consensus)["status"] == "partial_failed"
+    consensus["groups"] = []
+    with patch.object(
+        client, "update_state_note", side_effect=ReviewPlatformError("update failed")
+    ):
+        failed = post_consensus(client, config, manifest, consensus)
+    assert failed["status"] == "partial_failed"
+    assert failed["resolved_discussions"] == 1
+    assert decode_state_note_body(client.state_notes[0]["body"])["records"][0]["status"] == "open"
+    retried = post_consensus(client, config, manifest, consensus)
+    assert retried["status"] == "success"
+    assert retried["created_discussions"] == 0
+    assert len(client.state_notes) == len(client.summary_notes) == 1
+    records = decode_state_note_body(client.state_notes[0]["body"])["records"]
+    assert records[0]["status"] == "resolved"
+
+
+@pytest.mark.parametrize("match", ["ambiguous", "claimed"])
+def test_planned_inline_fallback_space_is_checked_before_updating_threads(match: str) -> None:
+    config, manifest, client, consensus = _setup("github_reviews")
+    if match == "ambiguous":
+        other = copy.deepcopy(consensus["groups"][0])
+        other.update(issue_id="2" * 64, source_finding_ids=["c" * 64])
+        consensus["groups"].append(other)
+    else:
+        consensus["groups"][0]["source_finding_ids"].append("c" * 64)
+    assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+    original_summary = client.state_notes[0]["body"]
+    original_threads = client.inline_comment_bodies()
+    current = consensus["groups"][0]
+    fallback = dict(
+        copy.deepcopy(current),
+        issue_id="d" * 64,
+        source_finding_ids=["b" * 64, "c" * 64] if match == "ambiguous" else ["c" * 64],
+    )
+    current["source_finding_ids"] = ["b" * 64]
+    current["body"] = "Updated inline finding"
+    consensus["groups"] = [current, fallback]
+    # The ledger fits, but adding even an omitted-finding section does not.
+    with patch(
+        "ai_review.summary_render.platform_comment_limit", return_value=len(original_summary) + 50
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "state_overflow"
+    assert result["created_discussions"] == result["updated_discussions"] == 0
+    assert result["resolved_discussions"] == 0
+    assert client.inline_comment_bodies() == original_threads
+    assert client.state_notes[0]["body"] == original_summary
+
+    with patch(
+        "ai_review.summary_render.platform_comment_limit", return_value=len(original_summary) + 500
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "success"
+    assert result["updated_discussions"] == 1
+    assert result["summary_comment"]["surface_findings"] == 1
+    assert client.inline_comment_bodies() != original_threads
+    assert client.state_notes[0]["body"] != original_summary
+    assert "Findings not posted inline" in client.state_notes[0]["body"]
 
 
 @pytest.mark.parametrize("decision", ["surface", "fyi"])
