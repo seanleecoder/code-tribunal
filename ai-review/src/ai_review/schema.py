@@ -121,7 +121,7 @@ def _named_validator(schema_name: str) -> Any:
 
 
 def validate_instance(instance: Any, schema: str | dict[str, Any]) -> None:
-    import jsonschema  # type: ignore[import-untyped]
+    import jsonschema
 
     # Shipped schemas are immutable; state is validated on every encode and decode.
     validator = (
