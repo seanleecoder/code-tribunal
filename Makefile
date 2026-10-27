@@ -1,4 +1,6 @@
-PYTHON ?= python3
+PYTHON ?= $(if $(wildcard .venv/bin/python),$(abspath .venv/bin/python),python3)
+# COMPAT-011: explicit Termux Python parser profile; CI keeps the native default.
+MYPY_FLAGS ?=
 AI_REVIEW_ROOT ?= ai-review
 PYTHONPATH := $(AI_REVIEW_ROOT)/src
 REVIEWER ?= claude
@@ -36,10 +38,12 @@ packaged-smoke:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review_smoke $(SCOPE)
 
 lint:
+	$(PYTHON) scripts/check_dev_tools.py ruff
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(RUFF_PATHS)
 
 typecheck:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m mypy
+	$(PYTHON) scripts/check_dev_tools.py mypy
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m mypy $(MYPY_FLAGS)
 
 supply-chain:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_supply_chain_pins.py
