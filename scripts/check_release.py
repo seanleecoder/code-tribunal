@@ -44,16 +44,14 @@ from validate_candidate_identity import CANDIDATE_SCHEMA, SIGNER_IDENTITY, SOURC
 
 # Tags before this were published under the retired release-inputs process.
 FIRST_VERSION = "2.1.0"
-TEMPLATES = (GITHUB_WORKFLOW, GITLAB_TEMPLATE)
 # P only re-pins: everything else ships from R, which the canary tested.
-RELEASE_PATHS = (*TEMPLATES, "CHANGELOG.md", "docs/")
+_RELEASE_EXTRAS = (GITLAB_TEMPLATE, "CHANGELOG.md", "docs/")
+RELEASE_PATHS = (GITHUB_WORKFLOW, *_RELEASE_EXTRAS)
 # COMPAT-010: immutable 2.1 release tags still use a canonical template and a
 # byte-identical copy at GITHUB_CALLER, and P may re-pin both.
 LEGACY_GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
 # Exclude the reusable workflow so this fallback cannot allow its deletion.
-LEGACY_RELEASE_PATHS = (
-    LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/"
-)
+LEGACY_RELEASE_PATHS = (LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER, *_RELEASE_EXTRAS)
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 # Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
@@ -139,17 +137,15 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
         # Whole directories: either layout's files may be absent at this revision.
         _extract(root, release_commit, (".github/workflows", "ai-review/ci"), tree)
         gitlab = (tree / GITLAB_TEMPLATE).read_text(encoding="utf-8")
-        github_path = tree / GITHUB_WORKFLOW
-        release_paths = RELEASE_PATHS
         issues = []
-        # COMPAT-010: read-only check for pre-N03 tags.
-        if not github_path.exists():
-            github_path = tree / LEGACY_GITHUB_TEMPLATE
+        if (tree / GITHUB_WORKFLOW).exists():
+            github_path, release_paths = tree / GITHUB_WORKFLOW, RELEASE_PATHS
+        else:
+            # COMPAT-010: read-only check for pre-N03 tags.
+            github_path, release_paths = tree / LEGACY_GITHUB_TEMPLATE, LEGACY_RELEASE_PATHS
             if github_path.read_bytes() != (tree / GITHUB_CALLER).read_bytes():
                 issues.append(f"{GITHUB_CALLER} differs from {LEGACY_GITHUB_TEMPLATE}")
-            release_paths = LEGACY_RELEASE_PATHS
-        github = github_path.read_text(encoding="utf-8")
-        issues += image_pin_issues(gitlab, github)
+        issues += image_pin_issues(gitlab, github_path.read_text(encoding="utf-8"))
     if issues:
         raise ReleaseValidationError("\n".join(issues))
     pins, _ = gitlab_image_pins(gitlab)

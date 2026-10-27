@@ -19,9 +19,7 @@ bindings, and the open egress risk are described in the
 GitHub has one reusable implementation in
 [`.github/workflows/ai-review-reusable.yml`](../../.github/workflows/ai-review-reusable.yml).
 Consumers call it at a release SHA; this repository's small caller uses the same
-commit. N03 moves the implementation, release-pin reader and canary together:
-staging those readers separately would leave a missing workflow or require a
-second implementation. The canary installs a candidate-pinned reusable workflow
+commit. The canary installs a candidate-pinned reusable workflow
 and caller in its temporary demo branch. Only publication retries read the old
 template/copy layout (COMPAT-010); no synchronization writer remains.
 

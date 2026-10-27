@@ -182,12 +182,18 @@ def push_candidate_branch(
     return state
 
 
-def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
+def candidate_files(args: argparse.Namespace) -> tuple[str, str]:
+    """Return the candidate-pinned reusable workflow and the repository caller."""
     workflow = candidate_workflow(
         (ROOT / GITHUB_WORKFLOW).read_text(encoding="utf-8"),
         base_image=args.base_image,
         reviewer_image=args.reviewer_image,
     )
+    return workflow, (ROOT / GITHUB_CALLER).read_text(encoding="utf-8")
+
+
+def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
+    workflow, caller = candidate_files(args)
 
     def inject_defect(demo: Path) -> list[str]:
         access_path = demo / "src/access.py"
@@ -199,7 +205,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
     return push_candidate_branch(
         args,
-        caller=(ROOT / GITHUB_CALLER).read_text(encoding="utf-8"),
+        caller=caller,
         workflow=workflow,
         edit=inject_defect,
         message="candidate canary fixture",
@@ -326,10 +332,8 @@ BOT_LOGIN = "github-actions[bot]"
 SCENARIO = "${{ inputs.mock_scenario || 'blocking' }}"
 
 
-def scenario_input(workflow: str, event: str) -> str:
-    """Add the lifecycle scenario to a workflow_call or workflow_dispatch input list."""
-    if f"  {event}:\n" not in workflow:
-        raise GitHubCanaryError(f"workflow must declare {event}")
+def scenario_input(workflow: str) -> str:
+    """Add the lifecycle scenario after the pr_number input declaration."""
     workflow, inputs = re.subn(
         r"(?m)^(      pr_number:\n(?:        .*\n)+)",
         r"\g<1>      mock_scenario:\n"
@@ -346,7 +350,7 @@ def scenario_input(workflow: str, event: str) -> str:
 
 def mock_workflow(workflow: str) -> str:
     """Turn the candidate reusable workflow into a mock-mode, scenario-driven one."""
-    workflow = scenario_input(workflow, "workflow_call")
+    workflow = scenario_input(workflow)
     workflow, mocks = re.subn(
         r'(?m)^( +)AI_REVIEW_LOCAL_MOCK: "0"$',
         rf'\1AI_REVIEW_LOCAL_MOCK: "1"\n'
@@ -361,7 +365,7 @@ def mock_workflow(workflow: str) -> str:
 
 def mock_caller(caller: str) -> str:
     """Make the caller accept the lifecycle scenario and forward it to the reusable workflow."""
-    caller = scenario_input(caller, "workflow_dispatch")
+    caller = scenario_input(caller)
     caller, forwards = re.subn(
         r"(?m)^(      pr_number: .*\n)(?=    secrets: inherit$)",
         rf"\g<1>      mock_scenario: {SCENARIO}\n",
@@ -373,13 +377,7 @@ def mock_caller(caller: str) -> str:
 
 
 def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
-    workflow = mock_workflow(
-        candidate_workflow(
-            (ROOT / GITHUB_WORKFLOW).read_text(encoding="utf-8"),
-            base_image=args.base_image,
-            reviewer_image=args.reviewer_image,
-        )
-    )
+    workflow, caller = candidate_files(args)
 
     def add_fixture(demo: Path) -> list[str]:
         (demo / LIFECYCLE_FIXTURE_PATH).write_text(LIFECYCLE_FIXTURE, encoding="utf-8")
@@ -387,8 +385,8 @@ def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
 
     state = push_candidate_branch(
         args,
-        caller=mock_caller((ROOT / GITHUB_CALLER).read_text(encoding="utf-8")),
-        workflow=workflow,
+        caller=mock_caller(caller),
+        workflow=mock_workflow(workflow),
         edit=add_fixture,
         message="candidate canary lifecycle fixture",
         title=f"Candidate canary lifecycle {args.runtime_source[:12]}",

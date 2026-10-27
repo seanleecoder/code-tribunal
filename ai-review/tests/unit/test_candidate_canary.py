@@ -714,14 +714,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertNotIn("AI_REVIEW_MANUAL", workflow)
-            caller = yaml.safe_load(
-                (root / "work/demo" / self.github.GITHUB_CALLER).read_text()
-            )
+            caller = self.github.GITHUB_CALLER
             self.assertEqual(
-                caller["jobs"]["ai-review"]["uses"],
-                "./.github/workflows/ai-review-reusable.yml",
+                (root / "work/demo" / caller).read_bytes(),
+                (self.github.ROOT / caller).read_bytes(),
             )
-            self.assertEqual(caller["jobs"]["ai-review"]["secrets"], "inherit")
             self.assertIn(
                 ("git", "add", self.github.GITHUB_CALLER, self.github.GITHUB_WORKFLOW,
                  "src/access.py"),

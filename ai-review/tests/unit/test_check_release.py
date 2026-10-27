@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parents[3]
 tool = load_repository_script("check_release", REPO / "scripts/check_release.py")
 PUBLISH_WORKFLOW = REPO / ".github/workflows/publish-release.yml"
 CANARY_WORKFLOW = REPO / tool.CANARY_WORKFLOW
-TEMPLATES = tool.TEMPLATES
+TEMPLATES = (tool.GITHUB_WORKFLOW, tool.GITLAB_TEMPLATE)
 CHANGELOG = """# Changelog
 
 ## [Unreleased]
@@ -77,6 +77,13 @@ class ReleaseRepository:
         self.repin(self.runtime_source)
         return self.commit("P")
 
+    def use_legacy_layout(self) -> tuple[str, ...]:
+        """COMPAT-010: replace the reusable workflow with a pre-N03 template and copy."""
+        legacy = self.root / tool.LEGACY_GITHUB_TEMPLATE
+        (self.root / tool.GITHUB_WORKFLOW).rename(legacy)
+        shutil.copyfile(legacy, self.root / tool.GITHUB_CALLER)
+        return (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
+
 
 class ReleasePinsTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -108,10 +115,7 @@ class ReleasePinsTests(unittest.TestCase):
             tool.release_pins(self.repo.root, "HEAD")
 
     def test_restoring_legacy_files_cannot_remove_the_reusable_workflow(self) -> None:
-        legacy = self.repo.root / tool.LEGACY_GITHUB_TEMPLATE
-        (self.repo.root / tool.GITHUB_WORKFLOW).rename(legacy)
-        shutil.copyfile(legacy, self.repo.root / tool.GITHUB_CALLER)
-        paths = (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
+        paths = self.repo.use_legacy_layout()
         self.repo.repin(self.repo.runtime_source, paths)
         self.repo.commit("P restores the legacy layout after an N03 R")
         with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_WORKFLOW):
@@ -119,12 +123,9 @@ class ReleasePinsTests(unittest.TestCase):
 
     def test_pre_n03_tags_retain_their_pin_and_byte_parity_checks(self) -> None:
         # COMPAT-010: publication retries read the old layout without executing it.
-        legacy = self.repo.root / tool.LEGACY_GITHUB_TEMPLATE
-        (self.repo.root / tool.GITHUB_WORKFLOW).rename(legacy)
+        paths = self.repo.use_legacy_layout()
         caller = self.repo.root / tool.GITHUB_CALLER
-        shutil.copyfile(legacy, caller)
         self.repo.runtime_source = self.repo.commit("pre-N03 R")
-        paths = (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
         self.repo.repin(self.repo.runtime_source, paths)
         self.repo.commit("pre-N03 P")
         _, pins = tool.release_pins(self.repo.root, "HEAD")
