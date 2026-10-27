@@ -115,10 +115,12 @@ Keep the two-commit flow:
 checks four things:
 
 - one base ref and one reviewer ref are used across all jobs;
-- the installed GitHub copy matches the canonical template;
+- for pre-N03 tags only (COMPAT-010), the installed GitHub copy matches the
+  canonical template;
 - `AI_REVIEW_TRUSTED_IMAGE_SHA` equals the R embedded in the image tags;
 - R is an ancestor of P, and `git diff --name-only R..P` stays within the
-  templates, the installed copy, `CHANGELOG.md` and `docs/`.
+  reusable GitHub workflow, the GitLab template, `CHANGELOG.md` and `docs/`
+  (plus the canonical template and installed copy for pre-N03 tags).
 
 The old finalizer reviewed R..P semantically; the new check is path-only. The
 release pull-request review takes over the semantic part.
@@ -225,14 +227,12 @@ reusable workflow (`on: workflow_call`). Consumers call it from a caller of abou
 The change is breaking. Required check names change, secrets need
 `secrets: inherit`, and how `vars` reach a called workflow must be verified before
 shipping. Until that major release, the template-and-copy dimension in ADR-0003
-stands. The pin check in decision 4 keeps verifying the installed copy.
+stands for released versions.
 
 **N03 implementation (next major, unreleased):** the sole GitHub implementation
 is now `.github/workflows/ai-review-reusable.yml`; the repository's `ai-review.yml`
-is a caller using the same commit. Decision 4's new-release pins check reads the
-reusable workflow and GitLab template, with no installed-copy parity or sync
-writer. Caller changes must land in R. Historical release retries retain the old
-read-only template/copy check under COMPAT-010. GitHub documents that `vars` uses
+is a caller using the same commit, and caller changes must land in R (decision 4
+lists the paths P may change). GitHub documents that `vars` uses
 the caller repository and caller `env` is not inherited; the installation guide
 links those rules and describes named secrets when inheritance is unavailable.
 The canary copies the candidate reusable workflow and its caller to the demo,

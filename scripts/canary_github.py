@@ -46,6 +46,10 @@ from candidate_canary_common import (
 )
 from release_common import GITHUB_CALLER, GITHUB_WORKFLOW, ROOT
 
+CALLER_FILE = Path(GITHUB_CALLER).name
+# The caller's job id, which GitHub prefixes to every reusable-workflow job name.
+CALLER_JOB = "ai-review"
+
 # gh authenticates only the git commands it runs itself, and the protected
 # checkout persists no credentials, so the push must borrow gh's GH_TOKEN helper.
 GH_CREDENTIAL_HELPER = (
@@ -126,6 +130,7 @@ def download_run(run_id: str | int, destination: Path, *selector: str) -> Path:
 def push_candidate_branch(
     args: argparse.Namespace,
     *,
+    caller: str,
     workflow: str,
     edit: Callable[[Path], list[str]],
     message: str,
@@ -137,14 +142,6 @@ def push_candidate_branch(
     root.mkdir(parents=True, exist_ok=True)
     _run("gh", "repo", "clone", DEMO_REPOSITORY, str(demo), "--", "--depth=1")
     _run("git", "switch", "-c", args.branch, cwd=demo)
-    caller = (ROOT / GITHUB_CALLER).read_text(encoding="utf-8")
-    if "mock_scenario:" in workflow:
-        caller = scenario_input(caller, "workflow_dispatch")
-        caller = caller.replace(
-            "    secrets: inherit",
-            "      mock_scenario: ${{ inputs.mock_scenario || 'blocking' }}\n"
-            "    secrets: inherit",
-        )
     (demo / GITHUB_CALLER).write_text(caller, encoding="utf-8")
     (demo / GITHUB_WORKFLOW).write_text(workflow, encoding="utf-8")
     paths = [GITHUB_CALLER, GITHUB_WORKFLOW, *edit(demo)]
@@ -187,7 +184,7 @@ def push_candidate_branch(
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     workflow = candidate_workflow(
-        Path(args.workflow).read_text(encoding="utf-8"),
+        (ROOT / GITHUB_WORKFLOW).read_text(encoding="utf-8"),
         base_image=args.base_image,
         reviewer_image=args.reviewer_image,
     )
@@ -202,6 +199,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
     return push_candidate_branch(
         args,
+        caller=(ROOT / GITHUB_CALLER).read_text(encoding="utf-8"),
         workflow=workflow,
         edit=inject_defect,
         message="candidate canary fixture",
@@ -221,7 +219,7 @@ def _runs(branch: str, event: str) -> list[dict[str, Any]]:
         "--repo",
         DEMO_REPOSITORY,
         "--workflow",
-        "ai-review.yml",
+        CALLER_FILE,
         "--branch",
         branch,
         "--event",
@@ -319,13 +317,13 @@ def cleanup_campaign(args: argparse.Namespace) -> None:
 
 
 def configure_create(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--workflow", required=True)
     parser.add_argument("--workdir", required=True)
 
 
 # -- mock lifecycle ------------------------------------------------------
 
 BOT_LOGIN = "github-actions[bot]"
+SCENARIO = "${{ inputs.mock_scenario || 'blocking' }}"
 
 
 def scenario_input(workflow: str, event: str) -> str:
@@ -349,12 +347,11 @@ def scenario_input(workflow: str, event: str) -> str:
 def mock_workflow(workflow: str) -> str:
     """Turn the candidate reusable workflow into a mock-mode, scenario-driven one."""
     workflow = scenario_input(workflow, "workflow_call")
-    scenario = "${{ inputs.mock_scenario || 'blocking' }}"
     workflow, mocks = re.subn(
         r'(?m)^( +)AI_REVIEW_LOCAL_MOCK: "0"$',
         rf'\1AI_REVIEW_LOCAL_MOCK: "1"\n'
         rf'\1AI_REVIEW_ALLOW_LOCAL_MOCK: "true"\n'
-        rf'\1AI_REVIEW_MOCK_SCENARIO: "{scenario}"',
+        rf'\1AI_REVIEW_MOCK_SCENARIO: "{SCENARIO}"',
         workflow,
     )
     if mocks != 2:
@@ -362,10 +359,23 @@ def mock_workflow(workflow: str) -> str:
     return workflow
 
 
+def mock_caller(caller: str) -> str:
+    """Make the caller accept the lifecycle scenario and forward it to the reusable workflow."""
+    caller = scenario_input(caller, "workflow_dispatch")
+    caller, forwards = re.subn(
+        r"(?m)^(      pr_number: .*\n)(?=    secrets: inherit$)",
+        rf"\g<1>      mock_scenario: {SCENARIO}\n",
+        caller,
+    )
+    if forwards != 1:
+        raise GitHubCanaryError("caller must forward pr_number before inheriting secrets")
+    return caller
+
+
 def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     workflow = mock_workflow(
         candidate_workflow(
-            Path(args.workflow).read_text(encoding="utf-8"),
+            (ROOT / GITHUB_WORKFLOW).read_text(encoding="utf-8"),
             base_image=args.base_image,
             reviewer_image=args.reviewer_image,
         )
@@ -377,6 +387,7 @@ def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
 
     state = push_candidate_branch(
         args,
+        caller=mock_caller((ROOT / GITHUB_CALLER).read_text(encoding="utf-8")),
         workflow=workflow,
         edit=add_fixture,
         message="candidate canary lifecycle fixture",
@@ -415,7 +426,7 @@ class GitHubLifecycle(Lifecycle):
             "gh",
             "workflow",
             "run",
-            "ai-review.yml",
+            CALLER_FILE,
             "--repo",
             DEMO_REPOSITORY,
             "--ref",
@@ -534,7 +545,7 @@ class GitHubLifecycle(Lifecycle):
         run_id = self.rerun("blocking")
         poll(
             lambda: any(
-                job["name"].startswith("ai-review / review") and job.get("status") != "queued"
+                job["name"].startswith(f"{CALLER_JOB} / review") and job.get("status") != "queued"
                 for job in _view(run_id, "jobs").get("jobs") or []
             ) or None,
             deadline=self.deadline,

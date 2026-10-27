@@ -8,7 +8,6 @@ on:
       pr_number:
         description: Pull request number to review
         required: false
-        default: ""
         type: string
     secrets:
       OPENROUTER_API_KEY:

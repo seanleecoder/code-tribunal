@@ -380,7 +380,6 @@ class MockWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             args = argparse.Namespace(
                 workdir=tmp,
-                workflow=str(ROOT / canary.GITHUB_WORKFLOW),
                 branch="candidate-lifecycle",
                 base_image=BASE,
                 reviewer_image=REVIEWER,

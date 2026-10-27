@@ -17,8 +17,9 @@ import yaml
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
 _CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
 _REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
-_GITHUB_TEMPLATE = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_GITHUB_TEMPLATE = _REPO_ROOT / ".github/workflows/ai-review-reusable.yml"
+_GITHUB_CALLER = _REPO_ROOT / ".github/workflows/ai-review.yml"
 _PUBLISH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "publish-ai-review-images.yml"
 _REVIEWER_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "reviewer.Dockerfile"
 _BASE_DOCKERFILE = Path(__file__).resolve().parents[2] / "images" / "base.Dockerfile"
@@ -805,9 +806,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
 class GitHubActionsTemplateTests(unittest.TestCase):
     def test_caller_routes_both_events_inputs_secrets_and_permissions_to_one_workflow(self) -> None:
-        caller = yaml.load(
-            (_REPO_ROOT / ".github/workflows/ai-review.yml").read_text(), Loader=yaml.BaseLoader
-        )
+        caller = yaml.load(_GITHUB_CALLER.read_text(), Loader=yaml.BaseLoader)
         reusable = yaml.load(_GITHUB_TEMPLATE.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(caller["on"]), {"pull_request", "workflow_dispatch"})
         self.assertEqual(set(reusable["on"]), {"workflow_call"})
@@ -820,18 +819,13 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(
             caller["on"]["workflow_dispatch"]["inputs"]["pr_number"]["required"], "true"
         )
-        self.assertEqual(
-            reusable["on"]["workflow_call"]["inputs"]["pr_number"]["default"], ""
-        )
         # Only the called workflow acquires the PR lock, avoiding self-deadlock.
         self.assertNotIn("concurrency", caller)
         self.assertNotIn("concurrency", call)
 
     def test_github_actions_template_is_safe_and_runnable(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
 
-        self.assertIn("workflow_call:", text)
         active_yaml = "\n".join(
             line for line in text.splitlines() if not line.lstrip().startswith("#")
         )
@@ -852,8 +846,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertNotIn('echo "Run prepare/reviewer/consensus/post stages here."', text)
 
     def test_github_actions_template_selects_github_runtime(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
         review = _workflow_job(text, "review")
         critique = _workflow_job(text, "critique")
 
@@ -877,8 +870,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
 
     def test_github_post_uses_dedicated_resolution_secret(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
         post = _workflow_job(text, "post")
 
         self.assertIn("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", post)
@@ -889,8 +881,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
 
     def test_github_actions_maps_runtime_overrides_at_workflow_scope(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
         expected_mappings = {
             "AI_REVIEW_CLAUDE_MODEL": "${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}",
             "AI_REVIEW_CODEX_MODEL": "${{ vars.AI_REVIEW_CODEX_MODEL || '' }}",
@@ -939,13 +930,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         # job rules and apply_env_overrides.
         self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")
 
-    def test_github_actions_supports_manual_pr_dispatch(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
-        prepare = _workflow_job(text, "prepare")
+    def test_github_prepare_selects_pr_from_event_or_input(self) -> None:
+        prepare = _workflow_job(_GITHUB_TEMPLATE.read_text(encoding="utf-8"), "prepare")
 
-        self.assertIn("workflow_call:", text)
-        self.assertIn("pr_number:", text)
         self.assertIn("vars.AI_REVIEW_MANUAL != 'true'", prepare)
         self.assertIn("github.event_name == 'workflow_dispatch'", prepare)
         self.assertIn(
@@ -1037,8 +1024,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                     )
 
     def test_github_actions_groups_manual_and_automatic_runs_by_pr(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertIn(
             "group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}",
@@ -1046,8 +1032,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
 
     def test_github_job_containers_do_not_use_unavailable_env_context(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertNotIn("container: ${{ env.", text)
         # base: prepare, consensus, post. reviewer: review, critique.
@@ -1055,8 +1040,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertEqual(text.count("@sha256:"), 5)
 
     def test_github_actions_template_runs_full_critique_panel(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        text = template.read_text(encoding="utf-8")
+        text = _GITHUB_TEMPLATE.read_text(encoding="utf-8")
         critique = _workflow_job(text, "critique")
         consensus = _workflow_job(text, "consensus")
 
@@ -1087,8 +1071,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             self.assertNotIn(f"AI_REVIEW_{reviewer}_ENABLED", text)
 
     def test_github_actions_treats_missing_critiques_as_optional(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        consensus = _workflow_job(template.read_text(encoding="utf-8"), "consensus")
+        consensus = _workflow_job(_GITHUB_TEMPLATE.read_text(encoding="utf-8"), "consensus")
         download = re.search(
             r"(?ms)- name: Download critique artifacts\n(.*?)(?=\n      - name:)",
             consensus,
@@ -1100,8 +1083,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("consensus will use reviewer findings only", consensus)
 
     def test_github_critique_artifact_paths_extract_under_expected_root(self) -> None:
-        template = Path(__file__).resolve().parents[3] / ".github/workflows/ai-review-reusable.yml"
-        critique = _workflow_job(template.read_text(encoding="utf-8"), "critique")
+        critique = _workflow_job(_GITHUB_TEMPLATE.read_text(encoding="utf-8"), "critique")
         upload_paths = re.findall(
             r"(?m)^\s+(out/(?:critiques|pooled_findings|status)/.+)$", critique
         )
