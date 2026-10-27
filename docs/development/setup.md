@@ -36,15 +36,15 @@ packages enabled.
 Ruff's ordinary Android source build requires a native Rust toolchain. On
 Termux aarch64 this explicit setup downloads the same pinned upstream static
 musllinux executable and Python shim from PyPI, verifies the release archive's
-SHA-256 and probes the actual executable. No quality gate downloads tools and no
-incompatible wheel metadata is installed:
+SHA-256 and probes the actual executable without installing incompatible wheel
+metadata:
 
 ```bash
 .venv/bin/python scripts/install_termux_ruff.py
 make lint
 ```
 
-The pinned mypy 2.4.0 needs `ast-serialize>=0.11.2,<1`. No Android wheel was
+The pinned mypy needs `ast-serialize>=0.11.2,<1`. No Android wheel was
 available in the audited release; building it requires Rust/maturin. A fresh
 requirements install remains blocked without native build prerequisites; other
 native dependencies can need them too. Do not call copied packages a clean
@@ -54,15 +54,14 @@ If mypy itself is already provisioned, this explicit developer profile keeps
 strict checking and selects its Python parser:
 
 ```bash
-make typecheck MYPY_FLAGS=--no-native-parser
 make quality MYPY_FLAGS=--no-native-parser
 ```
 
-COMPAT-011 is not native parser or CI parity. CI keeps `MYPY_FLAGS` empty. Report
-the missing parser dependency with local successes. The reviewed Lychee archive
-installer supports no Android target: provision native Lychee 0.24.2 (checked
-against `ai-review/images/lychee.pin`) separately. Put the zizmor 1.31.1 static
-musllinux executable in `.venv/bin` or `~/.local/bin`, then expose those paths
+COMPAT-011 is not native parser or CI parity; report the missing parser
+dependency with local successes. The reviewed Lychee archive installer supports
+no Android target: provision native Lychee at the `ai-review/images/lychee.pin`
+version separately. Put the static musllinux zizmor executable pinned in
+`requirements-dev.txt` in `.venv/bin` or `~/.local/bin`, then expose those paths
 explicitly in noninteractive shells:
 
 ```bash
@@ -71,9 +70,7 @@ lychee --version
 zizmor --version
 ```
 
-The versions must match the existing Lychee pin and `requirements-dev.txt`.
 Offline zizmor still lacks CI's authenticated `ref-version-mismatch` audit.
-Neither prerequisite may be silently skipped.
 
 ### Focused commands
 

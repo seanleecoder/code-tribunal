@@ -18,7 +18,9 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from check_dev_tools import ROOT, required_versions
+from check_dev_tools import required_versions
+
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 
 
 def install_archive(
@@ -26,7 +28,6 @@ def install_archive(
 ) -> Path:
     if hashlib.sha256(data).hexdigest() != digest:
         raise ValueError("Ruff archive SHA256 mismatch")
-    binary_name = f"ruff-{version}.data/scripts/ruff"
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         names = archive.namelist()
         if any(".." in PurePosixPath(name).parts or name.startswith("/") for name in names):
@@ -34,7 +35,7 @@ def install_archive(
         modules = [name for name in names if name.startswith("ruff/") and name.endswith(".py")]
         if not {"ruff/__main__.py", "ruff/_find_ruff.py"}.issubset(modules):
             raise ValueError("Ruff archive is missing the Python launcher")
-        binary_data = archive.read(binary_name)
+        binary_data = archive.read(f"ruff-{version}.data/scripts/ruff")
         module_data = {name: archive.read(name) for name in modules}
     # Validate a staged executable before touching the selected environment.
     with tempfile.TemporaryDirectory(prefix="code-tribunal-ruff-") as temporary:
@@ -62,23 +63,25 @@ def main() -> int:
         raise SystemExit("BLOCKED: select a project virtual environment first")
     if sys.platform != "android" or platform.machine() != "aarch64":
         raise SystemExit("BLOCKED: this explicit setup supports aarch64 Termux only")
-    version = required_versions(ROOT / "requirements-dev.txt")["ruff"]
+    version = required_versions()["ruff"]
     wheel_name = f"ruff-{version}-py3-none-musllinux_1_2_aarch64.whl"
     try:
         url = f"https://pypi.org/pypi/ruff/{version}/json"
         with urllib.request.urlopen(url, timeout=30) as response:
             metadata = json.load(response)
-        wheel = next(item for item in metadata["urls"] if item["filename"] == wheel_name)
+        wheel = next((item for item in metadata["urls"] if item["filename"] == wheel_name), None)
+        if wheel is None:
+            raise ValueError(f"{wheel_name} is not published on PyPI")
         with urllib.request.urlopen(wheel["url"], timeout=60) as response:
-            data = response.read(32 * 1024 * 1024 + 1)
-        if len(data) > 32 * 1024 * 1024:
+            data = response.read(MAX_ARCHIVE_BYTES + 1)
+        if len(data) > MAX_ARCHIVE_BYTES:
             raise ValueError("Ruff archive exceeds the size limit")
         digest = wheel["digests"]["sha256"]
         binary = install_archive(
             data, digest, version, Path(sysconfig.get_path("scripts")),
             Path(sysconfig.get_path("purelib")),
         )
-    except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile) as error:
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
         raise SystemExit(f"BLOCKED: {error}") from error
     print(f"Installed ruff {version}: {binary}\nUpstream archive SHA256: {digest}")
     return 0

@@ -37,6 +37,7 @@ class TemporaryCompatibilityTests(unittest.TestCase):
             for path in (_REPO_ROOT / root).rglob("*")
             if path.is_file() and path.suffix in suffixes
         )
+        sources.append(_REPO_ROOT / "Makefile")
         marked: dict[str, list[str]] = {}
         for path in sources:
             for found in marker.findall(path.read_text(encoding="utf-8")):

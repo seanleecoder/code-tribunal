@@ -1,4 +1,4 @@
-PYTHON ?= $(if $(wildcard .venv/bin/python),$(abspath .venv/bin/python),python3)
+export PYTHON ?= $(if $(wildcard .venv/bin/python),$(abspath .venv/bin/python),python3)
 # COMPAT-011: explicit Termux Python parser profile; CI keeps the native default.
 MYPY_FLAGS ?=
 AI_REVIEW_ROOT ?= ai-review

@@ -4,14 +4,14 @@ from __future__ import annotations
 import hashlib
 import io
 import sys
+import tempfile
+import unittest
 import zipfile
 from pathlib import Path
 
-import pytest
+from tests.support.repository_script import load_repository_script
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-from install_termux_ruff import install_archive  # noqa: E402
-
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "install_termux_ruff.py"
 EXECUTABLE = f"#!{sys.executable}\nprint('ruff 0.17.1')\n".encode()
 
 
@@ -26,57 +26,63 @@ def archive(extra: str | None = None, *, binary: bytes = EXECUTABLE) -> bytes:
     return output.getvalue()
 
 
-def test_install_verified_archive(tmp_path: Path) -> None:
-    data = archive()
-    binary = install_archive(data, hashlib.sha256(data).hexdigest(), "0.17.1",
-                             tmp_path / "bin", tmp_path / "site")
-    assert binary.read_bytes() == EXECUTABLE
-    assert binary.stat().st_mode & 0o111
-    assert (tmp_path / "site/ruff/__main__.py").read_bytes() == b"launcher"
-    assert not list((tmp_path / "site").glob("*.dist-info"))
+class InstallArchiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.install_archive = load_repository_script(
+            "install_termux_ruff", SCRIPT).install_archive
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.scripts, self.site = self.root / "bin", self.root / "site"
+
+    def install(self, data: bytes, digest: str | None = None) -> Path:
+        return self.install_archive(data, digest or hashlib.sha256(data).hexdigest(),
+                                    "0.17.1", self.scripts, self.site)
+
+    def test_install_verified_archive(self) -> None:
+        binary = self.install(archive())
+        self.assertEqual(binary.read_bytes(), EXECUTABLE)
+        self.assertTrue(binary.stat().st_mode & 0o111)
+        self.assertEqual((self.site / "ruff/__main__.py").read_bytes(), b"launcher")
+        self.assertFalse(list(self.site.glob("*.dist-info")))
+
+    def test_failed_probe_preserves_environment(self) -> None:
+        previous = {
+            self.scripts / "ruff": EXECUTABLE,
+            self.site / "ruff/__main__.py": b"previous launcher",
+            self.site / "ruff/_find_ruff.py": b"previous finder",
+        }
+        probes = {
+            "nonzero": (f"#!{sys.executable}\nraise SystemExit(1)\n".encode(), ValueError),
+            "wrong-version": (f"#!{sys.executable}\nprint('ruff 0.0.0')\n".encode(), ValueError),
+            "loader-error": (b"not an executable", OSError),
+        }
+        for existing in (False, True):
+            for probe, (binary, error) in probes.items():
+                with self.subTest(existing=existing, probe=probe):
+                    if existing:
+                        for path, content in previous.items():
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_bytes(content)
+                        (self.scripts / "ruff").chmod(0o755)
+                    with self.assertRaises(error):
+                        self.install(archive(binary=binary))
+                    if existing:
+                        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
+                        self.assertTrue((self.scripts / "ruff").stat().st_mode & 0o111)
+                    else:
+                        self.assertFalse(list(self.root.iterdir()))
+
+    def test_bad_digest_writes_nothing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "SHA256"):
+            self.install(archive(), "invalid")
+        self.assertFalse(list(self.root.iterdir()))
+
+    def test_traversal_writes_nothing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            self.install(archive("ruff/../../escape.py"))
+        self.assertFalse(list(self.root.iterdir()))
 
 
-@pytest.mark.parametrize("existing", [False, True])
-@pytest.mark.parametrize(("binary", "error"), [
-    (f"#!{sys.executable}\nraise SystemExit(1)\n".encode(), ValueError),
-    (f"#!{sys.executable}\nprint('ruff 0.0.0')\n".encode(), ValueError),
-    (b"not an executable", OSError),
-], ids=["nonzero", "wrong-version", "loader-error"])
-def test_failed_probe_preserves_environment(
-    tmp_path: Path, existing: bool, binary: bytes, error: type[Exception],
-) -> None:
-    scripts, site = tmp_path / "bin", tmp_path / "site"
-    previous = {
-        scripts / "ruff": EXECUTABLE,
-        site / "ruff/__main__.py": b"previous launcher",
-        site / "ruff/_find_ruff.py": b"previous finder",
-    }
-    if existing:
-        for path, content in previous.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        (scripts / "ruff").chmod(0o755)
-    data = archive(binary=binary)
-
-    with pytest.raises(error):
-        install_archive(data, hashlib.sha256(data).hexdigest(), "0.17.1", scripts, site)
-
-    if existing:
-        assert {path: path.read_bytes() for path in previous} == previous
-        assert (scripts / "ruff").stat().st_mode & 0o111
-    else:
-        assert not list(tmp_path.iterdir())
-
-
-def test_bad_digest_writes_nothing(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="SHA256"):
-        install_archive(archive(), "invalid", "0.17.1", tmp_path / "bin", tmp_path / "site")
-    assert not list(tmp_path.iterdir())
-
-
-def test_traversal_writes_nothing(tmp_path: Path) -> None:
-    data = archive("ruff/../../escape.py")
-    with pytest.raises(ValueError, match="unsafe"):
-        install_archive(data, hashlib.sha256(data).hexdigest(), "0.17.1",
-                        tmp_path / "bin", tmp_path / "site")
-    assert not list(tmp_path.iterdir())
+if __name__ == "__main__":
+    unittest.main()
