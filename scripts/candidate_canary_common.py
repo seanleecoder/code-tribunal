@@ -275,7 +275,7 @@ def saved_wontfix(
     ``LifecycleFailure`` unless exactly one state note decodes, validates, belongs to
     this change, and records a human wontfix disposition for ``root_note_id``.
     """
-    candidates, _, _ = state_note_candidates(notes)
+    candidates, _ = state_note_candidates(notes)
     if len(candidates) != 1:
         raise LifecycleFailure("expected one bot-owned state note")
     note = candidates[0]

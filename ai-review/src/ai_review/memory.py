@@ -155,6 +155,7 @@ def decode_state_note_body(body: str) -> dict[str, Any]:
     versions = STATE_MARKER_RE.findall(body)
     if not versions:
         raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
+    # COMPAT-009: point unmigrated v1 ledgers at the offline migration script.
     explicit = [version for version in versions if version]
     if not explicit or any(version != "2" for version in explicit):
         raise ValueError(
@@ -181,10 +182,10 @@ def state_note_candidates(
     notes: list[dict[str, Any]],
     *,
     expected_author_id: int | None = None,
-) -> tuple[list[dict[str, Any]], list[str], int]:
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return the ledger-container notes, and a warning per author mismatch."""
     candidates = []
     warnings = []
-    author_mismatches = 0
     for note in notes:
         body = note.get("body")
         # Recognize malformed and old markers too: corruption or an outstanding
@@ -192,13 +193,12 @@ def state_note_candidates(
         if not isinstance(body, str) or LEDGER_CONTAINER_RE.search(body) is None:
             continue
         if expected_author_id is not None and note_author_id(note) != expected_author_id:
-            author_mismatches += 1
             warnings.append(
                 f"ignored summary note {note.get('id')} from non-bot author {note_author_id(note)}"
             )
             continue
         candidates.append(note)
-    return candidates, warnings, author_mismatches
+    return candidates, warnings
 
 
 @dataclass(frozen=True)
@@ -224,11 +224,9 @@ def load_state_from_notes(
     PR is the repository binding, and its mutable owner/name slug is metadata,
     so renames/transfers refresh it.
     """
-    candidates, warnings, author_mismatches = state_note_candidates(
-        notes, expected_author_id=expected_author_id
-    )
+    candidates, warnings = state_note_candidates(notes, expected_author_id=expected_author_id)
     if not candidates:
-        if author_mismatches:
+        if warnings:
             warnings.append(
                 "all state notes were rejected for author mismatch; check the bot identity"
             )
@@ -261,13 +259,18 @@ def load_state_from_notes(
 KEEP_AUTO_RESOLVED_RECORDS = 5
 
 
+def is_auto_resolved(record: Mapping[str, Any]) -> bool:
+    """Resolved without a human disposition: the only records compaction evicts."""
+    return record.get("status") == "resolved" and not record.get("human_disposition")
+
+
 def compact_state(state: Mapping[str, Any]) -> dict[str, Any]:
     # Active threads and explicit human dispositions are never evicted. Keep a
     # fixed tail of automatically resolved records; overflow fails before writes.
     records = []
     auto_resolved = []
     for record in state.get("records", []):
-        if record.get("status") == "resolved" and not record.get("human_disposition"):
+        if is_auto_resolved(record):
             auto_resolved.append(record)
         else:
             records.append(record)

@@ -327,13 +327,11 @@ class GitHubReviewPlatform:
                 threads_by_id[comment["id"]] = self._thread_from_comment(comment)
 
         if threads_by_id:
-            owner, name, pull_request_number = self._pull_request_key(
-                project_id_or_path, change_id
-            )
             # REST omits resolution. Read it before any root can be reused by
             # marker recovery, including records evicted by state compaction.
-            review_threads = self._fetch_review_threads(owner, name, pull_request_number)
-            self._review_threads[(owner, name, pull_request_number)] = review_threads
+            review_threads = self._refresh_review_threads(
+                *self._pull_request_key(project_id_or_path, change_id)
+            )
             for comment_id, thread in threads_by_id.items():
                 review_thread = review_threads.get(str(comment_id))
                 if review_thread is None:
@@ -493,18 +491,20 @@ class GitHubReviewPlatform:
                     "GitHub GraphQL review thread lookup omitted the next cursor"
                 )
 
+    def _refresh_review_threads(
+        self, owner: str, name: str, pull_request_number: int
+    ) -> dict[str, _ReviewThread]:
+        review_threads = self._fetch_review_threads(owner, name, pull_request_number)
+        self._review_threads[(owner, name, pull_request_number)] = review_threads
+        return review_threads
+
     def _review_thread_node_id(
         self, owner: str, name: str, pull_request_number: int, thread_id: str
     ) -> str:
-        cache_key = (owner, name, pull_request_number)
-        if (
-            cache_key not in self._review_threads
-            or thread_id not in self._review_threads[cache_key]
-        ):
-            self._review_threads[cache_key] = self._fetch_review_threads(
-                owner, name, pull_request_number
-            )
-        review_thread = self._review_threads[cache_key].get(thread_id)
+        review_threads = self._review_threads.get((owner, name, pull_request_number), {})
+        if thread_id not in review_threads:
+            review_threads = self._refresh_review_threads(owner, name, pull_request_number)
+        review_thread = review_threads.get(thread_id)
         if review_thread is None:
             raise GitHubReviewPlatformError(f"review thread {thread_id} not found via GraphQL")
         return review_thread.node_id

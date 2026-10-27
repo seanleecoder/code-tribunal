@@ -4,7 +4,6 @@ from typing import Literal, NotRequired, TypedDict
 # object shape (for example prepared anchor metadata).
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-type JsonObject = dict[str, JsonValue]
 
 type Severity = Literal["info", "minor", "major", "blocker"]
 type Category = Literal[

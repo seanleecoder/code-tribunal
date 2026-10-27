@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from .commands import collect_human_commands
 from .config import ReviewConfig
@@ -25,11 +25,12 @@ from .render import platform_comment_limit, render_body
 from .schema import now_iso
 from .state_plan import (
     StatePlan,
-    _desired_discussion_resolved,
     _pipeline_id,
     _process_state_for_persistence,
     open_at_head,
     plan_state,
+    planned_thread_resolutions,
+    rolled_back_resolution,
     state_from_existing_discussions,
 )
 from .summary_render import _sort_groups, render_summary_body
@@ -39,10 +40,8 @@ from .types import (
     Consensus,
     FindingGroup,
     PostResult,
-    RunHealth,
     State,
     StateRecord,
-    StateRecordStatus,
     SummaryComment,
 )
 
@@ -53,58 +52,11 @@ def _note_id_from_response(response: Any) -> int | None:
     return None
 
 
-def upsert_summary_comment(
-    client: ReviewPlatform,
-    manifest: dict[str, Any],
-    run_id: str,
-    run_health: RunHealth,
-    summary_note: tuple[int, str] | None,
-    fallback_groups: list[FindingGroup],
-    fyi_groups: list[FindingGroup],
-    max_fyi: int,
-    state: Mapping[str, Any],
-    *,
-    posting_mode: str,
-    dry_run: bool = False,
-) -> SummaryComment:
-    """Create or refresh the summary comment on every published run.
+class SummaryNote(NamedTuple):
+    """The bot summary comment that carries the ledger, and its body hash."""
 
-    Its health section is always present, so a later run that recovers replaces
-    an earlier degraded body.
-    """
-    summary: SummaryComment = {
-        "action": "none",
-        "note_id": None,
-        "surface_findings": len(fallback_groups),
-        "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
-    }
-    body, body_hash = render_summary_body(
-        run_id,
-        run_health,
-        fallback_groups,
-        fyi_groups,
-        max_fyi,
-        posting_mode=posting_mode,
-        state=state,
-    )
-    if dry_run:
-        summary["action"] = "created"
-        return summary
-    if summary_note is None:
-        response = client.create_state_note(
-            manifest["project_id"], manifest["merge_request_iid"], body
-        )
-        summary["action"] = "created"
-        summary["note_id"] = _note_id_from_response(response)
-        return summary
-    note_id, existing_hash = summary_note
-    summary["note_id"] = note_id
-    if existing_hash == body_hash:
-        summary["action"] = "unchanged"
-        return summary
-    client.update_state_note(manifest["project_id"], manifest["merge_request_iid"], note_id, body)
-    summary["action"] = "updated"
-    return summary
+    note_id: int
+    body_hash: str
 
 
 def _initial_post_result(
@@ -329,7 +281,7 @@ def post_inline(
             )
             summary_fallback_groups.append(group)
             continue
-        if planned_record.get("status") in {"wontfix", "resolved"}:
+        if inline_plan.settled:
             result["skipped_unchanged"] += 1
             continue
         existing = inline_plan.existing
@@ -414,7 +366,7 @@ def finalize_state(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    summary_note: tuple[int, str] | None,
+    summary_note: SummaryNote | None,
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     *,
@@ -423,7 +375,11 @@ def finalize_state(
     dry_run: bool,
 ) -> PostResult:
     prior_records = {record["issue_id"]: record for record in state_plan.base_records}
-    resolutions = [] if dry_run else _planned_thread_resolutions(state_plan)
+    resolutions = (
+        []
+        if dry_run
+        else planned_thread_resolutions(state_plan.planned_records, state_plan.base_records)
+    )
     for record, desired in resolutions:
         discussion_id = record["discussion_id"]
         try:
@@ -439,9 +395,7 @@ def finalize_state(
             action = "resolve" if desired else "unresolve"
             result["status"] = "partial_failed"
             result["warnings"].append(f"failed to {action} thread {discussion_id}: {exc}")
-            previous = prior_records.get(record["issue_id"])
-            record["status"] = previous.get("status", "open") if previous else "open"
-            record["human_disposition"] = previous.get("human_disposition") if previous else None
+            record.update(rolled_back_resolution(record, prior_records.get(record["issue_id"])))
     final_state, overflow = _process_state_for_persistence(
         {
             **state_plan.planned_state,
@@ -476,27 +430,12 @@ def finalize_state(
     return result
 
 
-def _planned_thread_resolutions(state_plan: StatePlan) -> list[tuple[StateRecord, bool]]:
-    """Return each planned thread whose resolution must change, with its target."""
-    prior_status: dict[str, StateRecordStatus | None] = {
-        record["issue_id"]: record.get("status") for record in state_plan.base_records
-    }
-    resolutions = []
-    for record in state_plan.planned_records:
-        if record.get("discussion_id") is None:
-            continue
-        desired = _desired_discussion_resolved(record, prior_status)
-        if desired is not None:
-            resolutions.append((record, desired))
-    return resolutions
-
-
 def _write_summary(
     client: ReviewPlatform,
     manifest: dict[str, Any],
     consensus: Consensus,
     result: PostResult,
-    summary_note: tuple[int, str] | None,
+    summary_note: SummaryNote | None,
     summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     state: State,
@@ -505,21 +444,48 @@ def _write_summary(
     max_fyi: int,
     dry_run: bool,
 ) -> bool:
-    """Upsert the summary ledger, recording any failure on ``result``."""
+    """Upsert the summary comment and its ledger, recording any failure on ``result``.
+
+    Every published run refreshes it. Its health section is always present, so a
+    later run that recovers replaces an earlier degraded body.
+    """
+    summary: SummaryComment = {
+        "action": "none",
+        "note_id": None,
+        "surface_findings": len(summary_fallback_groups),
+        "fyi_findings": min(len(fyi_groups), max_fyi) if max_fyi >= 0 else len(fyi_groups),
+    }
     try:
-        result["summary_comment"] = upsert_summary_comment(
-            client,
-            manifest,
+        body, body_hash = render_summary_body(
             consensus["run_id"],
             consensus["run_health"],
-            summary_note,
             summary_fallback_groups,
             fyi_groups,
             max_fyi,
-            state,
             posting_mode=posting_mode,
-            dry_run=dry_run,
+            state=state,
         )
+        if dry_run:
+            summary["action"] = "created"
+        elif summary_note is None:
+            response = client.create_state_note(
+                manifest["project_id"], manifest["merge_request_iid"], body
+            )
+            summary["action"] = "created"
+            summary["note_id"] = _note_id_from_response(response)
+        else:
+            summary["note_id"] = summary_note.note_id
+            if summary_note.body_hash == body_hash:
+                summary["action"] = "unchanged"
+            else:
+                client.update_state_note(
+                    manifest["project_id"],
+                    manifest["merge_request_iid"],
+                    summary_note.note_id,
+                    body,
+                )
+                summary["action"] = "updated"
+        result["summary_comment"] = summary
     except Exception as exc:
         result["status"] = (
             "partial_failed"
@@ -538,8 +504,8 @@ def _write_summary(
 class PostContext:
     version: Any
     persisted_state: State
-    # The loaded ledger's own comment: the summary to update, and its body hash.
-    summary_note: tuple[int, str] | None
+    # The loaded ledger's own comment: the summary to update.
+    summary_note: SummaryNote | None
     human_commands: dict[str, str]
 
 
@@ -615,7 +581,7 @@ def prepare_post_context(
     return PostContext(
         version=version,
         persisted_state=persisted_state,
-        summary_note=(ledger.note_id, ledger.summary_body_hash) if ledger else None,
+        summary_note=SummaryNote(ledger.note_id, ledger.summary_body_hash) if ledger else None,
         human_commands=human_commands,
     )
 
@@ -689,7 +655,12 @@ def post_consensus(
     if (
         summary_note is None
         and not dry_run
-        and any(desired for _, desired in _planned_thread_resolutions(state_plan))
+        and any(
+            desired
+            for _, desired in planned_thread_resolutions(
+                state_plan.planned_records, state_plan.base_records
+            )
+        )
     ):
         # Recoverable roots must have a durable, still-open ledger before we
         # resolve them. A failed first write can then retry marker recovery;
@@ -715,7 +686,7 @@ def post_consensus(
             recovered_state,
             posting_mode=posting_mode,
             max_fyi=max_fyi,
-            dry_run=dry_run,
+            dry_run=False,
         ):
             return result
         note_id = result["summary_comment"]["note_id"]
@@ -726,7 +697,7 @@ def post_consensus(
             )
             return result
         # Resolution results still need to replace the recovered ledger.
-        summary_note = (note_id, "")
+        summary_note = SummaryNote(note_id, "")
     inline_outcome = post_inline(
         client,
         manifest,

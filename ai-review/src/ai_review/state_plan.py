@@ -13,6 +13,7 @@ from .config import ReviewConfig, StateRetention
 from .memory import (
     compact_state,
     find_matching_record,
+    is_auto_resolved,
     normalize_state,
     normalize_state_record,
     ordered_unique,
@@ -48,6 +49,11 @@ class InlinePlan:
     def ambiguous(self) -> bool:
         """Planning leaves ``record`` unset only for a group it cannot claim."""
         return self.record is None
+
+    @property
+    def settled(self) -> bool:
+        """A claimed resolved or wontfix finding posts no inline thread."""
+        return self.record is not None and self.record["status"] in {"wontfix", "resolved"}
 
 
 @dataclass
@@ -244,7 +250,7 @@ def _threadless_issue_ids(inline_plans: Iterable[InlinePlan]) -> set[str]:
         inline.record["issue_id"]
         for inline in inline_plans
         if inline.record is not None
-        and inline.record["status"] not in {"wontfix", "resolved"}
+        and not inline.settled
         and (inline.record["discussion_id"] is None or inline.record["root_note_id"] is None)
     }
 
@@ -297,35 +303,52 @@ def _desired_discussion_resolved(
     return None
 
 
+def planned_thread_resolutions(
+    records: list[StateRecord], base_records: list[StateRecord]
+) -> list[tuple[StateRecord, bool]]:
+    """Return each threaded record whose resolution must change, with its target."""
+    prior_status: dict[str, StateRecordStatus | None] = {
+        record["issue_id"]: record.get("status") for record in base_records
+    }
+    resolutions = []
+    for record in records:
+        if record.get("discussion_id") is None:
+            continue
+        desired = _desired_discussion_resolved(record, prior_status)
+        if desired is not None:
+            resolutions.append((record, desired))
+    return resolutions
+
+
+def rolled_back_resolution(record: StateRecord, previous: StateRecord | None) -> StateRecord:
+    """``record`` as persisted after its thread resolution change fails."""
+    return cast(
+        StateRecord,
+        dict(
+            record,
+            status=previous.get("status", "open") if previous else "open",
+            human_disposition=previous.get("human_disposition") if previous else None,
+        ),
+    )
+
+
 def _reserve_resolution_failures(state: State, base_records: list[StateRecord]) -> State:
     """A sizing bound for every mix of resolution outcomes, never persisted."""
     prior_records = {record["issue_id"]: record for record in base_records}
-    prior_status: dict[str, StateRecordStatus | None] = {
-        issue_id: record.get("status") for issue_id, record in prior_records.items()
+    resolving = {
+        record["issue_id"]
+        for record, _ in planned_thread_resolutions(state["records"], base_records)
     }
     retention_records = []
     largest_records = {}
     for record in state["records"]:
-        if (
-            record["discussion_id"] is None
-            or _desired_discussion_resolved(record, prior_status) is None
-        ):
+        if record["issue_id"] not in resolving:
             retention_records.append(record)
             continue
-        previous = prior_records.get(record["issue_id"])
-        failed = cast(
-            StateRecord,
-            dict(
-                record,
-                status=previous.get("status", "open") if previous else "open",
-                human_disposition=previous.get("human_disposition") if previous else None,
-            ),
-        )
+        failed = rolled_back_resolution(record, prior_records.get(record["issue_id"]))
         # Keep anything that could survive compaction on either outcome. The
         # automatic-resolved tail is then reserved in addition to those records.
-        retention_records.append(
-            failed if record["status"] == "resolved" and not record["human_disposition"] else record
-        )
+        retention_records.append(failed if is_auto_resolved(record) else record)
         largest_records[record["issue_id"]] = max(
             (record, failed), key=lambda variant: len(canonical_json_text(variant))
         )
@@ -553,12 +576,7 @@ def plan_state(
                 consensus["run_id"],
                 consensus["run_health"],
                 summary_fallback_groups
-                + [
-                    inline.group
-                    for inline in inline_plans
-                    if inline.record is None
-                    or inline.record["status"] not in {"wontfix", "resolved"}
-                ],
+                + [inline.group for inline in inline_plans if not inline.settled],
                 fyi_groups,
                 config.limits.max_fyi_findings,
                 posting_mode=config.posting.mode,

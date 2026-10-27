@@ -242,13 +242,13 @@ def render_summary_body(
             )
         )
 
-    body_without_marker = _compose_summary_sections(sections, reserved)
-    while len(body_without_marker) + len("\n\n") + len(placeholder_marker) > max_comment_size:
+    # Size the droppable sections alone; the reserved ledger is joined only once.
+    fixed_size = len(reserved) + len("\n\n") + len(placeholder_marker)
+    while len(_compose_summary_sections(sections, "")) + fixed_size > max_comment_size:
         if not _drop_lowest_priority_trailing_entry(sections):
             raise ValueError("platform comment limit is too small for summary marker")
-        body_without_marker = _compose_summary_sections(sections, reserved)
 
-    body, body_hash = seal_summary_body(body_without_marker, run_id)
+    body, body_hash = seal_summary_body(_compose_summary_sections(sections, reserved), run_id)
     if len(body) > max_comment_size:
         raise ValueError("rendered summary exceeds platform comment size limit")
     return body, body_hash
