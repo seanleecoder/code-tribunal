@@ -16,6 +16,13 @@ prepare and post jobs. Snapshot containment, state authenticity, cross-stage
 bindings, and the open egress risk are described in the
 [security model](../SECURITY_MODEL.md).
 
+GitHub has one reusable implementation in
+[`.github/workflows/ai-review-reusable.yml`](../../.github/workflows/ai-review-reusable.yml).
+Consumers call it at a release SHA; this repository's small caller uses the same
+commit. The canary installs a candidate-pinned reusable workflow
+and caller in its temporary demo branch. Only publication retries read the old
+template/copy layout (COMPAT-010); no synchronization writer remains.
+
 ## Compatibility boundary
 
 The supported public surface is versioned configuration, versioned input/output

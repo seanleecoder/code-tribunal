@@ -11,8 +11,8 @@ The supported artifacts are:
 - [`ci/review.gitlab-ci.yml`](ci/review.gitlab-ci.yml) — canonical GitLab DAG.
 - [`ci/review-child.gitlab-ci.yml`](ci/review-child.gitlab-ci.yml) — hardened
   child-pipeline stage wrapper; deprecated, removed in the next major release.
-- [`ci/review.github-actions.yml`](ci/review.github-actions.yml) — canonical
-  GitHub workflow; the installed repository copy must remain byte-identical.
+- [GitHub reusable workflow](../.github/workflows/ai-review-reusable.yml) —
+  canonical GitHub implementation, called at a release SHA by consumers.
 - [`config/review.yaml`](config/review.yaml) — shipped `review_config.v3`
   defaults.
 - [`schemas/`](schemas/) — JSON Schema contracts for stage artifacts.

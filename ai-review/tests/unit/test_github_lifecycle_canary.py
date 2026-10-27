@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -29,7 +30,7 @@ REVIEWER = "ghcr.io/example/ai-review-reviewer:2.0-" + "a" * 40 + "@sha256:" + "
 
 
 def _mock_copy() -> str:
-    source = (ROOT / "ai-review/ci/review.github-actions.yml").read_text(encoding="utf-8")
+    source = (ROOT / canary.GITHUB_WORKFLOW).read_text(encoding="utf-8")
     return lifecycle.mock_workflow(
         canary.candidate_workflow(source, base_image=BASE, reviewer_image=REVIEWER)
     )
@@ -363,10 +364,54 @@ class MergePolicyStepTests(unittest.TestCase):
 
 
 class MockWorkflowTests(unittest.TestCase):
+    def test_creation_installs_a_dispatch_caller_that_forwards_the_scenario(self) -> None:
+        commands: list[tuple[str, ...]] = []
+
+        def run(*command: str, **_kwargs: object) -> str:
+            commands.append(command)
+            if command[:3] == ("gh", "repo", "clone"):
+                demo = Path(command[4])
+                (demo / ".github/workflows").mkdir(parents=True)
+                (demo / "src").mkdir()
+            if command[:3] == ("gh", "pr", "view"):
+                return json.dumps({"number": 7, "url": "https://example.test/pr/7"})
+            return ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                workdir=tmp,
+                branch="candidate-lifecycle",
+                base_image=BASE,
+                reviewer_image=REVIEWER,
+                runtime_source="a" * 40,
+                state=str(Path(tmp) / "state.json"),
+            )
+            with mock.patch.object(lifecycle, "_run", side_effect=run):
+                lifecycle.create_lifecycle(args)
+            demo = Path(tmp) / "demo"
+            caller = yaml.load((demo / canary.GITHUB_CALLER).read_text(), Loader=yaml.BaseLoader)
+            workflow_text = (demo / canary.GITHUB_WORKFLOW).read_text()
+            workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
+            self.assertIn("mock_scenario", caller["on"]["workflow_dispatch"]["inputs"])
+            self.assertIn("mock_scenario", workflow["on"]["workflow_call"]["inputs"])
+            self.assertEqual(
+                caller["jobs"]["ai-review"]["with"],
+                {"pr_number": "${{ inputs.pr_number || '' }}",
+                 "mock_scenario": "${{ inputs.mock_scenario || 'blocking' }}"},
+            )
+            self.assertEqual(caller["jobs"]["ai-review"]["secrets"], "inherit")
+            self.assertIn(BASE, workflow_text)
+            self.assertIn(REVIEWER, workflow_text)
+            self.assertIn(
+                ("git", "add", canary.GITHUB_CALLER, canary.GITHUB_WORKFLOW,
+                 canary.LIFECYCLE_FIXTURE_PATH),
+                commands,
+            )
+
     def test_copy_runs_every_seat_in_mock_mode_driven_by_a_dispatch_input(self) -> None:
         workflow = yaml.safe_load(_mock_copy())
         triggers = workflow.get("on") or workflow[True]
-        self.assertIn("mock_scenario", triggers["workflow_dispatch"]["inputs"])
+        self.assertIn("mock_scenario", triggers["workflow_call"]["inputs"])
         for job in ("review", "critique"):
             env = {
                 key: value
@@ -391,6 +436,32 @@ class MockWorkflowTests(unittest.TestCase):
 
 
 class LifecycleStepTests(unittest.TestCase):
+    def test_stale_head_probe_waits_for_a_nested_reviewer_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            driver = _lifecycle(tmp)
+            (driver.demo / "docs").mkdir(parents=True)
+
+            def poll(step: Callable[[], object], **_kwargs: object) -> bool:
+                self.assertFalse(step())
+                self.assertTrue(step())
+                return True
+
+            with (
+                mock.patch.object(driver, "rerun", return_value=5),
+                mock.patch.object(driver, "_known", return_value=frozenset()),
+                mock.patch.object(lifecycle, "poll", side_effect=poll),
+                mock.patch.object(lifecycle, "_view", side_effect=[
+                    {"jobs": [{"name": "ai-review / prepare", "status": "in_progress"}]},
+                    {"jobs": [{"name": "ai-review / review (claude)", "status": "in_progress"}]},
+                ]),
+                mock.patch.object(lifecycle, "commit_and_push"),
+                mock.patch.object(lifecycle, "_run", return_value="head"),
+                mock.patch.object(driver, "review", return_value=(5, {})),
+                mock.patch.object(lifecycle, "await_new_run", return_value=6),
+            ):
+                driver.step_stale_head()
+            self.assertEqual(driver._next_head_run, 6)
+
     def test_dispatch_returns_only_a_run_that_did_not_exist_before(self) -> None:
         listings = iter(
             [

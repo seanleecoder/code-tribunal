@@ -243,5 +243,6 @@ the [security model](../SECURITY_MODEL.md).
 | Platform-visible re-anchoring of a moved comment | updating a comment rewrites its body, not its diff position; the internal remap is regression-covered | an optional live push that moves the anchored line |
 | Long bodies subject to truncation | no refresh has exercised a truncated body | a fixture with an oversized finding body |
 | GitLab body-format refresh | every refresh so far, including 2.1.0's, used the GitHub thread; the preserved GitLab note `3601861614` on MR `!11` ([consumer projects](CONSUMER-PROJECTS.md)) still carries the 1.0.0 format | run the [body-format refresh](#body-format-refresh) on that note |
+| N03 external reusable-workflow caller | local contracts cover input/secret forwarding, caller variables and nested job names; the canary copies both workflows into the demo | before the first N03 release, run an external SHA-pinned caller as required by the [release checklist](../development/release-process.md#release-pull-request-checklist) |
 | Live symlink containment variant | the GitLab commits API cannot create a `120000` tree entry | reuse the existing `evidence/p0-symlink-*` branches; at most one variant is needed |
 | Non-default effort routes | only the shipped defaults have live evidence on the current pair | a route panel when a release changes or claims non-default efforts |

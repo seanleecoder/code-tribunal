@@ -13,16 +13,16 @@ pipeline reports whether review publication succeeded.
 > **LLMs propose. Deterministic code decides.**
 
 The supported distribution is the digest-pinned OCI images together with the
-GitLab CI and GitHub Actions templates in this repository. The Python source is
-internal container implementation, not a supported Python package or API.
+GitLab CI template and GitHub reusable workflow in this repository. The Python
+source is internal container implementation, not a supported Python package or API.
 
 ## What is supported
 
 - GitLab merge-request pipelines through a direct protected include. The
   hardened mirrored child pipeline still works but is deprecated and will be
   removed in the next major release.
-- GitHub pull-request workflows for same-repository branches. External-fork
-  reviews are skipped because provider secrets are deliberately withheld.
+- GitHub reusable pull-request workflows for same-repository branches.
+  External-fork reviews are skipped because provider secrets are deliberately withheld.
 - Claude, Codex, OpenCode, and Cursor reviewers through the shipped adapters.
   All four are peer seats; `AI_REVIEW_REVIEWERS` selects which three or four of
   them form the panel, and the rest sit out. Fewer than three enabled seats is

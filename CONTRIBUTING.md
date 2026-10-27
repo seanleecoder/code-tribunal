@@ -82,7 +82,7 @@ no equivalent credential gate.
 
 One dispatch runs exactly one GitHub and one GitLab campaign, and each campaign
 executes the review panel once. On GitHub that is the run its pull request
-starts; the canary's workflow copy ignores the demo's `AI_REVIEW_MANUAL`. Each
+starts; the canary's reusable-workflow copy ignores the demo's `AI_REVIEW_MANUAL`. Each
 campaign enables
 Claude, Codex, OpenCode, and Cursor with shipped default effort, one review and
 one critique per seat. A pass requires all eight stage results on each platform,
@@ -97,9 +97,10 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile
 - `panel`: the real four-seat review and critique above. It spends tokens.
 - `lifecycle`: a zero-token mock Chain B on each platform, on its own temporary
   branch.
-  - The canary's workflow copy runs every seat in mock mode and adds a
-    `mock_scenario` dispatch input, so each step re-runs the same head without a
-    commit.
+  - The canary installs the small caller and a candidate-pinned reusable workflow.
+    The reusable workflow runs every seat in mock mode; a `mock_scenario` input
+    passes from caller dispatch into `workflow_call`, so each step re-runs the
+    same head without a commit.
   - The steps are create on an added file, unchanged rerun, changed body in place,
     `wontfix` (a `post_result` warning fails the step, which catches an expired
     resolve token), reopen, a stale-head no-op, and a `blocker` thread that leaves

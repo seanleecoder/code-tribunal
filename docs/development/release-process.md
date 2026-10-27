@@ -65,13 +65,12 @@ row whose target has arrived, and remove completed spec files from the active
    and dispatch a fresh run rather than re-running jobs. A red run blocks the
    release; it does not gate ordinary pull requests.
 
-3. **Open the release pull request.** It produces `P`, and may change only the two
-   templates, the installed GitHub copy, `CHANGELOG.md`, and `docs/`:
+3. **Open the release pull request.** It produces `P`, and may change only the
+   GitHub reusable workflow, the GitLab template, `CHANGELOG.md`, and `docs/`:
    - Re-pin the base and reviewer `container:` images in
-     `ai-review/ci/review.github-actions.yml`, and `AI_REVIEW_BASE_IMAGE`,
+     `.github/workflows/ai-review-reusable.yml`, and `AI_REVIEW_BASE_IMAGE`,
      `AI_REVIEW_REVIEWER_IMAGE`, and `AI_REVIEW_TRUSTED_IMAGE_SHA` in
      `ai-review/ci/review.gitlab-ci.yml`, to the canary's exact references.
-   - Run `make sync-workflows` to update the installed copy.
    - Move the `[Unreleased]` entries under `## [X.Y.Z] - YYYY-MM-DD`. That section
      becomes the release body, so write known limitations there in prose.
    - Copy the [checklist](#release-pull-request-checklist) into the description,
@@ -79,10 +78,12 @@ row whose target has arrived, and remove completed spec files from the active
 
    Run `make quality` and `make release-check P=HEAD`. The release check verifies
    one base and one reviewer reference across every job, equal on both platforms;
-   the installed copy byte-identical to the template; `AI_REVIEW_TRUSTED_IMAGE_SHA`
-   equal to the `R` in both image tags; `R` an ancestor of `P`; and `R..P` within
+   `AI_REVIEW_TRUSTED_IMAGE_SHA` equal to the `R` in both image tags; `R` an ancestor
+   of `P`; and `R..P` within
    the allowed paths. The check is path-only. The pull-request review carries the
-   semantic part: `R..P` only re-pins and documents.
+   semantic part: `R..P` only re-pins and documents. Caller changes belong in `R`,
+   so the canary tests them. Retrying a pre-N03 release still verifies its old
+   canonical-template/copy parity (COMPAT-010).
 
    Nothing else may land on `main` between `R` and `P`, because `R..P` would then
    carry it. If something does, build a new `R` and re-run the canary.
@@ -160,11 +161,17 @@ applied, and the review checks the evidence it cites.
 - [ ] **Three-seat default smoke:** when the default roster or a default model
   changes, one smoke run on the exact default roster, unless the canary panel's
   model and effort routes already match it.
+- [ ] **GitHub reusable-workflow cutover:** for the first N03 release, run an
+  external caller pinned to the release candidate's workflow commit. Confirm
+  caller model/effort/roster variables in the prepared manifest and health rows,
+  inherited or named secrets, automatic and manual review, fork skipping, and
+  the new `ai-review / post` check name. The local-copy canary exercises the call
+  structure but does not prove external SHA lookup and cross-repository scope.
 - [ ] **Known limitations:** update the
   [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps), removing
   what this release closed and adding what it found, and write any gap that limits
   a release claim in prose in the CHANGELOG section. There are no waivers.
-- [ ] **`R..P` review:** the diff only re-pins, updates the installed copy, and
+- [ ] **`R..P` review:** the diff only re-pins the canonical workflows and
   documents; `make release-check P=<head>` passes.
 
 ## Tag signing

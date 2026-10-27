@@ -20,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # Relative to ROOT, where zizmor runs, so findings report repository paths.
-INPUTS = (".github/workflows", "ai-review/ci/review.github-actions.yml")
+INPUTS = (".github/workflows",)
 AUDITS = frozenset({"unpinned-uses", "unpinned-images", "ref-version-mismatch"})
 
 

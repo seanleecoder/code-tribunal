@@ -9,6 +9,15 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: GitHub consumers call
+  `.github/workflows/ai-review-reusable.yml` at a reviewed release SHA (N03).
+  The copied canonical template and synchronization tooling are deleted; this
+  repository uses a small same-commit caller. Caller Actions variables remain
+  the configuration source, and secrets are inherited or passed by name.
+  Optional required checks change from `post` to `ai-review / post` with the
+  documented caller. The canary runs through the caller and reusable workflow;
+  historical 2.1 publication retries retain their original byte-parity check.
+  See the [GitHub installation guide](docs/getting-started/github.md).
 - Breaking, for the next major release: state v2 lives inside the bot's summary
   comment (S14/N04). An explicit offline converter, `scripts/migrate_state_v2.py`,
   preserves thread IDs and human dispositions from exported v1 notes; pause

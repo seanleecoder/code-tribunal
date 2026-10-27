@@ -695,7 +695,6 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
 
             args = argparse.Namespace(
                 workdir=str(root / "work"),
-                workflow=str(ROOT / ".github/workflows/ai-review.yml"),
                 branch="candidate-test",
                 base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
                 reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
@@ -711,10 +710,20 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 json.loads(state.read_text(encoding="utf-8")),
                 {"branch": "candidate-test"},
             )
-            workflow = (root / "work/demo/.github/workflows/ai-review.yml").read_text(
+            workflow = (root / "work/demo" / self.github.GITHUB_WORKFLOW).read_text(
                 encoding="utf-8"
             )
             self.assertNotIn("AI_REVIEW_MANUAL", workflow)
+            caller = self.github.GITHUB_CALLER
+            self.assertEqual(
+                (root / "work/demo" / caller).read_bytes(),
+                (self.github.ROOT / caller).read_bytes(),
+            )
+            self.assertIn(
+                ("git", "add", self.github.GITHUB_CALLER, self.github.GITHUB_WORKFLOW,
+                 "src/access.py"),
+                commands,
+            )
             # The runner has no git credentials; only gh's helper can authenticate the push.
             self.assertIn(
                 (

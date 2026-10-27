@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parents[3]
 tool = load_repository_script("check_release", REPO / "scripts/check_release.py")
 PUBLISH_WORKFLOW = REPO / ".github/workflows/publish-release.yml"
 CANARY_WORKFLOW = REPO / tool.CANARY_WORKFLOW
-TEMPLATES = tool.TEMPLATES
+TEMPLATES = (tool.GITHUB_WORKFLOW, tool.GITLAB_TEMPLATE)
 CHANGELOG = """# Changelog
 
 ## [Unreleased]
@@ -52,6 +52,7 @@ class ReleaseRepository:
         for relative in TEMPLATES:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / relative, root / relative)
+        shutil.copyfile(REPO / tool.GITHUB_CALLER, root / tool.GITHUB_CALLER)
         (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
         (root / "runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
         self.shipped_source = tool.gitlab_image_pins(
@@ -76,6 +77,13 @@ class ReleaseRepository:
         self.repin(self.runtime_source)
         return self.commit("P")
 
+    def use_legacy_layout(self) -> tuple[str, ...]:
+        """COMPAT-010: replace the reusable workflow with a pre-N03 template and copy."""
+        legacy = self.root / tool.LEGACY_GITHUB_TEMPLATE
+        (self.root / tool.GITHUB_WORKFLOW).rename(legacy)
+        shutil.copyfile(legacy, self.root / tool.GITHUB_CALLER)
+        return (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
+
 
 class ReleasePinsTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -99,9 +107,31 @@ class ReleasePinsTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "Changed: runtime.py"):
             tool.release_pins(self.repo.root, "HEAD")
 
-    def test_a_drifted_installed_copy_is_rejected(self) -> None:
-        self.repo.repin(self.repo.runtime_source, (tool.GITHUB_TEMPLATE, tool.GITLAB_TEMPLATE))
-        self.repo.commit("P without the installed copy")
+    def test_changing_the_caller_requires_a_new_runtime_source(self) -> None:
+        caller = self.repo.root / tool.GITHUB_CALLER
+        caller.write_text(caller.read_text() + "# untested caller change\n")
+        self.repo.release_commit()
+        with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_CALLER):
+            tool.release_pins(self.repo.root, "HEAD")
+
+    def test_restoring_legacy_files_cannot_remove_the_reusable_workflow(self) -> None:
+        paths = self.repo.use_legacy_layout()
+        self.repo.repin(self.repo.runtime_source, paths)
+        self.repo.commit("P restores the legacy layout after an N03 R")
+        with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_WORKFLOW):
+            tool.release_pins(self.repo.root, "HEAD")
+
+    def test_pre_n03_tags_retain_their_pin_and_byte_parity_checks(self) -> None:
+        # COMPAT-010: publication retries read the old layout without executing it.
+        paths = self.repo.use_legacy_layout()
+        caller = self.repo.root / tool.GITHUB_CALLER
+        self.repo.runtime_source = self.repo.commit("pre-N03 R")
+        self.repo.repin(self.repo.runtime_source, paths)
+        self.repo.commit("pre-N03 P")
+        _, pins = tool.release_pins(self.repo.root, "HEAD")
+        self.assertEqual(pins.runtime_source, self.repo.runtime_source)
+        caller.write_bytes(caller.read_bytes().replace(b"\n", b"\r\n"))
+        self.repo.commit("pre-N03 P with byte drift")
         with self.assertRaisesRegex(tool.ReleaseValidationError, "differs from"):
             tool.release_pins(self.repo.root, "HEAD")
 

@@ -1,4 +1,4 @@
-"""Shared release, canary-identity, and workflow-parity helpers."""
+"""Shared release and canary-identity helpers."""
 
 from __future__ import annotations
 
@@ -16,51 +16,9 @@ class ReleaseValidationError(ValueError):
     """Raised when a release or its inputs violate a checked contract."""
 
 
-# Canonical template -> installed copy. GitHub only executes workflows that are
-# real files under .github/workflows, so the installed copy must stay a byte
-# duplicate of the canonical template rather than a symlink to it.
-GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
-GITHUB_INSTALLED = ".github/workflows/ai-review.yml"
+GITHUB_WORKFLOW = ".github/workflows/ai-review-reusable.yml"
+GITHUB_CALLER = ".github/workflows/ai-review.yml"
 GITLAB_TEMPLATE = "ai-review/ci/review.gitlab-ci.yml"
-WORKFLOW_PAIRS: tuple[tuple[str, str], ...] = (
-    (GITHUB_TEMPLATE, GITHUB_INSTALLED),
-)
-
-
-def sync_workflows(*, check: bool, root: Path = ROOT) -> tuple[str, ...]:
-    """Copy canonical workflows over their installed copies, or report drift.
-
-    In check mode nothing is written and the installed paths that differ from
-    their canonical template are returned. In write mode each mismatching
-    installed copy is overwritten and the paths that changed are returned. An
-    empty tuple therefore means "already in sync" in both modes.
-
-    The comparison is byte-exact, and deliberately so. GitHub executes the
-    installed file verbatim, so a line-ending difference is real drift rather
-    than an equivalent encoding. Path.read_text() enables universal newlines and
-    translates \r\n to \n, which would report a CRLF installed copy as identical
-    to an LF template and then decline to repair it; Path.write_text() is the
-    mirror problem, translating \n to os.linesep. Reading and writing bytes is
-    what makes the byte-duplicate contract above literally true.
-
-    This is the only implementation of the comparison. `make workflow-parity` is
-    the gate on main, and `check_release.py pins` applies it to a release commit.
-    """
-    changed: list[str] = []
-    for canonical_rel, installed_rel in WORKFLOW_PAIRS:
-        canonical_path = root / canonical_rel
-        installed_path = root / installed_rel
-        if not canonical_path.is_file():
-            raise ReleaseValidationError(f"canonical workflow template is missing: {canonical_rel}")
-        canonical_bytes = canonical_path.read_bytes()
-        installed_bytes = installed_path.read_bytes() if installed_path.is_file() else None
-        if installed_bytes == canonical_bytes:
-            continue
-        changed.append(installed_rel)
-        if not check:
-            installed_path.parent.mkdir(parents=True, exist_ok=True)
-            installed_path.write_bytes(canonical_bytes)
-    return tuple(changed)
 
 
 # Images are tagged `<series>-<runtime_source>`. The series has one source, the
