@@ -13,6 +13,7 @@ import platform
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,16 @@ def install_archive(
             raise ValueError("Ruff archive is missing the Python launcher")
         binary_data = archive.read(binary_name)
         module_data = {name: archive.read(name) for name in modules}
+    # Validate a staged executable before touching the selected environment.
+    with tempfile.TemporaryDirectory(prefix="code-tribunal-ruff-") as temporary:
+        candidate = Path(temporary) / "ruff"
+        candidate.write_bytes(binary_data)
+        candidate.chmod(0o755)
+        result = subprocess.run(
+            [str(candidate), "--version"], capture_output=True, text=True, check=False,
+        )
+        if result.returncode or result.stdout.strip() != f"ruff {version}":
+            raise ValueError(f"pinned Ruff cannot execute on this runtime: {result.stderr.strip()}")
     scripts.mkdir(parents=True, exist_ok=True)
     binary = scripts / "ruff"
     binary.write_bytes(binary_data)
@@ -67,11 +78,6 @@ def main() -> int:
             data, digest, version, Path(sysconfig.get_path("scripts")),
             Path(sysconfig.get_path("purelib")),
         )
-        result = subprocess.run(
-            [str(binary), "--version"], capture_output=True, text=True, check=False,
-        )
-        if result.returncode or result.stdout.strip() != f"ruff {version}":
-            raise ValueError(f"pinned Ruff cannot execute on this runtime: {result.stderr.strip()}")
     except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile) as error:
         raise SystemExit(f"BLOCKED: {error}") from error
     print(f"Installed ruff {version}: {binary}\nUpstream archive SHA256: {digest}")

@@ -26,9 +26,12 @@ and print interpreter, module and executable provenance; metadata alone can lie.
 
 ### Termux development profile
 
-Use `agent-check -- COMMAND ...` when installed. It repairs only the child
-runtime, not dependencies or Linux/Android parity. Test installs in a disposable
-venv first; do not overwrite an existing environment with system packages enabled.
+The commands below run directly on Termux. If your local environment provides
+an `agent-check` wrapper, you can optionally prefix commands with `agent-check --`.
+That wrapper is external to this repository and repairs only the child runtime;
+it does not install dependencies or provide Linux/Android parity. Test installs
+in a disposable venv first; do not overwrite an existing environment with system
+packages enabled.
 
 Ruff's ordinary Android source build requires a native Rust toolchain. On
 Termux aarch64 this explicit setup downloads the same pinned upstream static
@@ -38,7 +41,7 @@ incompatible wheel metadata is installed:
 
 ```bash
 .venv/bin/python scripts/install_termux_ruff.py
-agent-check -- make lint
+make lint
 ```
 
 The pinned mypy 2.4.0 needs `ast-serialize>=0.11.2,<1`. No Android wheel was
@@ -51,8 +54,8 @@ If mypy itself is already provisioned, this explicit developer profile keeps
 strict checking and selects its Python parser:
 
 ```bash
-agent-check -- make typecheck MYPY_FLAGS=--no-native-parser
-agent-check -- make quality MYPY_FLAGS=--no-native-parser
+make typecheck MYPY_FLAGS=--no-native-parser
+make quality MYPY_FLAGS=--no-native-parser
 ```
 
 COMPAT-011 is not native parser or CI parity. CI keeps `MYPY_FLAGS` empty. Report
@@ -64,8 +67,8 @@ explicitly in noninteractive shells:
 
 ```bash
 export PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH"
-agent-check -- lychee --version
-agent-check -- zizmor --version
+lychee --version
+zizmor --version
 ```
 
 The versions must match the existing Lychee pin and `requirements-dev.txt`.
