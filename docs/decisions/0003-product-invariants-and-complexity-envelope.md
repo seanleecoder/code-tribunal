@@ -28,8 +28,8 @@ The accepted product dimensions are:
 - an explicit trusted reviewer registry, with no dynamic plugin loading;
 - pinned third-party CLIs trusted to implement their documented behavior, while
   Code Tribunal verifies its own invocation and credential isolation;
-- one canonical GitHub workflow template and one mechanically synchronized
-  installed copy;
+- one canonical GitHub reusable workflow, called at a release SHA by consumers
+  ([ADR-0004](0004-simplified-release-process.md) decision 10);
 - signed release tags whose canonical templates pin the released image digests as
   release authority ([ADR-0004](0004-simplified-release-process.md)).
 
@@ -55,12 +55,12 @@ migration, and deletion.
 | Finding, critique, and consensus shapes | [JSON schemas](../../ai-review/schemas/) |
 | Internal normalized model payload | [`adapter_output._coerce_adapter_root`](../../ai-review/src/ai_review/adapter_output.py) |
 | Consensus decision | [`consensus_policy.apply_group_decision`](../../ai-review/src/ai_review/consensus_policy.py) |
-| Current workflow | [canonical templates](../../ai-review/ci/) |
-| GitHub workflow installation copy | [parity output](../../.github/workflows/ai-review.yml), not a second authority |
+| Current workflow | [GitHub reusable workflow](../../.github/workflows/ai-review-reusable.yml) and [GitLab template](../../ai-review/ci/review.gitlab-ci.yml) |
+| GitHub installation | A release-SHA caller; [this repository's caller](../../.github/workflows/ai-review.yml) uses the same-commit workflow |
 | Current open work | [`docs/improvement-specs/README.md`](../improvement-specs/README.md) |
 | Public compatibility surface | [architecture guide](../development/architecture.md#compatibility-boundary) |
 | Temporary compatibility paths | [compatibility register](../development/temporary-compatibility.md) |
-| Released identity | The canonical [templates](../../ai-review/ci/) at the signed release tag ([ADR-0004](0004-simplified-release-process.md)) |
+| Released identity | The canonical workflows above at the signed release tag ([ADR-0004](0004-simplified-release-process.md)) |
 | Release assurance | The Candidate Canary run cited in the release body, verified at publication |
 | Release notes | The `CHANGELOG.md` section for the version |
 

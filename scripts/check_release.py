@@ -29,8 +29,8 @@ from urllib.parse import urlsplit
 from ai_review.canonical import json_loads_no_duplicates
 from check_supply_chain_pins import gitlab_image_pins, image_pin_issues
 from release_common import (
-    GITHUB_INSTALLED,
-    GITHUB_TEMPLATE,
+    GITHUB_CALLER,
+    GITHUB_WORKFLOW,
     GITLAB_TEMPLATE,
     REPOSITORY,
     ROOT,
@@ -38,16 +38,17 @@ from release_common import (
     compare_release_versions,
     diff_paths,
     git_is_ancestor,
-    sync_workflows,
     validate_release_version,
 )
 from validate_candidate_identity import CANDIDATE_SCHEMA, SIGNER_IDENTITY, SOURCE_REF
 
 # Tags before this were published under the retired release-inputs process.
 FIRST_VERSION = "2.1.0"
-TEMPLATES = (GITHUB_TEMPLATE, GITHUB_INSTALLED, GITLAB_TEMPLATE)
+TEMPLATES = (GITHUB_WORKFLOW, GITLAB_TEMPLATE)
 # P only re-pins: everything else ships from R, which the canary tested.
 RELEASE_PATHS = (*TEMPLATES, "CHANGELOG.md", "docs/")
+# COMPAT-010: immutable 2.1 release tags still use a canonical template and copy.
+LEGACY_GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 # Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
@@ -130,14 +131,22 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     release_commit = _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
     with tempfile.TemporaryDirectory(prefix="code-tribunal-release-") as temporary:
         tree = Path(temporary)
-        _extract(root, release_commit, TEMPLATES, tree)
+        _extract(root, release_commit, (".github/workflows", "ai-review/ci"), tree)
         gitlab = (tree / GITLAB_TEMPLATE).read_text(encoding="utf-8")
-        github = (tree / GITHUB_TEMPLATE).read_text(encoding="utf-8")
-        issues = image_pin_issues(gitlab, github)
-        issues += [
-            f"{path} differs from {GITHUB_TEMPLATE}"
-            for path in sync_workflows(check=True, root=tree)
-        ]
+        github_path = tree / GITHUB_WORKFLOW
+        release_paths = RELEASE_PATHS
+        issues = []
+        # COMPAT-010: only read historical files; never execute tag code or keep
+        # the removed synchronization writer in the current installation path.
+        if not github_path.exists():
+            github_path = tree / LEGACY_GITHUB_TEMPLATE
+            if github_path.read_bytes() != (tree / GITHUB_CALLER).read_bytes():
+                issues.append(f"{GITHUB_CALLER} differs from {LEGACY_GITHUB_TEMPLATE}")
+            release_paths = (
+                LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/"
+            )
+        github = github_path.read_text(encoding="utf-8")
+        issues += image_pin_issues(gitlab, github)
     if issues:
         raise ReleaseValidationError("\n".join(issues))
     pins, _ = gitlab_image_pins(gitlab)
@@ -147,11 +156,11 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     outside = [
         path for path in diff_paths(root, runtime_source, release_commit)
         if not any(path == item or (item.endswith("/") and path.startswith(item))
-                   for item in RELEASE_PATHS)
+                   for item in release_paths)
     ]
     if outside:
         raise ReleaseValidationError(
-            "R..P may change only the templates, the installed copy, CHANGELOG.md and docs/; "
+            "R..P may change only the canonical workflows, CHANGELOG.md and docs/; "
             "rebuild the images from a new R instead. Changed: " + ", ".join(outside)
         )
     return release_commit, Pins(

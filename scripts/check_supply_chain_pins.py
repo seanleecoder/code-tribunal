@@ -22,9 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGES = ROOT / "ai-review/images"
 BASE_DOCKERFILE = IMAGES / "base.Dockerfile"
 REVIEWER_DOCKERFILE = IMAGES / "reviewer.Dockerfile"
-# The installed copy under .github/workflows/ is not scanned: `make workflow-parity`
-# proves it is a byte duplicate of this canonical template.
-GITHUB_REVIEW_WORKFLOW = ROOT / "ai-review/ci/review.github-actions.yml"
+GITHUB_REVIEW_WORKFLOW = ROOT / ".github/workflows/ai-review-reusable.yml"
 GITLAB_REVIEW_TEMPLATE = ROOT / "ai-review/ci/review.gitlab-ci.yml"
 PACKAGE_JSON = IMAGES / "package.json"
 PYTHON_CONSTRAINTS = IMAGES / "python-constraints.txt"

@@ -1,7 +1,7 @@
 """``python -m ai_review.post`` entry point.
 
-The shipped CLI entry point named by ai-review/ci/review.github-actions.yml,
-ai-review/ci/review.gitlab-ci.yml, and .github/workflows/ai-review.yml. The
+The shipped CLI entry point named by .github/workflows/ai-review-reusable.yml
+and ai-review/ci/review.gitlab-ci.yml. The
 implementation lives in the modules this delegates to: commands, notes,
 state_plan, summary_render, and posting.
 

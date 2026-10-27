@@ -21,9 +21,12 @@ content from these projects regardless.
 
 ## GitHub consumer — `seanleecoder/code-tribunal-demo`
 
-Public, default branch `main`. Contains a small `src/` + `tests/` Python fixture tree
-and a single workflow `.github/workflows/ai-review.yml` copied from the product
-repo's canonical template.
+Public, default branch `main`. Contains a small `src/` + `tests/` Python fixture tree.
+The recorded pre-N03 deployment has a single copied workflow,
+`.github/workflows/ai-review.yml`. N03's temporary canary branches install a caller
+and reusable workflow; the persistent consumer must adopt a release-SHA caller
+before the first N03 release, following the
+[GitHub installation guide](../getting-started/github.md).
 
 **Already configured — do not rebuild this, only repin it:**
 
@@ -71,13 +74,16 @@ repo's canonical template.
   `AI_REVIEW_ALLOW_LOCAL_MOCK=true`; real adapters always fail on missing
   prerequisites.
 
-**What changes per release:** the five container digest pins in the workflow (jobs
-`prepare`, `review`, `critique`, `consensus`, `post` — the `gate` job is gone). As of
-2026-09-27 `main` pins the 2.0.0 pair `2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f`
-(base `sha256:f7028a5a…`, reviewer `sha256:292142b7…`), adopted by PR #24 (merge
-`b44ab38`). Copy the workflow from the new `R`
-rather than hand-editing pins: an older copy can carry env keys that a newer `R`
-rejects (the `AI_REVIEW_PANEL_GROUPING_SEMANTIC_*` overrides were one such case).
+**What changes per release after N03:** the caller's release SHA. Both image pins
+live in the called workflow. Do not paste the reusable implementation into a
+caller file; it has no automatic trigger. Temporary mock checks use the canary's
+caller/reusable pair instead of enabling mocks through the production caller.
+
+**Historical resting deployment:** as of 2026-09-27 `main` pinned the 2.0.0 pair
+`2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f` (base `sha256:f7028a5a…`, reviewer
+`sha256:292142b7…`), adopted by PR #24 (merge `b44ab38`). This is recorded evidence,
+not a current pin recommendation. The first major adoption also requires the
+[state v2 migration](../operations.md#state-v2-migration).
 
 ### Branch and PR conventions
 
@@ -195,13 +201,17 @@ refresh surface.
 1. Dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
    against the new pair. It needs no repin: it pushes its own temporary branch and
    closes its PR/MR afterwards. Do not repin until it is green.
-2. Copy the workflow / CI template from the new `R`; repin the five GitHub container
-   digests and the three GitLab pin variables (`AI_REVIEW_BASE_IMAGE`,
-   `AI_REVIEW_REVIEWER_IMAGE`, `AI_REVIEW_TRUSTED_IMAGE_SHA`) to the new pair.
+2. Point the GitHub caller to the reviewed release commit `P`; the first N03
+   adoption replaces the old copied workflow. Copy the GitLab template from `P`
+   with its three pin variables (`AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`,
+   `AI_REVIEW_TRUSTED_IMAGE_SHA`) set to the tested pair.
    Confirm `AI_REVIEW_MERGE_GATE_ENABLED` is still absent from both consumers; it
    is retired and fails the run.
-3. Land the GitHub adoption change as a PR and run that PR in mock mode so it
-   costs nothing.
+3. Land the GitHub adoption change as a PR. For the first N03 release, perform
+   the external SHA-pinned caller check in the
+   [release checklist](../development/release-process.md#release-pull-request-checklist).
+   Use the temporary canary pair for deterministic mock checks; the persistent
+   production caller exposes no mock switch.
 4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then
    point **both** consumer includes at that new SHA. Two different SHAs, or a stale
    template pin, means the evidence exercised the wrong images.

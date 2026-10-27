@@ -18,7 +18,8 @@ this file is the concise working map, not a replacement for the linked docs.
 - Pinned third-party CLIs are trusted to honor their documented behavior. Code
   Tribunal owns correct invocation, endpoint selection, environment scrubbing,
   and credential isolation.
-- There is one canonical GitHub template and one synchronized installation copy.
+- There is one canonical GitHub reusable workflow, called at a release SHA by
+  consumers.
   A release is a signed tag whose canonical templates pin the released image
   digests, verified against a cited Candidate Canary run
   ([ADR-0004](docs/decisions/0004-simplified-release-process.md)).

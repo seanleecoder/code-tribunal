@@ -25,6 +25,15 @@ digest-pinned images, reviewer-specific credential selection, scrubbed
 subprocess environments, read-only/no-shell reviewer policies, model/endpoint
 validation, and secret redaction.
 
+GitHub consumers pin the reusable workflow to a reviewed release commit. Its
+`github` and `vars` contexts belong to the caller, and checkout still fetches the
+caller's PR revision. The caller grants token permissions and forwards provider
+and resolution secrets; the reusable workflow maps each secret only to the
+existing stage and seat that needs it. Caller workflow `env` is not inherited.
+The called workflow retains the same-repository PR guard and rejects unsupported
+events, including `pull_request_target`, before prepare. See the
+[GitHub installation guide](getting-started/github.md) for caller configuration.
+
 Executable coverage includes
 [`test_adapter_runner.py`](../ai-review/tests/unit/test_adapter_runner.py),
 [`test_openrouter_adapters.py`](../ai-review/tests/unit/test_openrouter_adapters.py),

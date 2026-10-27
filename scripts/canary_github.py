@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """GitHub candidate-canary campaigns: the scoped panel and the mock lifecycle.
 
-Each campaign pushes its own workflow copy, pinned to the candidate images, to a
-temporary demo branch and opens a pull request. The panel collects the real
-review run's artifacts. The zero-token mock lifecycle (Chain B) bakes mock mode
-and a ``mock_scenario`` dispatch input into the copy, so every step re-runs the
+Each campaign pushes a caller and the reusable workflow, pinned to the candidate
+images, to a temporary demo branch and opens a pull request. The panel collects
+the real review run's artifacts. The zero-token mock lifecycle (Chain B) bakes
+mock mode and a ``mock_scenario`` input into both workflows, so every step re-runs the
 same head without a commit. It then walks the Chain B steps from the runbook
 against the real GitHub posting, state, and command APIs, and writes a redacted
 step summary. The mock emits no model content.
@@ -44,6 +44,7 @@ from candidate_canary_common import (
     saved_wontfix,
     write_state,
 )
+from release_common import GITHUB_CALLER, GITHUB_WORKFLOW, ROOT
 
 # gh authenticates only the git commands it runs itself, and the protected
 # checkout persists no credentials, so the push must borrow gh's GH_TOKEN helper.
@@ -130,14 +131,23 @@ def push_candidate_branch(
     message: str,
     title: str,
 ) -> dict[str, Any]:
-    """Push a demo branch carrying ``workflow`` and ``edit``'s files, then open its PR."""
+    """Push the candidate reusable workflow, its caller and fixture, then open its PR."""
     root = Path(args.workdir)
     demo = root / "demo"
     root.mkdir(parents=True, exist_ok=True)
     _run("gh", "repo", "clone", DEMO_REPOSITORY, str(demo), "--", "--depth=1")
     _run("git", "switch", "-c", args.branch, cwd=demo)
-    (demo / ".github/workflows/ai-review.yml").write_text(workflow, encoding="utf-8")
-    paths = [".github/workflows/ai-review.yml", *edit(demo)]
+    caller = (ROOT / GITHUB_CALLER).read_text(encoding="utf-8")
+    if "mock_scenario:" in workflow:
+        caller = scenario_input(caller, "workflow_dispatch")
+        caller = caller.replace(
+            "    secrets: inherit",
+            "      mock_scenario: ${{ inputs.mock_scenario || 'blocking' }}\n"
+            "    secrets: inherit",
+        )
+    (demo / GITHUB_CALLER).write_text(caller, encoding="utf-8")
+    (demo / GITHUB_WORKFLOW).write_text(workflow, encoding="utf-8")
+    paths = [GITHUB_CALLER, GITHUB_WORKFLOW, *edit(demo)]
     _run("git", "config", "user.name", "code-tribunal-canary", cwd=demo)
     _run("git", "config", "user.email", "canary@users.noreply.github.com", cwd=demo)
     commit_and_push(demo, paths, message, args.branch)
@@ -318,8 +328,10 @@ def configure_create(parser: argparse.ArgumentParser) -> None:
 BOT_LOGIN = "github-actions[bot]"
 
 
-def mock_workflow(workflow: str) -> str:
-    """Turn the candidate workflow copy into a mock-mode, scenario-driven one."""
+def scenario_input(workflow: str, event: str) -> str:
+    """Add the lifecycle scenario to a workflow_call or workflow_dispatch input list."""
+    if f"  {event}:\n" not in workflow:
+        raise GitHubCanaryError(f"workflow must declare {event}")
     workflow, inputs = re.subn(
         r"(?m)^(      pr_number:\n(?:        .*\n)+)",
         r"\g<1>      mock_scenario:\n"
@@ -330,7 +342,13 @@ def mock_workflow(workflow: str) -> str:
         count=1,
     )
     if inputs != 1:
-        raise GitHubCanaryError("canonical workflow must declare the pr_number dispatch input")
+        raise GitHubCanaryError("workflow must declare the pr_number input")
+    return workflow
+
+
+def mock_workflow(workflow: str) -> str:
+    """Turn the candidate reusable workflow into a mock-mode, scenario-driven one."""
+    workflow = scenario_input(workflow, "workflow_call")
     scenario = "${{ inputs.mock_scenario || 'blocking' }}"
     workflow, mocks = re.subn(
         r'(?m)^( +)AI_REVIEW_LOCAL_MOCK: "0"$',
@@ -516,7 +534,7 @@ class GitHubLifecycle(Lifecycle):
         run_id = self.rerun("blocking")
         poll(
             lambda: any(
-                job["name"].startswith("review") and job.get("status") != "queued"
+                job["name"].startswith("ai-review / review") and job.get("status") != "queued"
                 for job in _view(run_id, "jobs").get("jobs") or []
             ) or None,
             deadline=self.deadline,

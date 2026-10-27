@@ -1,18 +1,22 @@
-# Safe GitHub Actions template for Code Tribunal / ai-review.
-# Run secret-bearing review jobs on pull_request after the repository's checked-in
-# workflow has been selected by GitHub. Do not move this job to pull_request_target:
-# attacker-controlled pull request code could then run with write credentials.
-name: AI Review
+# Canonical GitHub implementation. Consumers pin this workflow to a release SHA.
+# The caller must use pull_request or workflow_dispatch, never pull_request_target.
+name: Code Tribunal
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       pr_number:
         description: Pull request number to review
-        required: true
+        required: false
+        default: ""
         type: string
+    secrets:
+      OPENROUTER_API_KEY:
+        required: false
+      CURSOR_API_KEY:
+        required: false
+      AI_REVIEW_GITHUB_RESOLVE_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -28,10 +32,8 @@ env:
   PYTHONPATH: /opt/ai-review/src
   AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
-  # Actions repository variables live in the `vars` context; they are not
-  # process environment variables until explicitly mapped. Keep overrides at
-  # workflow scope so prepare, review, critique, consensus, and post all load the
-  # same effective configuration.
+  # `vars` comes from the caller repository. Caller workflow `env` is not
+  # inherited. Map overrides here so every stage resolves the same configuration.
   AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
   AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
   AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}

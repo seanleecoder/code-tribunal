@@ -227,11 +227,23 @@ The change is breaking. Required check names change, secrets need
 shipping. Until that major release, the template-and-copy dimension in ADR-0003
 stands. The pin check in decision 4 keeps verifying the installed copy.
 
+**N03 implementation (next major, unreleased):** the sole GitHub implementation
+is now `.github/workflows/ai-review-reusable.yml`; the repository's `ai-review.yml`
+is a caller using the same commit. Decision 4's new-release pins check reads the
+reusable workflow and GitLab template, with no installed-copy parity or sync
+writer. Caller changes must land in R. Historical release retries retain the old
+read-only template/copy check under COMPAT-010. GitHub documents that `vars` uses
+the caller repository and caller `env` is not inherited; the installation guide
+links those rules and describes named secrets when inheritance is unavailable.
+The canary copies the candidate reusable workflow and its caller to the demo,
+so both panel and lifecycle run through `workflow_call`. Before release, verify
+caller variables and secrets with an external SHA-pinned caller as well.
+
 ### Sources of truth (replacing the ADR-0003 row)
 
 | Concern | Authority |
 |---|---|
-| Released identity | The canonical [templates](../../ai-review/ci/) at the signed release tag |
+| Released identity | The canonical [GitHub reusable workflow](../../.github/workflows/ai-review-reusable.yml) and [GitLab template](../../ai-review/ci/review.gitlab-ci.yml) at the signed release tag |
 | Release assurance | The Candidate Canary run cited in the release body, verified at publication |
 | Release notes | The `CHANGELOG.md` section for the version |
 

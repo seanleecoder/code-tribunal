@@ -52,6 +52,7 @@ class ReleaseRepository:
         for relative in TEMPLATES:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / relative, root / relative)
+        shutil.copyfile(REPO / tool.GITHUB_CALLER, root / tool.GITHUB_CALLER)
         (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
         (root / "runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
         self.shipped_source = tool.gitlab_image_pins(
@@ -99,9 +100,27 @@ class ReleasePinsTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "Changed: runtime.py"):
             tool.release_pins(self.repo.root, "HEAD")
 
-    def test_a_drifted_installed_copy_is_rejected(self) -> None:
-        self.repo.repin(self.repo.runtime_source, (tool.GITHUB_TEMPLATE, tool.GITLAB_TEMPLATE))
-        self.repo.commit("P without the installed copy")
+    def test_changing_the_caller_requires_a_new_runtime_source(self) -> None:
+        caller = self.repo.root / tool.GITHUB_CALLER
+        caller.write_text(caller.read_text() + "# untested caller change\n")
+        self.repo.release_commit()
+        with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_CALLER):
+            tool.release_pins(self.repo.root, "HEAD")
+
+    def test_pre_n03_tags_retain_their_pin_and_byte_parity_checks(self) -> None:
+        # COMPAT-010: publication retries read the old layout without executing it.
+        legacy = self.repo.root / tool.LEGACY_GITHUB_TEMPLATE
+        (self.repo.root / tool.GITHUB_WORKFLOW).rename(legacy)
+        caller = self.repo.root / tool.GITHUB_CALLER
+        shutil.copyfile(legacy, caller)
+        self.repo.runtime_source = self.repo.commit("pre-N03 R")
+        paths = (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
+        self.repo.repin(self.repo.runtime_source, paths)
+        self.repo.commit("pre-N03 P")
+        _, pins = tool.release_pins(self.repo.root, "HEAD")
+        self.assertEqual(pins.runtime_source, self.repo.runtime_source)
+        caller.write_bytes(caller.read_bytes().replace(b"\n", b"\r\n"))
+        self.repo.commit("pre-N03 P with byte drift")
         with self.assertRaisesRegex(tool.ReleaseValidationError, "differs from"):
             tool.release_pins(self.repo.root, "HEAD")
 
