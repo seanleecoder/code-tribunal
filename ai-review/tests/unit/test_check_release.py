@@ -107,6 +107,16 @@ class ReleasePinsTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_CALLER):
             tool.release_pins(self.repo.root, "HEAD")
 
+    def test_restoring_legacy_files_cannot_remove_the_reusable_workflow(self) -> None:
+        legacy = self.repo.root / tool.LEGACY_GITHUB_TEMPLATE
+        (self.repo.root / tool.GITHUB_WORKFLOW).rename(legacy)
+        shutil.copyfile(legacy, self.repo.root / tool.GITHUB_CALLER)
+        paths = (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
+        self.repo.repin(self.repo.runtime_source, paths)
+        self.repo.commit("P restores the legacy layout after an N03 R")
+        with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_WORKFLOW):
+            tool.release_pins(self.repo.root, "HEAD")
+
     def test_pre_n03_tags_retain_their_pin_and_byte_parity_checks(self) -> None:
         # COMPAT-010: publication retries read the old layout without executing it.
         legacy = self.repo.root / tool.LEGACY_GITHUB_TEMPLATE

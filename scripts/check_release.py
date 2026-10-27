@@ -50,7 +50,10 @@ RELEASE_PATHS = (*TEMPLATES, "CHANGELOG.md", "docs/")
 # COMPAT-010: immutable 2.1 release tags still use a canonical template and a
 # byte-identical copy at GITHUB_CALLER, and P may re-pin both.
 LEGACY_GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
-LEGACY_RELEASE_PATHS = (*RELEASE_PATHS, LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER)
+# Exclude the reusable workflow so this fallback cannot allow its deletion.
+LEGACY_RELEASE_PATHS = (
+    LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/"
+)
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 # Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
