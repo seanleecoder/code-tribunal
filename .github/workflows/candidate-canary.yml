@@ -144,7 +144,6 @@ jobs:
           if [[ "$PLATFORM" == github ]]; then
             env "$TOKEN_ENV=$token_value" python scripts/canary.py github panel create \
               "${common[@]}" \
-              --workflow .github/workflows/ai-review.yml \
               --workdir "$RUNNER_TEMP/github"
           else
             env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab panel create \
@@ -268,7 +267,6 @@ jobs:
           if [[ "$PLATFORM" == github ]]; then
             env "$TOKEN_ENV=$token_value" python scripts/canary.py github lifecycle create \
               "${common[@]}" \
-              --workflow .github/workflows/ai-review.yml \
               --workdir "$RUNNER_TEMP/github-lifecycle"
           else
             env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab lifecycle create \

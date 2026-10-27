@@ -41,7 +41,7 @@ from support.adapter_inputs import (  # noqa: E402
 
 _AI_REVIEW_ROOT = Path(__file__).resolve().parents[2]
 _SHIPPED_CONFIG = _AI_REVIEW_ROOT / "config" / "review.yaml"
-_GITHUB_WORKFLOW = _AI_REVIEW_ROOT / "ci" / "review.github-actions.yml"
+_GITHUB_WORKFLOW = _AI_REVIEW_ROOT.parent / ".github/workflows/ai-review-reusable.yml"
 _GITLAB_TEMPLATE = _AI_REVIEW_ROOT / "ci" / "review.gitlab-ci.yml"
 
 

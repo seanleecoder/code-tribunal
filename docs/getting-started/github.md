@@ -15,13 +15,57 @@ because GitHub does not expose provider secrets to them.
 
 ## Install the workflow
 
-Copy [`ai-review/ci/review.github-actions.yml`](../../ai-review/ci/review.github-actions.yml)
-from the trusted Code Tribunal commit to `.github/workflows/ai-review.yml` in the
-consumer repository. Do not copy a workflow from an unreviewed pull-request
-branch, and do not change `pull_request` to `pull_request_target`.
+The next major release replaces the copied workflow with the
+[reusable workflow](../../.github/workflows/ai-review-reusable.yml). Until that
+release ships, use the installation guide at your existing release tag.
 
-The workflow contains digest-pinned base and reviewer images. Keep its action
-SHAs, image source SHA, and image digests together when updating it.
+Create `.github/workflows/ai-review.yml` in the consumer repository:
+
+```yaml
+name: AI Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+jobs:
+  ai-review:
+    uses: seanleecoder/code-tribunal/.github/workflows/ai-review-reusable.yml@FULL_RELEASE_COMMIT_SHA
+    with:
+      pr_number: ${{ inputs.pr_number || '' }}
+    secrets: inherit
+```
+
+Replace `FULL_RELEASE_COMMIT_SHA` with the full commit of a reviewed, signed
+release that contains the reusable workflow. That commit pins the actions and
+both container images. Do not use an unreviewed PR branch or change the caller
+to `pull_request_target`. Allow the reusable workflow in your repository's
+Actions settings.
+
+`secrets: inherit` works within the same organization or enterprise. When your
+caller cannot inherit across that boundary, pass the named secrets instead:
+
+```yaml
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
+```
+
+GitHub supplies `GITHUB_TOKEN` automatically. Repository and organization
+variables are read from the **caller repository** in the reusable workflow;
+workflow-level `env` in a caller is not inherited. Keep overrides in Actions
+variables, as described below. See GitHub's
+[variable scope](https://docs.github.com/en/actions/reference/workflows-and-actions/variables#configuration-variable-precedence)
+and [reusable-workflow reference](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations).
 
 ## Configure credentials and variables
 
@@ -62,8 +106,11 @@ before switching to the next major release.
 review threads and a summary; it never decides whether a change may merge. There
 is no gate job to require.
 
-If you want the review to have *run* before a merge, you may require the `post`
-check instead. Understand what that does and does not give you:
+If you want the review to have *run* before a merge, you may require the
+`ai-review / post` check instead. This name includes the caller's job ID; confirm
+the exact check name on a completed run if you rename that job. When upgrading
+from a copied workflow, remove the old `post` requirement before switching, then
+select the new check after the first run. Understand what that gives you:
 
 - it reports whether publication completed, not what the review found. A
   `blocker` finding posts a thread and `post` still succeeds;
@@ -99,17 +146,18 @@ project has proven live, and its limits, is indexed in the
 
 ## Update or roll back
 
-Replace the installed workflow with the complete file from one reviewed Code
-Tribunal release/commit. Never rotate only one image digest. Read the
+Update the caller's `uses:` SHA to one reviewed Code Tribunal release commit.
+Both images and the implementation move together. Read the
 [upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
 1.0.x to 2.0: the required `gate` check must be removed first. To roll back,
-restore the previous complete workflow and rerun against a fresh PR revision;
+restore the previous caller SHA (or the complete copied workflow for a pre-cutover
+release) and rerun against a fresh PR revision;
 do not reuse old prepare/reviewer artifacts across versions.
 
 ## Uninstall
 
 Remove `.github/workflows/ai-review.yml` and delete Code Tribunal secrets and
-variables. If your ruleset or branch protection requires the `post` check,
+variables. If your ruleset or branch protection requires the `ai-review / post` check,
 delete that entry too, or the branch stays blocked on a check that will never
 report again. Existing bot comments remain as
 review history and can be removed according to repository policy.

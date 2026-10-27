@@ -12,15 +12,10 @@ RUFF_PATHS := $(AI_REVIEW_ROOT)/src $(AI_REVIEW_ROOT)/tests scripts
 PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 
 .PHONY: quality test packaged-smoke lint typecheck supply-chain workflow-pins \
-	docs-check sync-workflows workflow-parity demo-preflight release-check \
+	docs-check demo-preflight release-check \
 	update-golden review-local consensus-local validate-local
 
-quality: docs-check lint test typecheck supply-chain workflow-pins workflow-parity
-
-# The single gate on canonical-template -> installed-copy parity;
-# `make sync-workflows` repairs the drift it reports.
-workflow-parity:
-	$(MAKE) --no-print-directory CHECK=1 sync-workflows
+quality: docs-check lint test typecheck supply-chain workflow-pins
 
 docs-check:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_markdown_links.py
@@ -63,10 +58,6 @@ demo-preflight:
 release-check:
 	@test -n "$(P)" || { echo "usage: make release-check P=<release commit>"; exit 2; }
 	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/check_release.py pins --rev "$(P)"
-
-# Pass CHECK=1 to verify without writing.
-sync-workflows:
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/sync_workflows.py $(if $(CHECK),--check,)
 
 update-golden:
 	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests $(PYTHON) $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py
