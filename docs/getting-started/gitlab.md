@@ -90,9 +90,9 @@ Configure runtime overrides, listed in the
 project/group variables so every stage sees the same effective configuration.
 GitLab variable precedence can override the template's
 `AI_REVIEW_LOCAL_MOCK: "0"`, so never set `AI_REVIEW_LOCAL_MOCK` or
-`AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. For a strict install, set `state.fail_closed_on_load_error: true` so a
-state-load error fails prepare instead of starting from empty state and
-reposting earlier findings.
+`AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. State-load failures always stop
+prepare. Existing installations must complete the
+[state v2 migration](../operations.md#state-v2-migration) before switching images.
 
 Cursor is off by default; see
 [choosing the panel](../configuration.md#choosing-the-panel) before enabling it.

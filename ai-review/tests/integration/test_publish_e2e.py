@@ -12,10 +12,10 @@ from typing import Any
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import ReviewConfig, load_config, validate_config
 from ai_review.consensus import build_consensus
-from ai_review.memory import decode_state_note_body
+from ai_review.memory import decode_state_note_body, encode_state_note
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
-from ai_review.posting import post_consensus, write_persisted_state
+from ai_review.posting import post_consensus
 from ai_review.schema import load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
@@ -37,9 +37,7 @@ class PublishEndToEndTests(unittest.TestCase):
     """
 
     def test_supported_blocker_posts_inline_without_blocking(self) -> None:
-        client, consensus, post_result, exit_code = self._run_e2e(
-            self._blocking_batches()
-        )
+        client, consensus, post_result, exit_code = self._run_e2e(self._blocking_batches())
 
         self.assertEqual(consensus["summary"]["surface_count"], 1)
         self.assertEqual(consensus["groups"][0]["final_severity"], "blocker")
@@ -74,7 +72,7 @@ class PublishEndToEndTests(unittest.TestCase):
             consensus = build_consensus(manifest, self._blocking_batches(), config)
             validate_instance(consensus, "consensus.schema.json")
 
-            post_result = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            post_result = post_consensus(client, config, manifest, consensus)
 
         validate_instance(post_result, "post_result.schema.json")
         self.assertEqual(post_result["status"], "success")
@@ -91,8 +89,8 @@ class PublishEndToEndTests(unittest.TestCase):
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._fyi_batches(), config)
 
-            first_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
-            second_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            first_post = post_consensus(client, config, manifest, consensus)
+            second_post = post_consensus(client, config, manifest, consensus)
 
         validate_instance(first_post, "post_result.schema.json")
         validate_instance(second_post, "post_result.schema.json")
@@ -111,8 +109,8 @@ class PublishEndToEndTests(unittest.TestCase):
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, self._blocking_batches(), config)
 
-            first_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
-            second_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            first_post = post_consensus(client, config, manifest, consensus)
+            second_post = post_consensus(client, config, manifest, consensus)
 
         validate_instance(first_post, "post_result.schema.json")
         validate_instance(second_post, "post_result.schema.json")
@@ -144,17 +142,13 @@ class PublishEndToEndTests(unittest.TestCase):
                         project_id="octo-org/octo-repo",
                         merge_request_iid="17",
                     )
-                    client = FakeGitHubClient(
-                        head_sha=manifest["head_sha"], diff_text=diff_text
-                    )
+                    client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
                 else:
-                    client = FakeGitLabClient(
-                        head_sha=manifest["head_sha"], diff_text=diff_text
-                    )
+                    client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
 
                 consensus = build_consensus(manifest, batches, config)
-                first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
-                second = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+                first = post_consensus(client, config, manifest, consensus)
+                second = post_consensus(client, config, manifest, consensus)
 
                 if posting_mode == "github_reviews":
                     self.assertEqual(client.review_comment_count(), 1)
@@ -187,8 +181,8 @@ class PublishEndToEndTests(unittest.TestCase):
                 planted_id = client.add_foreign_note(planted)
                 consensus = build_consensus(manifest, self._fyi_batches(), config)
 
-                first = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
-                second = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+                first = post_consensus(client, config, manifest, consensus)
+                second = post_consensus(client, config, manifest, consensus)
 
                 # The fakes refuse to edit a note the bot did not author, so both
                 # runs succeeding also proves the planted note was left alone.
@@ -211,8 +205,8 @@ class PublishEndToEndTests(unittest.TestCase):
             consensus = build_consensus(manifest, self._blocking_batches(), config)
             validate_instance(consensus, "consensus.schema.json")
 
-            first_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
-            second_post = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            first_post = post_consensus(client, config, manifest, consensus)
+            second_post = post_consensus(client, config, manifest, consensus)
 
         validate_instance(first_post, "post_result.schema.json")
         validate_instance(second_post, "post_result.schema.json")
@@ -250,8 +244,8 @@ class PublishEndToEndTests(unittest.TestCase):
                 validate_instance(current, "consensus.schema.json")
 
                 # Historical state appears after the current artifact was built.
-                first = post_consensus(client, config, manifest, old, diff_text=diff_text)
-                updated = post_consensus(client, config, manifest, current, diff_text=diff_text)
+                first = post_consensus(client, config, manifest, old)
+                updated = post_consensus(client, config, manifest, current)
                 self.assertEqual(first["created_discussions"], 1)
                 self.assertEqual(updated["created_discussions"], 0)
                 self.assertEqual(updated["updated_discussions"], 1)
@@ -271,11 +265,14 @@ class PublishEndToEndTests(unittest.TestCase):
                     human_disposition="wontfix",
                 )
                 state["records"].append(settled)
-                write_persisted_state(client, manifest, state)
+                client.update_state_note(
+                    manifest["project_id"],
+                    manifest["merge_request_iid"],
+                    client.state_notes[0]["id"],
+                    encode_state_note(state),
+                )
                 for _ in range(2):
-                    result = post_consensus(
-                        client, config, manifest, current, diff_text=diff_text
-                    )
+                    result = post_consensus(client, config, manifest, current)
                     validate_instance(result, "post_result.schema.json")
                     self.assertEqual(result["status"], "success")
                     self.assertEqual(result["created_discussions"], 0)
@@ -295,7 +292,7 @@ class PublishEndToEndTests(unittest.TestCase):
             client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             consensus = build_consensus(manifest, batches, config)
             validate_instance(consensus, "consensus.schema.json")
-            post_result = post_consensus(client, config, manifest, consensus, diff_text=diff_text)
+            post_result = post_consensus(client, config, manifest, consensus)
             validate_instance(post_result, "post_result.schema.json")
             return client, consensus, post_result, exit_code_for_status(post_result["status"])
 
@@ -306,7 +303,7 @@ class PublishEndToEndTests(unittest.TestCase):
         config["posting"]["inline_multiline"] = False
         config["posting"]["v1_inline_sides"] = ["new"]
         config["panel"]["min_successful_reviewers_for_resolution"] = 1
-        config["state"]["retention"] = {"max_records": 200, "max_state_bytes": 50000}
+        config["state"]["retention"] = {"max_records": 200}
         manifest = load_json_file(bundle / "manifest.json")
         diff_text = (bundle / "mr.diff").read_text(encoding="utf-8")
         return validate_config(config), manifest, diff_text

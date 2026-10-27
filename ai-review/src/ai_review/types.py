@@ -1,10 +1,9 @@
 from typing import Literal, NotRequired, TypedDict
 
 # JSON helper aliases for extension points whose schemas intentionally allow any
-# object shape (for example state run_history entries).
+# object shape (for example prepared anchor metadata).
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-type JsonObject = dict[str, JsonValue]
 
 type Severity = Literal["info", "minor", "major", "blocker"]
 type Category = Literal[
@@ -28,8 +27,6 @@ type MatchPrecedence = Literal[
     "exact_issue_id",
     "source_finding_id",
     "context_hash",
-    "title_anchor",
-    "symbol_title",
 ]
 type PostStatus = Literal[
     "success",
@@ -48,7 +45,6 @@ type StateRecordStatus = Literal[
     "stale_unverified",
 ]
 type HumanDisposition = Literal["wontfix", "reopen", "resolve"]
-type RemapStatus = Literal["exact", "remapped", "missing", "ambiguous", "not_checked"]
 
 
 class LineRef(TypedDict):
@@ -170,12 +166,8 @@ class Consensus(TypedDict):
 
 
 class StateAliases(TypedDict):
-    # COMPAT-005: always written empty; removed by the next major state migration.
-    candidate_issue_signatures: list[str]
     source_finding_ids: list[str]
     context_hashes: list[str]
-    title_fingerprints: list[str]
-    symbols: list[str]
 
 
 class StateRecord(TypedDict):
@@ -190,28 +182,23 @@ class StateRecord(TypedDict):
     first_seen_sha: str
     anchor: dict[str, JsonValue]
     last_posted_body_hash: str
-    # COMPAT-005: older notes may carry "drop"; removed by the S14 state migration.
-    last_decision: Literal["surface", "fyi", "drop"]
+    last_decision: Decision
     last_final_severity: Severity
     created_by_pipeline_id: str
     updated_by_pipeline_id: str
     human_disposition: HumanDisposition | None
-    remap_status: RemapStatus
     last_matched_run_id: RunId | None
 
 
 class State(TypedDict):
-    state_schema_version: Literal[1]
+    state_schema_version: Literal[2]
     project_id: ProjectId
     merge_request_iid: MergeRequestIid
     last_head_sha: str
-    state_note_id: int | None
     written_by_pipeline_id: str
     updated_at: str
     records: list[StateRecord]
     state_hash: str
-    # COMPAT-005: read from older notes only; never written.
-    run_history: NotRequired[list[JsonObject]]
 
 
 class PostedDiscussion(TypedDict):

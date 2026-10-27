@@ -17,7 +17,7 @@ from .canonical import sha256_hex
 from .config import ReviewConfig, effective_config_binding, load_config
 from .memory import (
     empty_state,
-    newest_valid_state_from_notes,
+    load_state_from_notes,
     prior_decisions_from_state,
 )
 from .platform import ComparisonDiffPlatform, ReviewPlatformError
@@ -495,42 +495,29 @@ def _external_fork_secrets_blocked(config: ReviewConfig) -> str | None:
 
 def _load_platform_state(
     client: Any,
-    config: ReviewConfig,
     default_state: dict[str, Any],
     *,
     project_id: str,
     change_id: str,
-    platform_name: str,
+    bind_project_id: bool,
 ) -> dict[str, Any]:
-    """Load the persisted state note, or fall back to ``default_state``.
-
-    Lookup is unconditional — every valid configuration stores state — so the
-    only policy left is what a failure means: ``fail_closed_on_load_error``
-    decides whether prepare dies or starts from the supplied empty state. A
-    successful lookup that finds no valid note is not a failure and returns the
-    same default.
-    """
-    try:
-        bot_author_id = client.current_user_id()
-        if bot_author_id is None:
-            raise BundleError(
-                f"persisted state requires {platform_name} current_user lookup "
-                "to verify state-note author"
-            )
-        notes = client.list_state_notes(project_id, change_id)
-        loaded, warnings = newest_valid_state_from_notes(
-            notes,
-            checksum_required=config.state.checksum_required,
-            expected_author_id=bot_author_id,
+    """Missing initial state is empty; inaccessible or corrupt state aborts prepare."""
+    bot_author_id = client.current_user_id()
+    if bot_author_id is None:
+        raise BundleError(
+            "persisted state requires current_user lookup to verify state-note author"
         )
-        for warning in warnings:
-            print(f"ai-review prepare: {warning}")
-        return loaded if loaded is not None else default_state
-    except Exception as exc:
-        if config.state.fail_closed_on_load_error:
-            raise
-        print(f"ai-review prepare: state load failed: {exc}")
-        return default_state
+    notes = client.list_state_notes(project_id, change_id)
+    loaded, warnings = load_state_from_notes(
+        notes,
+        expected_author_id=bot_author_id,
+        project_id=project_id,
+        change_id=change_id,
+        bind_project_id=bind_project_id,
+    )
+    for warning in warnings:
+        print(f"ai-review prepare: {warning}")
+    return loaded.state if loaded is not None else default_state
 
 
 def _git_command(repo_path: Path, *args: str) -> str:
@@ -653,11 +640,10 @@ def prepare_github_bundle(
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
             client,
-            config,
             default_state,
             project_id=repo,
             change_id=pr_number,
-            platform_name="GitHub",
+            bind_project_id=False,
         )
 
     def revalidate() -> None:
@@ -723,11 +709,10 @@ def prepare_gitlab_bundle(
     def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
         return _load_platform_state(
             client,
-            config,
             default_state,
             project_id=str(project_id),
             change_id=str(mr_iid),
-            platform_name="GitLab",
+            bind_project_id=True,
         )
 
     def revalidate() -> None:

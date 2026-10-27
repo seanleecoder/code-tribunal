@@ -89,15 +89,12 @@ def cli(argv: list[str] | None = None) -> int:
         print(f"ai-review post: {exc}", file=sys.stderr)
         return POST_OPERATIONAL_FAILURE_EXIT
     client = create_runtime_platform(config, allow_dry_run_defaults=args.dry_run)
-    diff_path = Path(args.inputs) / "mr.diff"
-    diff_text = diff_path.read_text(encoding="utf-8") if diff_path.exists() else None
     result = post_consensus(
         client,
         config,
         manifest,
         consensus,
         dry_run=args.dry_run,
-        diff_text=diff_text,
     )
     # The only validation of post_result.json that now happens anywhere: the gate
     # CLI used to revalidate it on read, and nothing downstream reads it. Keep it

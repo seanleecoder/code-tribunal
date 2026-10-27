@@ -88,8 +88,8 @@ class FindMatchingRecordTests(unittest.TestCase):
 
         result = find_matching_record(_group(), {"records": [record]})
 
-        self.assertEqual(result.status, "matched")
-        self.assertEqual(result.precedence, "title_anchor")
+        self.assertEqual(result.status, "new")
+        self.assertIsNone(result.precedence)
 
     def test_p5_symbol_category_title(self) -> None:
         group = _group()
@@ -101,8 +101,8 @@ class FindMatchingRecordTests(unittest.TestCase):
 
         result = find_matching_record(group, {"records": [record]})
 
-        self.assertEqual(result.status, "matched")
-        self.assertEqual(result.precedence, "symbol_title")
+        self.assertEqual(result.status, "new")
+        self.assertIsNone(result.precedence)
 
     def test_no_match(self) -> None:
         record = _record()

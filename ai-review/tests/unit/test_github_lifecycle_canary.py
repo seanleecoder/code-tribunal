@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import tempfile
 import time
@@ -292,9 +291,7 @@ class WontfixStepTests(unittest.TestCase):
 
     def test_missing_corrupt_or_ambiguous_state_fails(self) -> None:
         corrupt = _state_note()
-        corrupt["body"] = re.sub(
-            r"state_hash=[a-f0-9]{64}", "state_hash=" + "0" * 64, str(corrupt["body"])
-        )
+        corrupt["body"] = "<!-- ai-review-state:v2 corrupt -->"
         for pages in ([[]], [[corrupt]], [[_state_note(), _state_note()]]):
             with self.subTest(pages=pages):
                 self.json.side_effect = [pages]

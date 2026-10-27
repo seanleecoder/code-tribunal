@@ -5,9 +5,8 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from ai_review.memory import encode_state_note
+from ai_review.memory import empty_state, encode_state_note
 from ai_review.platform.github import (
-    STATE_MARKER,
     GitHubReviewPlatform,
     GitHubReviewPlatformError,
 )
@@ -35,25 +34,23 @@ class Session:
             return Response(200, {"id": 41898282, "login": "github-actions[bot]"})
         if url.endswith("/issues/7/comments"):
             state = encode_state_note(
-                {
-                    "state_schema_version": 1,
-                    "project_id": "octo/repo",
-                    "merge_request_iid": "7",
-                    "last_head_sha": "h" * 40,
-                    "records": [],
-                }
+                empty_state(
+                    project_id="octo/repo",
+                    merge_request_iid="7",
+                    head_sha="h" * 40,
+                )
             )
             return Response(
                 200,
                 [
                     {
                         "id": 1,
-                        "body": f"{state}\n\n{STATE_MARKER}",
+                        "body": state,
                         "user": {"id": 42, "login": "bot"},
                     },
                     {
                         "id": 2,
-                        "body": f"{state}\n\n{STATE_MARKER}",
+                        "body": state,
                         "user": {"id": 99, "login": "alice"},
                     },
                     {"id": 3, "body": "summary", "user": {"id": 42, "login": "bot"}},
@@ -119,13 +116,13 @@ class MissingBotSession:
         return Response(404, {"message": "Not Found"})
 
 
-def test_state_notes_are_author_verified_and_normalized() -> None:
+def test_state_note_transport_preserves_authorship_for_strict_loading() -> None:
     session = Session()
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
 
     notes = platform.list_state_notes("octo/repo", 7)
 
-    assert len(notes) == 1
+    assert len(notes) == 3
     assert notes[0]["id"] == 1
     assert notes[0]["author"]["id"] == 42
     assert notes[0]["author"]["username"] == "bot"
@@ -349,7 +346,11 @@ def test_missing_configured_bot_has_explicit_error() -> None:
 
 
 def test_list_threads_groups_replies() -> None:
-    class GroupingSession:
+    class GroupingSession(GraphQLSession):
+        def __init__(self) -> None:
+            super().__init__(thread_node_ids={1: "node-1", 3: "node-3"})
+            self.thread_resolutions[1] = True
+
         def request(self, method: str, url: str, **kwargs: Any) -> Response:
             if url.endswith("/pulls/7/comments"):
                 return Response(
@@ -386,9 +387,10 @@ def test_list_threads_groups_replies() -> None:
                 )
             if url.endswith("/issues/7/comments"):
                 return Response(200, [])
-            return Response(404, None)
+            return super().request(method, url, **kwargs)
 
-    platform = GitHubReviewPlatform("https://api.github.test", "token", session=GroupingSession())
+    session = GroupingSession()
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
     threads = platform.list_threads("octo/repo", 7)
 
     assert len(threads) == 3
@@ -396,12 +398,24 @@ def test_list_threads_groups_replies() -> None:
     t1 = next(t for t in threads if t["notes"][0]["id"] == 1)
     assert [note["id"] for note in t1["notes"]] == [1, 5, 2]
     assert t1["notes"][1]["author"]["association"] == "OWNER"
+    assert t1["resolved"] is True
+    assert all(note["resolved"] is True for note in t1["notes"])
 
     t2 = next(t for t in threads if t["notes"][0]["id"] == 3)
     assert [note["id"] for note in t2["notes"]] == [3, 6]
+    assert t2["resolved"] is False
+    assert all(note["resolved"] is False for note in t2["notes"])
 
     t3 = next(t for t in threads if t["notes"][0]["id"] == 4)
     assert len(t3["notes"]) == 1
+
+    # Listing must refresh resolution even when mutation lookup IDs are cached.
+    session.thread_resolutions[1] = False
+    assert (
+        next(t for t in platform.list_threads("octo/repo", 7) if t["id"] == "1")["resolved"]
+        is False
+    )
+    assert "isResolved" in session.calls[0][2]["json"]["query"]
 
 
 class GraphQLSession:
@@ -423,6 +437,7 @@ class GraphQLSession:
             if thread_node_ids is not None
             else ({123: "node-1"} if thread_found else {})
         )
+        self.thread_resolutions: dict[int, bool] = {}
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def request(self, method: str, url: str, **kwargs: Any) -> Response:
@@ -433,7 +448,11 @@ class GraphQLSession:
                 if self.lookup_response is not None:
                     return Response(200, self.lookup_response)
                 nodes = [
-                    {"id": node_id, "comments": {"nodes": [{"databaseId": database_id}]}}
+                    {
+                        "id": node_id,
+                        "isResolved": self.thread_resolutions.get(database_id, False),
+                        "comments": {"nodes": [{"fullDatabaseId": str(database_id)}]},
+                    }
                     for database_id, node_id in self.thread_node_ids.items()
                 ]
                 return Response(
@@ -474,6 +493,63 @@ class GraphQLSession:
                     },
                 )
         return Response(404, None)
+
+
+@pytest.mark.parametrize("resolution", [None, "false", 0])
+def test_thread_lookup_rejects_unverified_resolution(resolution: Any) -> None:
+    session = GraphQLSession(
+        lookup_response={
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {"hasNextPage": False},
+                            "nodes": [
+                                {
+                                    "id": "node-1",
+                                    "isResolved": resolution,
+                                    "comments": {"nodes": [{"fullDatabaseId": "123"}]},
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with pytest.raises(GitHubReviewPlatformError, match="no resolution state"):
+        platform.resolve_thread("octo/repo", 7, "123")
+
+
+def test_list_threads_rejects_a_root_missing_from_graphql() -> None:
+    platform = GitHubReviewPlatform(
+        "https://api.github.test", "token", session=GraphQLSession(thread_found=False)
+    )
+    with (
+        mock.patch.object(platform, "_get_all_pages", side_effect=[[{"id": 123}], []]),
+        pytest.raises(GitHubReviewPlatformError, match="not found via GraphQL"),
+    ):
+        platform.list_threads("octo/repo", 7)
+
+
+@pytest.mark.parametrize("comment_id", [1 << 31, (1 << 63) - 1])
+def test_large_comment_ids_can_be_listed_and_resolved(comment_id: int) -> None:
+    session = GraphQLSession(thread_node_ids={comment_id: "node-large"})
+    session.thread_resolutions[comment_id] = True
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)
+    with mock.patch.object(
+        platform, "_get_all_pages", side_effect=[[{"id": comment_id, "body": "Human review"}], []]
+    ):
+        threads = platform.list_threads("octo/repo", 7)
+    assert threads[0]["id"] == str(comment_id)
+    assert threads[0]["resolved"] is True
+    assert threads[0]["notes"][0]["id"] == comment_id
+    assert "fullDatabaseId" in session.calls[0][2]["json"]["query"]
+
+    platform.resolve_thread("octo/repo", 7, str(comment_id), False)
+    assert len(session.calls) == 2
+    assert session.calls[-1][2]["json"]["variables"]["threadId"] == "node-large"
 
 
 def test_resolve_thread_uses_graphql_mutation() -> None:
@@ -530,9 +606,7 @@ def test_resolve_thread_refreshes_cached_map_once_on_miss() -> None:
 
 def test_resolve_thread_uses_ghes_graphql_endpoint() -> None:
     session = GraphQLSession()
-    platform = GitHubReviewPlatform(
-        "https://github.example/api/v3", "token", session=session
-    )
+    platform = GitHubReviewPlatform("https://github.example/api/v3", "token", session=session)
 
     platform.resolve_thread("octo/repo", 7, "123")
 
@@ -540,9 +614,7 @@ def test_resolve_thread_uses_ghes_graphql_endpoint() -> None:
 
 
 def test_resolve_thread_normalizes_invalid_repository_and_pr() -> None:
-    platform = GitHubReviewPlatform(
-        "https://api.github.test", "token", session=GraphQLSession()
-    )
+    platform = GitHubReviewPlatform("https://api.github.test", "token", session=GraphQLSession())
 
     for repository, change_id in (("invalid", 7), ("octo/repo", "not-a-number")):
         try:
@@ -698,9 +770,7 @@ def test_resolve_thread_keeps_http_403_generic_with_dedicated_token() -> None:
 def test_resolve_thread_rejects_unexpected_mutation_state() -> None:
     session = GraphQLSession(
         mutation_response={
-            "data": {
-                "resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}
-            }
+            "data": {"resolveReviewThread": {"thread": {"id": "node-1", "isResolved": False}}}
         }
     )
     platform = GitHubReviewPlatform("https://api.github.test", "token", session=session)

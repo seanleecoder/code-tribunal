@@ -48,11 +48,9 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
-- **Done, unreleased for the next major:** N11 (`consensus.v3`).
+- **Done, unreleased for the next major:** N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary).
 - **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
-  SPEC-67), S12 (the test-only TypedDicts, through N16), S14 (the legacy state
-  decoder, deleted on
-  2026-10-18), S18, S19.
+  SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
     canaries every release and the hostile canary when the trust boundary changes
@@ -67,7 +65,7 @@ recommendation's disposition.
   below.
 - **Not on the roadmap:** X01.
 
-## Maintainer decisions (2026-10-13 to 2026-10-19)
+## Maintainer decisions (2026-10-13 to 2026-10-26)
 
 | Question | Decision | Consequence |
 |---|---|---|
@@ -115,6 +113,10 @@ recommendation's disposition.
 | N18 validation (2026-10-19) | `lifecycle,hostile` on the 2.1.0 candidate after each merge | Neither campaign spends model tokens. The step names and counts are compared with run `39315351495`. The panel is first exercised by the next release's canary, which is also verified locally against `check_release`. |
 | N18 polling retries (2026-10-19) | One GitLab polling helper with transient-error tolerance | The lifecycle and hostile loops gain the panel's retries in the deduplication pull request. Publication accepts only a first-attempt run, so a transient API error no longer costs a fresh dispatch. |
 | N18 estimate (2026-10-19) | About −350 lines, not −950 | The shared layer already exists in `candidate_canary_common.py`: the move nets about −60 and the deduplication about −280. N18 does not trim the hostile campaign; N02 rewrites its composition in the next major release. |
+| S14 `remap_status` (2026-10-26) | Drop it from state v2 | N14 deleted remapping and nothing read the field. v2 is unreleased, so no v3 is needed; the offline migration drops it. |
+| S14 ledger budget (2026-10-26) | Remove `state.retention.max_state_bytes` | The platform comment limit, checked during planning with reserved thread IDs, is the only size bound. `max_records` stays. |
+| S14 change binding (2026-10-26) | Keep the GitHub/GitLab asymmetry; callers pass `bind_project_id` | `memory` no longer branches on posting-mode names. Behavior is unchanged. |
+| Missing-ledger check in prepare (2026-10-26) | A follow-up spec, not part of S14 | Post aborts when bot history has no ledger, but prepare runs the model stages first. Failing earlier needs a thread listing in prepare. |
 
 ## Recommended order
 
@@ -153,8 +155,10 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
     `summary.drop_count`, and requires `run_health`. Posting alone matches the
     latest state and preserves thread identity; prepare no longer writes the
     state-alias artifact. COMPAT-003, COMPAT-006 and COMPAT-007 are removed.
-13. One S14 state migration: state moves into the summary comment (N04), and the
-    anchor remap uses context hashes (N14).
+13. Done, unreleased: S14 state v2 moves state into the summary (N04), uses
+    current group anchors and context aliases (N14), and provides an explicit
+    offline v1 migration. COMPAT-005 is removed; COMPAT-009 tracks the offline
+    converter. Corrupt or inaccessible state fails closed.
 14. Consumer-visible changes:
     - the GitHub reusable workflow (N03);
     - GitLab child mode removed (N02), including the child-mode checks in

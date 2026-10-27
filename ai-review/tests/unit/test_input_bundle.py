@@ -12,7 +12,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
-from ai_review.config import ReviewConfig, load_config
+from ai_review.config import load_config
 from ai_review.input_bundle import (
     BundleError,
     _copy_regular_file_nofollow,
@@ -119,9 +119,7 @@ class InputBundleLimitTests(unittest.TestCase):
             def current_user(self) -> dict[str, object]:
                 raise RuntimeError("user lookup failed")
 
-        config = runtime_config(
-            lambda config: config["state"].update({"fail_closed_on_load_error": True})
-        )
+        config = runtime_config()
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
@@ -191,6 +189,12 @@ class InputBundleLimitTests(unittest.TestCase):
             def fetch_diff(self, project_id: str, change_id: str) -> str:
                 return "diff --git a/f.py b/f.py\n"
 
+            def current_user_id(self) -> int:
+                return 10
+
+            def list_state_notes(self, project_id: str, change_id: str) -> list:
+                return []
+
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
@@ -214,7 +218,7 @@ class InputBundleLimitTests(unittest.TestCase):
 
 
 class PrepareStateLoadTests(unittest.TestCase):
-    """`_load_platform_state` always looks; only failure policy is configurable."""
+    """`_load_platform_state` always looks; missing state is empty, load failures abort."""
 
     def _default_state(self) -> dict[str, object]:
         return empty_state(
@@ -238,14 +242,13 @@ class PrepareStateLoadTests(unittest.TestCase):
                 raise self.notes
             return self.notes
 
-    def _load(self, client: object, config: ReviewConfig) -> dict[str, object]:
+    def _load(self, client: object) -> dict[str, object]:
         return _load_platform_state(
             client,
-            config,
             self._default_state(),
             project_id="1",
             change_id="2",
-            platform_name="GitLab",
+            bind_project_id=True,
         )
 
     def test_lookup_runs_and_a_valid_note_wins(self) -> None:
@@ -254,7 +257,7 @@ class PrepareStateLoadTests(unittest.TestCase):
         )
         client = self._Client([{"id": 1, "author": {"id": 10}, "body": encode_state_note(state)}])
 
-        loaded = self._load(client, runtime_config())
+        loaded = self._load(client)
 
         self.assertEqual(client.list_calls, 1)
         self.assertEqual(loaded["last_head_sha"], "stored")
@@ -262,34 +265,15 @@ class PrepareStateLoadTests(unittest.TestCase):
     def test_successful_lookup_without_a_valid_note_returns_the_default(self) -> None:
         client = self._Client([])
 
-        loaded = self._load(client, runtime_config())
+        loaded = self._load(client)
 
         self.assertEqual(client.list_calls, 1)
         self.assertEqual(loaded, self._default_state())
 
-    def test_load_error_warns_and_returns_the_default_when_open(self) -> None:
+    def test_load_error_always_propagates(self) -> None:
         client = self._Client(RuntimeError("gitlab is down"))
-
-        loaded = self._load(
-            client,
-            runtime_config(
-                lambda config: config["state"].update({"fail_closed_on_load_error": False})
-            ),
-        )
-
-        self.assertEqual(client.list_calls, 1)
-        self.assertEqual(loaded, self._default_state())
-
-    def test_load_error_propagates_when_fail_closed(self) -> None:
-        client = self._Client(RuntimeError("gitlab is down"))
-
         with self.assertRaisesRegex(RuntimeError, "gitlab is down"):
-            self._load(
-                client,
-                runtime_config(
-                    lambda config: config["state"].update({"fail_closed_on_load_error": True})
-                ),
-            )
+            self._load(client)
 
 
 class BundlePublicationTests(unittest.TestCase):
@@ -451,7 +435,7 @@ class GitHubPrepareTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
-                side_effect=lambda _client, _config, state, **_kwargs: state,
+                side_effect=lambda _client, state, **_kwargs: state,
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
@@ -697,7 +681,7 @@ class GitHubPrepareTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
-                side_effect=lambda _client, _config, state, **_kwargs: state,
+                side_effect=lambda _client, state, **_kwargs: state,
             ),
             mock.patch("ai_review.input_bundle.shutil.copytree"),
             mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
@@ -726,9 +710,7 @@ class GitHubPrepareTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
             self.assertRaisesRegex(SystemExit, "comparison diff support"),
         ):
-            prepare_github_bundle(
-                runtime_config(), Path(tmpdir) / "inputs"
-            )
+            prepare_github_bundle(runtime_config(), Path(tmpdir) / "inputs")
 
     def test_prepare_uses_real_checkout_and_immutable_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -750,12 +732,10 @@ class GitHubPrepareTests(unittest.TestCase):
                     clear=True,
                 ),
                 mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo),
-                mock.patch(
-                    "ai_review.input_bundle.create_runtime_platform", return_value=client
-                ),
+                mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
-                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                    side_effect=lambda _client, state, **_kwargs: state,
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot"),
@@ -765,9 +745,7 @@ class GitHubPrepareTests(unittest.TestCase):
             manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["selected_head_sha"], selected)
             self.assertEqual(manifest["checkout_head_sha"], selected)
-            client.fetch_comparison_diff.assert_called_once_with(
-                "octo/repo", "0" * 40, selected
-            )
+            client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, selected)
 
     def test_prepare_rejects_real_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -855,7 +833,7 @@ class GitHubPrepareTests(unittest.TestCase):
                 ),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
-                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                    side_effect=lambda _client, state, **_kwargs: state,
                 ),
                 self.assertRaisesRegex(BundleError, "uncommitted or ignored input"),
             ):
@@ -1285,7 +1263,15 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
-                    side_effect=lambda _client, _config, state, **_kwargs: state,
+                    side_effect=lambda _client, state, **_kwargs: state,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, state, **_kwargs: state,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, state, **_kwargs: state,
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,
@@ -1312,6 +1298,10 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                 mock.patch(
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=gitlab_client,
+                ),
+                mock.patch(
+                    "ai_review.input_bundle._load_platform_state",
+                    side_effect=lambda _client, state, **_kwargs: state,
                 ),
                 mock.patch("ai_review.input_bundle.shutil.copytree"),
                 mock.patch("ai_review.input_bundle.copy_repo_snapshot") as snap,

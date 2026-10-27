@@ -118,9 +118,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         lines += ctx_above + [marker] + ctx_below
         return "\n".join(lines) + "\n"
 
-    def _marker_bundle(
-        self, tmp: Path, name: str, diff_text: str
-    ) -> tuple[Path, dict[str, Any]]:
+    def _marker_bundle(self, tmp: Path, name: str, diff_text: str) -> tuple[Path, dict[str, Any]]:
         """Build a full input bundle from `diff_text` via prepare_local_bundle so the
         manifest carries a run_id consistent with the served diff — modelling a
         distinct revision rather than reusing one manifest with a
@@ -163,7 +161,8 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         pooled = build_pooled_findings(manifest, batches, config, "opencode")
         source_id = sorted(self._source_ids(batches[0]))[0]
         target_id = next(
-            short_id for short_id, target in pooled["source_finding_ids"].items()
+            short_id
+            for short_id, target in pooled["source_finding_ids"].items()
             if target == source_id
         )
         noise = finalize_critique_batch(
@@ -192,8 +191,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         return noise
 
     def test_blocking_alt_updates_same_discussion_body_in_place(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CONSENSUS_ENV
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
         ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
@@ -213,12 +213,12 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             )
 
             c_create = build_consensus(manifest, blocking, config)
-            p_create = post_consensus(client, config, manifest, c_create, diff_text=diff_text)
+            p_create = post_consensus(client, config, manifest, c_create)
             body_after_create = self._inline_body(client)
             c_unchanged = build_consensus(manifest, blocking, config)
-            p_unchanged = post_consensus(client, config, manifest, c_unchanged, diff_text=diff_text)
+            p_unchanged = post_consensus(client, config, manifest, c_unchanged)
             c_body = build_consensus(manifest, blocking_alt, config)
-            p_body = post_consensus(client, config, manifest, c_body, diff_text=diff_text)
+            p_body = post_consensus(client, config, manifest, c_body)
             body_after_change = self._inline_body(client)
 
         for result in (p_create, p_unchanged, p_body):
@@ -263,8 +263,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # visible placement as requiring separate live validation. That visible
         # placement remains a documented, live-optional confirmation, not something
         # this test asserts.
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CONSENSUS_ENV
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
         ):
             tmpp = Path(tmp)
             diff1 = self._marker_diff(unrelated_lines=0)
@@ -299,12 +300,12 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
             # revision 1
             c1 = build_consensus(manifest1, b1, config)
-            p1 = post_consensus(client, config, manifest1, c1, diff_text=diff1)
+            p1 = post_consensus(client, config, manifest1, c1)
             # revision 2: the branch head advanced and the served diff moved the marker
             client.head_sha = head2
             client.diff_text = diff2
             c2 = build_consensus(manifest2, b2, config)
-            p2 = post_consensus(client, config, manifest2, c2, diff_text=diff2)
+            p2 = post_consensus(client, config, manifest2, c2)
             record = self._sole_state_record(client)
 
         validate_instance(p1, "post_result.schema.json")
@@ -315,25 +316,21 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # blocking_alt's body change makes rev 2 an observable in-place update
         self.assertEqual(p2["updated_discussions"], 1)
         self.assertEqual(client.review_comment_count(), 1)
-        # the persisted anchor actually followed the marker to revision 2's line,
-        # and the move was recorded as a deterministic remap (not an exact match)
-        self.assertEqual(record["remap_status"], "remapped")
+        # the persisted anchor actually followed the marker to revision 2's line
         self.assertEqual(record["anchor"]["start"]["new_line"], marker_line_2)
         self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
 
     def test_majority_noise_on_a_rerun_keeps_the_thread_open(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CRITIQUE_ENV
-        ):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", self.CRITIQUE_ENV):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             batches = self._batches("blocking", bundle, manifest, config)[:2]
             noise = self._noise_critique(config, manifest, batches)
 
             c_surface = build_consensus(manifest, batches, config)
-            post_consensus(client, config, manifest, c_surface, diff_text=diff_text)
+            post_consensus(client, config, manifest, c_surface)
             c_noise = build_consensus(manifest, batches, config, critique_batches=[noise])
-            p_noise = post_consensus(client, config, manifest, c_noise, diff_text=diff_text)
+            p_noise = post_consensus(client, config, manifest, c_noise)
             record = self._sole_state_record(client)
             summaries = [str(note["body"]) for note in client.summary_notes]
 
@@ -349,9 +346,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     def test_noise_demoted_body_change_still_updates_the_thread_when_it_surfaces(self) -> None:
         # Surface A, then B demoted by noise, then B surfaced. The demoted run
         # leaves the thread showing A, so the surfaced run must update it.
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            "os.environ", self.CRITIQUE_ENV
-        ):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", self.CRITIQUE_ENV):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             blocking = self._batches("blocking", bundle, manifest, config)[:2]
@@ -359,14 +354,14 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             noise = self._noise_critique(config, manifest, blocking_alt)
 
             c_a = build_consensus(manifest, blocking, config)
-            post_consensus(client, config, manifest, c_a, diff_text=diff_text)
+            post_consensus(client, config, manifest, c_a)
             body_a = self._inline_body(client)
             c_noise = build_consensus(manifest, blocking_alt, config, critique_batches=[noise])
-            post_consensus(client, config, manifest, c_noise, diff_text=diff_text)
+            post_consensus(client, config, manifest, c_noise)
             body_after_noise = self._inline_body(client)
             hash_after_noise = self._sole_state_record(client)["last_posted_body_hash"]
             c_b = build_consensus(manifest, blocking_alt, config)
-            p_b = post_consensus(client, config, manifest, c_b, diff_text=diff_text)
+            p_b = post_consensus(client, config, manifest, c_b)
             body_b = self._inline_body(client)
             record = self._sole_state_record(client)
 

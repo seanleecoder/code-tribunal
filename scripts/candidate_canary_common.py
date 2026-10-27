@@ -275,13 +275,12 @@ def saved_wontfix(
     ``LifecycleFailure`` unless exactly one state note decodes, validates, belongs to
     this change, and records a human wontfix disposition for ``root_note_id``.
     """
-    candidates, _, _ = state_note_candidates(notes)
+    candidates, _ = state_note_candidates(notes)
     if len(candidates) != 1:
         raise LifecycleFailure("expected one bot-owned state note")
     note = candidates[0]
     try:
         state = decode_state_note_body(note["body"])
-        validate_instance(state, "state.schema.json")
     except ValueError:
         raise LifecycleFailure("saved state note failed checksum or schema validation") from None
     if str(state["project_id"]) != project_id or str(state["merge_request_iid"]) != change_id:

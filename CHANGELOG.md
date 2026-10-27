@@ -9,6 +9,27 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: state v2 lives inside the bot's summary
+  comment (S14/N04). An explicit offline converter, `scripts/migrate_state_v2.py`,
+  preserves thread IDs and human dispositions from exported v1 notes; pause
+  reviews, apply its emitted update, and remove the obsolete state note before
+  switching images. Runtime rejects v1, corrupt, duplicate and inaccessible
+  state. The wrapper checksum, self-referential `state_note_id`, unread history,
+  candidate/title/symbol aliases, unread `remap_status` and legacy `drop` state
+  decisions are removed. Checksum, load-error, marker-recovery, per-status
+  retention and `max_state_bytes` controls are removed (the platform comment
+  limit bounds the ledger); active records and human dispositions are preserved, with a fixed
+  tail of five automatically resolved records. Matching uses issue IDs, source
+  finding IDs and path/category/context hashes. Posting uses each current
+  group's prepared anchor instead of fetching another diff and remapping old
+  coordinates (N14). Same-revision bot-thread reconciliation recovers from
+  interrupted publication for current finding/command identities, or all eligible
+  open roots when no ledger exists. GitHub checks thread resolution before reuse
+  so resurfaced compacted findings stay visible. Compacted, absent roots are not
+  re-imported. State is validated before writing, supported
+  returned thread-ID sizes are reserved before publication, and GitHub repository
+  renames/transfers refresh the stored slug on load. See the state migration and
+  missing-ledger repair in `docs/operations.md`.
 - Breaking, for the next major release: reviewers author compact `location`
   ranges and finding content; trusted finalization derives paths, line codes,
   context hashes, fingerprints and finding IDs from the prepared diff (S05).
@@ -20,7 +41,6 @@ versioning.
   findings have separate counts in the existing run-health report.
   `finding_batch.v2`, `critique_batch.v2` and `pooled_findings.v2` replace v1;
   generate fresh artifacts with one image pair instead of replaying old ones.
-  Configuration and persisted state retain their current formats.
 - Breaking, for the next major release: consensus uses only this run's evidence
   (N11). `consensus.v3` assigns signature-derived issue IDs and removes
   `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
@@ -30,7 +50,7 @@ versioning.
   human commands. Ambiguous or already-claimed matches use summary fallback
   without changing the reducer's decision or automatically resolving candidate
   threads. Re-run from prepare with one image pair; v2 consensus artifacts are
-  rejected. Persisted state remains version 1.
+  rejected.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out

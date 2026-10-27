@@ -8,6 +8,7 @@ from pathlib import Path
 import ai_review.notes as notes_module
 import ai_review.run_health as run_health_module
 import ai_review.summary_render as summary_render_module
+from ai_review.memory import empty_state
 from ai_review.render import platform_comment_limit
 from ai_review.summary_render import (
     SummarySectionDescriptor,
@@ -28,7 +29,13 @@ class SummaryRenderTests(PostCase):
         group["body"] = "First line\n \nSecond line"
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
+            "run",
+            full_run_health(),
+            [],
+            [group],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="gitlab_discussions",
         )
 
         self.assertIn("- **MAJOR** correctness", body)
@@ -41,7 +48,13 @@ class SummaryRenderTests(PostCase):
 
         group["body"] = "First line\n\nSecond line"
         empty_body, _empty_body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
+            "run",
+            full_run_health(),
+            [],
+            [group],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="gitlab_discussions",
         )
         empty_lines = empty_body.splitlines()
         empty_body_start = empty_lines.index("  Body:")
@@ -60,14 +73,20 @@ class SummaryRenderTests(PostCase):
         group["body"] = "- body\n> quote\n<!-- not a marker -->"
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
+            "run",
+            full_run_health(),
+            [],
+            [group],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="gitlab_discussions",
         )
 
         self.assertIn("`src/# > $file$.py:2`", body)
         self.assertIn("``# title `with` math $x$``", body)
         self.assertIn("  Body:\n  `- body`\\\n  `> quote`\\\n", body)
         self.assertIn("  `< !-- not a marker -- >`", body)
-        self.assertEqual(body.count("<!--"), 1)
+        self.assertEqual(body.count("<!--"), 2)
 
     def _demoted_group(self) -> dict:
         group = self._consensus()["groups"][0]
@@ -81,7 +100,13 @@ class SummaryRenderTests(PostCase):
 
     def _header(self, group: dict) -> str:
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [], [group], 50, posting_mode="gitlab_discussions"
+            "run",
+            full_run_health(),
+            [],
+            [group],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="gitlab_discussions",
         )
         return next(line for line in body.splitlines() if line.startswith("- **"))
 
@@ -124,7 +149,13 @@ class SummaryRenderTests(PostCase):
         fyi.update(decision="fyi", issue_id="c" * 64, contributing_reviewers=["`**x**`"])
 
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [fallback], [fyi], 50, posting_mode="gitlab_discussions"
+            "run",
+            full_run_health(),
+            [fallback],
+            [fyi],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="gitlab_discussions",
         )
 
         headers = [line for line in body.splitlines() if line.startswith("- **")]
@@ -201,6 +232,7 @@ class SummaryRenderTests(PostCase):
             [],
             [first, second],
             50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
         github_repeat, github_repeat_hash = summary_render_module.render_summary_body(
@@ -209,6 +241,7 @@ class SummaryRenderTests(PostCase):
             [],
             [first, second],
             50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
         gitlab_body, _gitlab_hash = summary_render_module.render_summary_body(
@@ -217,6 +250,7 @@ class SummaryRenderTests(PostCase):
             [],
             [first, second],
             50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="gitlab_discussions",
         )
 
@@ -243,6 +277,7 @@ class SummaryRenderTests(PostCase):
             [first, second],
             [],
             50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
 
@@ -266,6 +301,7 @@ class SummaryRenderTests(PostCase):
             [],
             groups,
             4,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
 
@@ -284,6 +320,7 @@ class SummaryRenderTests(PostCase):
             [],
             [group],
             50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
 
@@ -308,6 +345,7 @@ class SummaryRenderTests(PostCase):
             [fallback],
             fyi_groups,
             2,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
             posting_mode="github_reviews",
         )
 
@@ -431,10 +469,20 @@ class RunHealthRenderTests(PostCase):
         section = self._section(
             _health(
                 "degraded",
-                _job("claude", raw_finding_count=18, accepted_finding_count=16,
-                     dropped_finding_count=2, duration_ms=724_000),
-                _job("codex", raw_finding_count=23, accepted_finding_count=21,
-                     dropped_finding_count=2, duration_ms=521_000),
+                _job(
+                    "claude",
+                    raw_finding_count=18,
+                    accepted_finding_count=16,
+                    dropped_finding_count=2,
+                    duration_ms=724_000,
+                ),
+                _job(
+                    "codex",
+                    raw_finding_count=23,
+                    accepted_finding_count=21,
+                    dropped_finding_count=2,
+                    duration_ms=521_000,
+                ),
                 _job("opencode", outcome="timeout", duration_ms=1_795_012),
                 _job("claude", "critique", duration_ms=242_000),
                 _job("codex", "critique", duration_ms=370_000),
@@ -513,13 +561,17 @@ class RunHealthRenderTests(PostCase):
 
     def test_full_run_without_findings_is_health_only(self) -> None:
         body, _body_hash = summary_render_module.render_summary_body(
-            "run", full_run_health(), [], [], 50, posting_mode="github_reviews"
+            "run",
+            full_run_health(),
+            [],
+            [],
+            50,
+            state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+            posting_mode="github_reviews",
         )
 
-        content = body.rsplit("\n\n<!--", 1)[0]
-        self.assertEqual(
-            content, "**AI review summary**\n\n" + self._section(full_run_health())
-        )
+        content = body.split("\n\n<!-- ai-review-state:", 1)[0]
+        self.assertEqual(content, "**AI review summary**\n\n" + self._section(full_run_health()))
 
     def test_health_section_survives_truncation_at_both_platform_limits(self) -> None:
         run_health = _health(
@@ -542,7 +594,13 @@ class RunHealthRenderTests(PostCase):
                     groups.append(group)
 
                 body, _body_hash = summary_render_module.render_summary_body(
-                    "run", run_health, groups, [], 50, posting_mode=posting_mode
+                    "run",
+                    run_health,
+                    groups,
+                    [],
+                    50,
+                    state=empty_state(project_id="1", merge_request_iid="2", head_sha="head"),
+                    posting_mode=posting_mode,
                 )
 
                 self.assertLessEqual(len(body), limit)

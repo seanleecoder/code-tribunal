@@ -195,19 +195,11 @@ class PostingConfig:
 
 @dataclass(frozen=True)
 class StateRetention:
-    keep_open: bool = True
-    keep_wontfix: bool = True
-    keep_resolved_records: int = 5
-    keep_stale_records: int = 2
     max_records: int = 200
-    max_state_bytes: int = 50000
 
 
 @dataclass(frozen=True)
 class StateConfig:
-    recover_from_discussion_markers: bool = True
-    checksum_required: bool = True
-    fail_closed_on_load_error: bool = False
     retention: StateRetention = field(default_factory=StateRetention)
 
 
@@ -568,10 +560,6 @@ def _validate_state(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(retention, dict):
         raise ConfigError("state.retention must be a mapping")
     _reject_unknown_keys(retention, STATE_RETENTION_KEYS, "state.retention")
-    if "fail_closed_on_load_error" in state and not isinstance(
-        state["fail_closed_on_load_error"], bool
-    ):
-        raise ConfigError("state.fail_closed_on_load_error must be a boolean")
     return state
 
 

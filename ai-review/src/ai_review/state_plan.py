@@ -3,24 +3,27 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from functools import cache
+from typing import Any, cast, get_args
 
-from .anchors import title_fingerprint
+from .canonical import canonical_json_text
 from .config import ReviewConfig, StateRetention
 from .memory import (
     compact_state,
     find_matching_record,
+    is_auto_resolved,
     normalize_state,
     normalize_state_record,
     ordered_unique,
     state_overflow_reason,
-    title_aliases,
 )
 from .notes import ExistingReviewDiscussion
-from .schema import now_iso
+from .schema import load_schema, now_iso
+from .summary_render import render_summary_body
 from .types import (
+    Category,
     Consensus,
     FindingGroup,
     State,
@@ -46,6 +49,11 @@ class InlinePlan:
     def ambiguous(self) -> bool:
         """Planning leaves ``record`` unset only for a group it cannot claim."""
         return self.record is None
+
+    @property
+    def settled(self) -> bool:
+        """A claimed resolved or wontfix finding posts no inline thread."""
+        return self.record is not None and self.record["status"] in {"wontfix", "resolved"}
 
 
 @dataclass
@@ -87,7 +95,6 @@ def _record_for_group(
     root_note_id: int | None = None,
     status: str = "open",
     human_disposition: str | None = None,
-    remap_status: str = "exact",
 ) -> dict[str, Any]:
     # ``last_posted_body_hash`` is deliberately not set here: ``**previous``
     # carries it and only posting, which knows what a thread shows, writes it.
@@ -106,11 +113,6 @@ def _record_for_group(
         "context_hashes": _recent_aliases(
             match_keys.get("context_hashes"), aliases.get("context_hashes")
         ),
-        "title_fingerprints": _recent_aliases(
-            title_aliases(title, match_keys.get("title_fingerprints")),
-            aliases.get("title_fingerprints"),
-        ),
-        "symbols": _recent_aliases(match_keys.get("symbols"), aliases.get("symbols")),
     }
     return normalize_state_record(
         {
@@ -135,7 +137,6 @@ def _record_for_group(
             ),
             "updated_by_pipeline_id": pipeline_id,
             "human_disposition": human_disposition,
-            "remap_status": remap_status,
             "last_matched_run_id": manifest.get("run_id"),
         },
         manifest=manifest,
@@ -190,41 +191,41 @@ def _anchor_from_position(position: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def open_at_head(discussion: ExistingReviewDiscussion, head_sha: str) -> bool:
+    """Whether marker recovery may adopt this thread at ``head_sha``."""
+    return (
+        not discussion.resolved
+        and isinstance(discussion.position, dict)
+        and discussion.position.get("head_sha") == head_sha
+    )
+
+
 def state_from_existing_discussions(
     existing_discussions: list[ExistingReviewDiscussion],
     *,
+    current_head_sha: str,
     exclude_discussion_ids: set[Any] | None = None,
-    current_head_sha: str | None = None,
     expected_author_id: int | None = None,
 ) -> dict[str, Any]:
     excluded = exclude_discussion_ids or set()
+    categories = get_args(Category.__value__)
     records: list[dict[str, Any]] = []
     for discussion in existing_discussions:
-        if discussion.resolved or discussion.discussion_id in excluded:
+        if not open_at_head(discussion, current_head_sha) or discussion.discussion_id in excluded:
             continue
         if expected_author_id is not None and discussion.author_id != expected_author_id:
             continue
         if discussion.discussion_id is None or discussion.root_note_id is None:
             continue
-        if (
-            current_head_sha is not None
-            and isinstance(discussion.position, dict)
-            and discussion.position.get("head_sha") not in {None, current_head_sha}
-        ):
-            continue
         anchor = _anchor_from_position(discussion.position or {})
-        title_fp = title_fingerprint(discussion.title) if discussion.title else None
         records.append(
             {
                 "issue_id": discussion.marker["issue_id"],
-                "category": discussion.category or "",
+                "category": discussion.category if discussion.category in categories else "other",
                 "title": discussion.title,
                 "aliases": {
-                    "candidate_issue_signatures": [],
                     "source_finding_ids": [],
                     "context_hashes": [],
-                    "title_fingerprints": [title_fp] if title_fp else [],
-                    "symbols": [],
                 },
                 "discussion_id": str(discussion.discussion_id),
                 "root_note_id": discussion.root_note_id,
@@ -233,7 +234,45 @@ def state_from_existing_discussions(
                 "last_posted_body_hash": discussion.marker["body_hash"],
             }
         )
-    return {"state_schema_version": 1, "records": records}
+    return {"state_schema_version": 2, "records": records}
+
+
+@cache
+def _state_record_properties() -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        load_schema("state.schema.json")["properties"]["records"]["items"]["properties"],
+    )
+
+
+def _threadless_issue_ids(inline_plans: Iterable[InlinePlan]) -> set[str]:
+    return {
+        inline.record["issue_id"]
+        for inline in inline_plans
+        if inline.record is not None
+        and not inline.settled
+        and (inline.record["discussion_id"] is None or inline.record["root_note_id"] is None)
+    }
+
+
+def _with_reserved_thread_ids(state: State, issue_ids: set[str]) -> State:
+    properties = _state_record_properties()
+    return cast(
+        State,
+        {
+            **state,
+            "records": [
+                dict(
+                    record,
+                    discussion_id="x" * properties["discussion_id"]["maxLength"],
+                    root_note_id=properties["root_note_id"]["maximum"],
+                )
+                if record["issue_id"] in issue_ids
+                else record
+                for record in state["records"]
+            ],
+        },
+    )
 
 
 def position_side(position: dict[str, Any]) -> str | None:
@@ -246,14 +285,6 @@ def position_side(position: dict[str, Any]) -> str | None:
     if has_new:
         return "new"
     return None
-
-
-def _can_remap_anchor(anchor: Any) -> bool:
-    return (
-        isinstance(anchor, dict)
-        and isinstance(anchor.get("context_hash"), str)
-        and bool(anchor.get("context_hash"))
-    )
 
 
 def _desired_discussion_resolved(
@@ -270,6 +301,69 @@ def _desired_discussion_resolved(
     ):
         return False
     return None
+
+
+def planned_thread_resolutions(
+    records: list[StateRecord], base_records: list[StateRecord]
+) -> list[tuple[StateRecord, bool]]:
+    """Return each threaded record whose resolution must change, with its target."""
+    prior_status: dict[str, StateRecordStatus | None] = {
+        record["issue_id"]: record.get("status") for record in base_records
+    }
+    resolutions = []
+    for record in records:
+        if record.get("discussion_id") is None:
+            continue
+        desired = _desired_discussion_resolved(record, prior_status)
+        if desired is not None:
+            resolutions.append((record, desired))
+    return resolutions
+
+
+def rolled_back_resolution(record: StateRecord, previous: StateRecord | None) -> StateRecord:
+    """``record`` as persisted after its thread resolution change fails."""
+    return cast(
+        StateRecord,
+        dict(
+            record,
+            status=previous.get("status", "open") if previous else "open",
+            human_disposition=previous.get("human_disposition") if previous else None,
+        ),
+    )
+
+
+def _reserve_resolution_failures(state: State, base_records: list[StateRecord]) -> State:
+    """A sizing bound for every mix of resolution outcomes, never persisted."""
+    prior_records = {record["issue_id"]: record for record in base_records}
+    resolving = {
+        record["issue_id"]
+        for record, _ in planned_thread_resolutions(state["records"], base_records)
+    }
+    retention_records = []
+    largest_records = {}
+    for record in state["records"]:
+        if record["issue_id"] not in resolving:
+            retention_records.append(record)
+            continue
+        failed = rolled_back_resolution(record, prior_records.get(record["issue_id"]))
+        # Keep anything that could survive compaction on either outcome. The
+        # automatic-resolved tail is then reserved in addition to those records.
+        retention_records.append(failed if is_auto_resolved(record) else record)
+        largest_records[record["issue_id"]] = max(
+            (record, failed), key=lambda variant: len(canonical_json_text(variant))
+        )
+    compacted = compact_state(dict(state, records=retention_records))
+    # Choose the larger representation after compaction: it may itself look
+    # auto-resolved, but the failure outcome can still require retaining it.
+    return cast(
+        State,
+        dict(
+            compacted,
+            records=[
+                largest_records.get(record["issue_id"], record) for record in compacted["records"]
+            ],
+        ),
+    )
 
 
 def _plan_stale_records(
@@ -304,7 +398,6 @@ def _plan_stale_records(
         elif issue_id in protected_issue_ids:
             if updated.get("status") == "open":
                 updated["status"] = "stale"
-                updated["remap_status"] = "ambiguous"
         elif record.get("status") == "open":
             updated["status"] = "resolved" if resolution_quorum else "stale_unverified"
             if not resolution_quorum:
@@ -343,15 +436,10 @@ def _process_state_for_persistence(
     pipeline_id: str,
     retention: StateRetention,
 ) -> tuple[State, str | None]:
-    compacted = compact_state(
-        normalize_state(state, manifest=manifest, pipeline_id=pipeline_id), retention
+    compacted = cast(
+        State, compact_state(normalize_state(state, manifest=manifest, pipeline_id=pipeline_id))
     )
-    overflow = state_overflow_reason(
-        compacted,
-        max_records=retention.max_records,
-        max_state_bytes=retention.max_state_bytes,
-    )
-    return cast(State, compacted), overflow
+    return compacted, state_overflow_reason(compacted, max_records=retention.max_records)
 
 
 def plan_state(
@@ -466,19 +554,45 @@ def plan_state(
         planned_records=planned_records,
     )
     retention = config.state.retention
+    inline_plans = group_plans[: len(inline_candidates)]
     processed_state, overflow = _process_state_for_persistence(
         planned_state,
         manifest=manifest,
         pipeline_id=pipeline_id,
         retention=retention,
     )
+    reserved_state = _reserve_resolution_failures(
+        {**processed_state, "records": planned_records}, base_records
+    )
+    overflow = overflow or state_overflow_reason(reserved_state, max_records=retention.max_records)
+    if overflow is None:
+        # Reserve health and the complete ledger before any platform mutation. Only
+        # visible finding entries may be truncated to fit the combined comment.
+        # Threads not yet created are sized at their largest supported IDs, so the
+        # ledger cannot outgrow the comment after inline posting has begun. Any
+        # failed inline operation can also add a fallback section at runtime.
+        try:
+            render_summary_body(
+                consensus["run_id"],
+                consensus["run_health"],
+                summary_fallback_groups
+                + [inline.group for inline in inline_plans if not inline.settled],
+                fyi_groups,
+                config.limits.max_fyi_findings,
+                posting_mode=config.posting.mode,
+                state=_with_reserved_thread_ids(
+                    reserved_state, _threadless_issue_ids(inline_plans)
+                ),
+            )
+        except ValueError as exc:
+            overflow = str(exc)
     outcome.overflow = overflow
 
     return StatePlan(
         persisted_state=persisted_state,
         base_records=base_records,
         planned_records=planned_records,
-        inline_plans=[] if outcome.overflow is not None else group_plans[: len(inline_candidates)],
+        inline_plans=[] if outcome.overflow is not None else inline_plans,
         pipeline_id=pipeline_id,
         planned_state=processed_state,
         retention=retention,

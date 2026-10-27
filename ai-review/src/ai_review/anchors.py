@@ -356,60 +356,6 @@ def context_hash_from_unified_diff(
     raise ValueError("anchor does not map to the unified diff")
 
 
-def remap_anchor(diff_text: str, anchor: dict[str, Any], *, window: int = 6) -> dict[str, Any]:
-    expected_hash = anchor.get("context_hash")
-    if not is_sha256(expected_hash):
-        return {"status": "missing", "anchor": None}
-    try:
-        if context_hash_from_unified_diff(diff_text, anchor, window=window) == expected_hash:
-            return {"status": "exact", "anchor": anchor}
-    except ValueError:
-        pass
-
-    side = str(anchor.get("side"))
-    matches: list[dict[str, Any]] = []
-    for diff_file in parse_unified_diff(diff_text):
-        # Added/deleted files have exactly one usable side; only a file with
-        # neither is unanchorable.
-        if not diff_file.old_path and not diff_file.new_path:
-            continue
-        # A one-sided file borrows its path into the absent side so the remapped
-        # anchor stays postable. `side` remains the source of truth for which
-        # side actually exists.
-        remap_old, remap_new = resolve_side_paths(diff_file.old_path, diff_file.new_path)
-        side_lines = [line for line in diff_file.lines if _line_belongs_to_side(side, line)]
-        for index, line in enumerate(side_lines):
-            # Context hashes include the original path. That lets a renamed file remap
-            # by content while still comparing the historical alias deterministically.
-            if _window_hash(anchor, side, side_lines, index, window) != expected_hash:
-                continue
-            remapped = dict(anchor)
-            remapped["old_path"] = remap_old
-            remapped["new_path"] = remap_new
-            remapped["hunk_header"] = line.hunk_header
-            remapped["start"] = {
-                "old_line": line.old_line,
-                "new_line": line.new_line,
-                "line_code": None,
-            }
-            remapped["end"] = dict(remapped["start"])
-            remapped["context_hash"] = expected_hash
-            matches.append(add_line_codes(remapped))
-    unique = {
-        (
-            match.get("old_path"),
-            match.get("new_path"),
-            match.get("side"),
-            match.get("start", {}).get("old_line"),
-            match.get("start", {}).get("new_line"),
-        ): match
-        for match in matches
-    }
-    if not unique:
-        return {"status": "missing", "anchor": None}
-    if len(unique) > 1:
-        return {"status": "ambiguous", "anchor": None}
-    return {"status": "remapped", "anchor": next(iter(unique.values()))}
 
 
 def first_evidence_or_body(finding: dict[str, Any]) -> str:

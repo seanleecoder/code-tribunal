@@ -47,16 +47,8 @@ def config_tail(
         # No `state.backend`: persistent state is always on and posting.mode
         # selects the adapter that stores it. Authoring the key is now an error.
         "state:",
-        "  recover_from_discussion_markers: true",
-        "  checksum_required: true",
-        "  fail_closed_on_load_error: false",
         "  retention:",
-        "    keep_open: true",
-        "    keep_wontfix: true",
-        "    keep_resolved_records: 5",
-        "    keep_stale_records: 2",
         "    max_records: 200",
-        "    max_state_bytes: 50000",
         "limits:",
         "  max_prompt_bytes: 500000",
         "security:",

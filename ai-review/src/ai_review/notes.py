@@ -18,6 +18,10 @@ SUMMARY_MARKER_RE = re.compile(
     r"<!--\s*ai-review-summary:v1\s+run_id=(?P<run_id>[^\s]+)\s+"
     r"body_hash=(?P<body_hash>[a-f0-9]{64})\s*-->"
 )
+# Any state marker, well-formed or not; ``version`` is empty when it has none.
+STATE_MARKER_RE = re.compile(r"<!--\s*ai-review-state:(?:v(?P<version>[0-9]+)\b)?")
+# Any bot container that may hold the ledger, including malformed and old ones.
+LEDGER_CONTAINER_RE = re.compile(r"<!--\s*ai-review-(?:state|summary):")
 REVIEW_HEADER_PREFIX = "**AI review:"
 REVIEW_HEADER_SUFFIX = "**"
 
@@ -146,7 +150,7 @@ def parse_review_note(body: str) -> dict[str, str] | None:
         # The first header-shaped line decides, whether or not it parses. A
         # refused header must refuse the note: scanning on would let a v2
         # note's unfenced model body supply its own header further down, and
-        # the recovered category and title feed ``title_anchor`` matching.
+        # the recovered category and title become trusted state metadata.
         # Skipping non-candidates keeps the tolerance for leading preamble.
         header_category = _parse_review_header(stripped)
         if header_category is not None:
@@ -208,39 +212,3 @@ def note_author_id(note: dict[str, Any]) -> int | None:
     author = note.get("author")
     author_id = author.get("id") if isinstance(author, dict) else None
     return author_id if isinstance(author_id, int) else None
-
-
-def find_summary_note(
-    discussions: list[dict[str, Any]],
-    *,
-    expected_author_id: int,
-    warnings: list[str],
-) -> tuple[int, str] | None:
-    """Return the bot's own summary note and its recorded body hash.
-
-    A marker is plain text anyone can post or copy, so a note from another
-    author is never the summary: updating it fails on the platform, and a
-    copied hash would make post report the real summary as unchanged.
-    """
-    for discussion in discussions:
-        notes = discussion.get("notes")
-        if not isinstance(notes, list) or not notes:
-            continue
-        root = notes[0]
-        if not isinstance(root, dict):
-            continue
-        body = root.get("body")
-        if not isinstance(body, str):
-            continue
-        match = SUMMARY_MARKER_RE.search(body)
-        if match is None:
-            continue
-        note_id = root.get("id")
-        if not isinstance(note_id, int):
-            continue
-        author_id = note_author_id(root)
-        if author_id != expected_author_id:
-            warnings.append(f"ignored summary note {note_id} from non-bot author {author_id}")
-            continue
-        return note_id, match.group("body_hash")
-    return None

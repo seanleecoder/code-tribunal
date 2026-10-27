@@ -33,8 +33,7 @@ class FrozenConfigTests(unittest.TestCase):
     def test_integer_resolution_failures_name_the_setting(self) -> None:
         for path in (
             ("limits", "max_fyi_findings"),
-            ("state", "retention", "keep_resolved_records"),
-            ("state", "retention", "max_state_bytes"),
+            ("state", "retention", "max_records"),
             ("reviewers", "codex", "max_findings"),
         ):
             for value in (None, "invalid", [], {}, float("inf"), float("nan")):
@@ -674,18 +673,23 @@ class LoadConfigOverrideTests(unittest.TestCase):
                 panel = config["panel"]
                 self.assertEqual(panel["min_successful_reviewers_for_resolution"], 2)
 
-    def test_state_load_error_policy_defaults_false(self) -> None:
-        config = load_config(_REPO_CONFIG).to_dict()
-        config["state"].pop("fail_closed_on_load_error")
-
-        self.assertFalse(validate_config(config).state.fail_closed_on_load_error)
+    def test_retired_state_controls_are_rejected(self) -> None:
+        for key in (
+            "checksum_required",
+            "fail_closed_on_load_error",
+            "recover_from_discussion_markers",
+        ):
+            config = load_config(_REPO_CONFIG).to_dict()
+            config["state"][key] = False
+            with self.assertRaises(ConfigError):
+                validate_config(config)
 
     def test_effective_config_digest_binds_every_section(self) -> None:
         config = load_config(_REPO_CONFIG).to_dict()
         default = effective_config_digest(validate_config(config))
         for section, key, value in (
             ("posting", "inline_multiline", False),
-            ("state", "fail_closed_on_load_error", True),
+            ("state", "retention", {"max_records": 1}),
             ("limits", "max_files", 1),
             ("security", "allow_external_fork_secrets", True),
             ("panel", "min_successful_reviewers_for_resolution", 3),

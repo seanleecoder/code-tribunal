@@ -52,9 +52,9 @@ Cursor is off by default; see
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
-unset for shipped defaults. For a strict install, set
-`state.fail_closed_on_load_error: true` so a state-load error fails prepare
-instead of starting from empty state and reposting earlier findings.
+unset for shipped defaults. State-load failures always stop prepare; an
+existing installation must complete the [state v2 migration](../operations.md#state-v2-migration)
+before switching to the next major release.
 
 ## Branch protection
 

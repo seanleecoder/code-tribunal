@@ -336,7 +336,7 @@ class ArtifactTypeSchemaAlignmentTests(unittest.TestCase):
             ),
             (
                 "open object accepts JsonValue dictionary",
-                domain_types.JsonObject,
+                dict[str, domain_types.JsonValue],
                 explicit_open_object,
                 explicit_open_object,
                 None,

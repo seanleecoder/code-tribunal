@@ -15,13 +15,13 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from ai_review.anchors import title_fingerprint
 from ai_review.config import ReviewConfig
 from ai_review.memory import find_matching_record
 from ai_review.state_plan import MAX_ALIASES_PER_FAMILY, plan_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
+from support.post_case import full_run_health  # noqa: E402
 
 
 def _manifest() -> dict[str, str]:
@@ -48,6 +48,7 @@ def _config(
 def _consensus(*, eligible: list[str] | None = None) -> dict[str, Any]:
     return {
         "run_id": "run",
+        "run_health": full_run_health(),
         "successful_reviewers": ["claude"],
         "resolution_eligible_reviewers": ["claude"] if eligible is None else eligible,
         "groups": [],
@@ -65,7 +66,11 @@ def _group(issue_id: str) -> dict[str, Any]:
         "category": "correctness",
         "title": "Title",
         "body": "Body",
+        "support_count": 1,
+        "agreeing_critics": [],
+        "contributing_reviewers": ["claude"],
         "source_finding_ids": [_SOURCE_FINDING_ID],
+        "critique_summary": {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0},
         "match_keys": {"context_hashes": [], "title_fingerprints": [], "symbols": []},
         "representative_anchor": {
             "new_path": "src/foo.py",
@@ -110,7 +115,7 @@ def _matching_record(issue_id: str, **overrides: Any) -> dict[str, Any]:
 
 
 def _state(records: list[dict[str, Any]]) -> Any:
-    return cast(Any, {"state_schema_version": 1, "records": records})
+    return cast(Any, {"state_schema_version": 2, "records": records})
 
 
 def _plan(
@@ -268,9 +273,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
                 for issue_id in ("1" * 64, "2" * 64):
                     record = self._record_of(plan, issue_id)
                     assert record is not None
-                    self.assertEqual(
-                        (record["status"], record["remap_status"]), ("stale", "ambiguous")
-                    )
+                    self.assertEqual(record["status"], "stale")
                 self.assertEqual(len(plan.planned_records), 2)
                 self.assertEqual(plan.outcome.stale_unverified, 0)
                 self.assertEqual(
@@ -317,15 +320,15 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             return persisted
 
         claimed = [
-            record("1" * 64, "src/foo.py", context_hashes=["h"]),
-            record("2" * 64, "src/foo.py", context_hashes=["h"]),
+            record("1" * 64, "src/foo.py", context_hashes=["a" * 64]),
+            record("2" * 64, "src/foo.py", context_hashes=["a" * 64]),
         ]
         weaker = record("3" * 64, "src/bar.py", symbols=["s"], title_fingerprints=["t"])
         ambiguous = dict(
             self._ambiguous_group(),
             match_keys={
                 "path_keys": ["src/foo.py"],
-                "context_hashes": ["h"],
+                "context_hashes": ["a" * 64],
                 "title_fingerprints": ["t"],
                 "symbols": ["s"],
             },
@@ -370,10 +373,10 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         self.assertEqual(self._status_of(plan, "1" * 64), "open")
         untouched = self._record_of(plan, "2" * 64)
         assert untouched is not None
-        self.assertEqual((untouched["status"], untouched["remap_status"]), ("stale", "ambiguous"))
+        self.assertEqual(untouched["status"], "stale")
 
     def test_retention_overflow_is_reported_and_clears_inline_plans(self) -> None:
-        config = _config(retention={"max_state_bytes": 1})
+        config = _config(retention={"max_records": 0})
         plan = _plan(config=config, inline=[_group("a" * 64)])
 
         self.assertIsNotNone(plan.outcome.overflow)
@@ -416,9 +419,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             aliases["source_finding_ids"], ["f" * 64, older[3], *older[:3], *older[4:7]]
         )
         self.assertEqual(aliases["context_hashes"], ["f" * 64, *older[:7]])
-        self.assertEqual(aliases["symbols"], ["current", *[f"symbol{i}" for i in range(7)]])
-        self.assertEqual(aliases["title_fingerprints"], [title_fingerprint("Title")])
-        self.assertEqual(aliases["candidate_issue_signatures"], [])
+        self.assertEqual(set(aliases), {"source_finding_ids", "context_hashes"})
 
     def test_alias_families_never_trim_this_runs_keys(self) -> None:
         # Consensus sorts a group's keys by hash, so a cut could drop the
@@ -480,10 +481,9 @@ class PlanStateWithoutClientTests(unittest.TestCase):
             records = _plan(persisted=records, inline=[group]).planned_state["records"]
 
         aliases = records[0]["aliases"]
-        for family in ("source_finding_ids", "context_hashes", "title_fingerprints", "symbols"):
+        for family in ("source_finding_ids", "context_hashes"):
             self.assertEqual(len(aliases[family]), MAX_ALIASES_PER_FAMILY, family)
         self.assertEqual(aliases["source_finding_ids"][0], f"{29:064x}")
-        self.assertEqual(aliases["title_fingerprints"][0], title_fingerprint("Title"))
 
     def test_unmatched_records_keep_their_stored_aliases(self) -> None:
         older = [f"{index:064x}" for index in range(1, 11)]

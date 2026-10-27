@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai_review.memory import encode_state_note, state_note_candidates
+from ai_review.memory import STATE_NOTE_RE, encode_state_note
 from ai_review.notes import SUMMARY_MARKER_RE, note_author_id
 from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import (
@@ -40,13 +40,16 @@ class FakePostClient:
         """MR notes carrying the machine-owned state payload.
 
         Every valid configuration persists state, so a posting run writes one of
-        these alongside any summary note. Tests that care about product output
+        these inside the summary note. Tests that care about product output
         assert on ``summary_notes`` and stay readable. Both properties recognize
         a note the way production does -- by the marker it wrote -- so a fake can
         never disagree with the runtime about what a note is.
         """
-        candidates, _warnings, _mismatches = state_note_candidates(self.mr_notes)
-        return candidates
+        return [
+            note
+            for note in self.mr_notes
+            if STATE_NOTE_RE.search(str(note.get("body", ""))) is not None
+        ]
 
     @property
     def summary_notes(self) -> list[dict[str, Any]]:
@@ -58,7 +61,7 @@ class FakePostClient:
 
     @property
     def updated_summary_notes(self) -> list[dict[str, Any]]:
-        """Edits to reader-facing notes, excluding the state note's own rewrite."""
+        """Edits to the combined reader-facing summary and state."""
         summary_ids = {note["id"] for note in self.summary_notes}
         return [entry for entry in self.updated_mr_notes if entry["note_id"] in summary_ids]
 
@@ -118,7 +121,12 @@ class FakePostClient:
         return {"id": "discussion", "notes": [{"id": 123}]}
 
     def list_threads(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
-        return self.discussions
+        roots = {note.get("id") for thread in self.discussions for note in thread.get("notes", [])}
+        return self.discussions + [
+            {"id": f"note-{note['id']}", "notes": [dict(note)]}
+            for note in self.mr_notes
+            if note["id"] not in roots
+        ]
 
     def update_comment(
         self,
@@ -129,9 +137,7 @@ class FakePostClient:
         body: str,
     ) -> dict[str, Any]:
         self.updated += 1
-        self.updated_notes.append(
-            {"discussion_id": thread_id, "note_id": comment_id, "body": body}
-        )
+        self.updated_notes.append({"discussion_id": thread_id, "note_id": comment_id, "body": body})
         return {"id": comment_id, "body": body}
 
     def list_state_notes(self, project_id: str, change_id: str) -> list[dict[str, Any]]:
@@ -195,6 +201,5 @@ class StatePostClient(FakePostClient):
 
     def __init__(self, current_head_sha: str, state: dict[str, Any]) -> None:
         super().__init__(current_head_sha)
-        self.mr_notes = [
-            {"id": 1, "body": encode_state_note(state), "author": {"id": self.BOT_ID}}
-        ]
+        self.mr_notes = [{"id": 1, "body": encode_state_note(state), "author": {"id": self.BOT_ID}}]
+        self.discussions = [{"id": "note-1", "notes": [dict(self.mr_notes[0])]}]
