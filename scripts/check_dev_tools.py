@@ -8,7 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from check_supply_chain_pins import DEV_REQUIREMENTS, EXACT_REQUIREMENT, _requirements
+from check_supply_chain_pins import (
+    DEV_REQUIREMENTS,
+    EXACT_REQUIREMENT,
+    requirement_lines,
+    without_marker,
+)
 
 TOOLS = ("ruff", "mypy")
 # Resolve provenance before run_module: Ruff can replace the process with execv.
@@ -33,8 +38,8 @@ runpy.run_module(name, run_name="__main__", alter_sys=True)
 
 def required_versions(path: Path = DEV_REQUIREMENTS) -> dict[str, str]:
     versions: dict[str, str] = {}
-    for requirement in _requirements(path.read_text()):
-        pin = requirement.split(";", 1)[0].rstrip()
+    for requirement in requirement_lines(path.read_text()):
+        pin = without_marker(requirement)
         if not EXACT_REQUIREMENT.fullmatch(pin):
             continue
         name, version = pin.split("==", 1)
@@ -61,7 +66,7 @@ def check_tool(name: str, expected: str) -> bool:
         metadata, _, error_text = result.stderr.partition("\n")
         provenance = json.loads(metadata)
         origin = provenance["module"]
-        binary = f" executable={provenance['executable']}" if name == "ruff" else ""
+        binary = f" executable={provenance['executable']}" if provenance["executable"] else ""
     except (ValueError, KeyError, TypeError) as error:
         print(f"BLOCKED: {name} provenance unavailable: {error}", file=sys.stderr)
         print(result.stderr.strip(), file=sys.stderr)

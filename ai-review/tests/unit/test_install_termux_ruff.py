@@ -13,6 +13,11 @@ from tests.support.repository_script import load_repository_script
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "install_termux_ruff.py"
 EXECUTABLE = f"#!{sys.executable}\nprint('ruff 0.17.1')\n".encode()
+FAILED_PROBES = {
+    "nonzero": (f"#!{sys.executable}\nraise SystemExit(1)\n".encode(), ValueError),
+    "wrong-version": (f"#!{sys.executable}\nprint('ruff 0.0.0')\n".encode(), ValueError),
+    "loader-error": (b"not an executable", OSError),
+}
 
 
 def archive(extra: str | None = None, *, binary: bytes = EXECUTABLE) -> bytes:
@@ -46,32 +51,29 @@ class InstallArchiveTests(unittest.TestCase):
         self.assertEqual((self.site / "ruff/__main__.py").read_bytes(), b"launcher")
         self.assertFalse(list(self.site.glob("*.dist-info")))
 
-    def test_failed_probe_preserves_environment(self) -> None:
+    def test_failed_probe_writes_nothing(self) -> None:
+        for probe, (binary, error) in FAILED_PROBES.items():
+            with self.subTest(probe=probe):
+                with self.assertRaises(error):
+                    self.install(archive(binary=binary))
+                self.assertFalse(list(self.root.iterdir()))
+
+    def test_failed_probe_keeps_previous_install(self) -> None:
         previous = {
             self.scripts / "ruff": EXECUTABLE,
             self.site / "ruff/__main__.py": b"previous launcher",
             self.site / "ruff/_find_ruff.py": b"previous finder",
         }
-        probes = {
-            "nonzero": (f"#!{sys.executable}\nraise SystemExit(1)\n".encode(), ValueError),
-            "wrong-version": (f"#!{sys.executable}\nprint('ruff 0.0.0')\n".encode(), ValueError),
-            "loader-error": (b"not an executable", OSError),
-        }
-        for existing in (False, True):
-            for probe, (binary, error) in probes.items():
-                with self.subTest(existing=existing, probe=probe):
-                    if existing:
-                        for path, content in previous.items():
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_bytes(content)
-                        (self.scripts / "ruff").chmod(0o755)
-                    with self.assertRaises(error):
-                        self.install(archive(binary=binary))
-                    if existing:
-                        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
-                        self.assertTrue((self.scripts / "ruff").stat().st_mode & 0o111)
-                    else:
-                        self.assertFalse(list(self.root.iterdir()))
+        for path, content in previous.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        (self.scripts / "ruff").chmod(0o755)
+        for probe, (binary, error) in FAILED_PROBES.items():
+            with self.subTest(probe=probe):
+                with self.assertRaises(error):
+                    self.install(archive(binary=binary))
+                self.assertEqual({path: path.read_bytes() for path in previous}, previous)
+                self.assertTrue((self.scripts / "ruff").stat().st_mode & 0o111)
 
     def test_bad_digest_writes_nothing(self) -> None:
         with self.assertRaisesRegex(ValueError, "SHA256"):

@@ -22,22 +22,18 @@ the local `PATH`; the gate never compiles or silently skips the tool.
 `make` selects the checkout's `.venv/bin/python` when present. Override `PYTHON`
 with an **absolute** project interpreter when checking a disposable source copy.
 The Ruff and mypy gates check executed versions against `requirements-dev.txt`
-and print interpreter, module and executable provenance; metadata alone can lie.
+and print interpreter, module and executable provenance.
 
 ### Termux development profile
 
-The commands below run directly on Termux. If your local environment provides
-an `agent-check` wrapper, you can optionally prefix commands with `agent-check --`.
-That wrapper is external to this repository and repairs only the child runtime;
-it does not install dependencies or provide Linux/Android parity. Test installs
-in a disposable venv first; do not overwrite an existing environment with system
-packages enabled.
+Test installs in a disposable venv first; do not overwrite an existing
+environment with system packages enabled.
 
 Ruff's ordinary Android source build requires a native Rust toolchain. On
 Termux aarch64 this explicit setup downloads the same pinned upstream static
-musllinux executable and Python shim from PyPI, verifies the release archive's
-SHA-256 and probes the actual executable without installing incompatible wheel
-metadata:
+musllinux executable and Python shim from PyPI, checks the download against
+PyPI's published SHA-256 (transfer integrity, not a reviewed pin) and probes the
+actual executable without installing incompatible wheel metadata:
 
 ```bash
 .venv/bin/python scripts/install_termux_ruff.py

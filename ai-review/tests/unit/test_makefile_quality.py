@@ -37,7 +37,7 @@ class QualityWorkflowContractTests(unittest.TestCase):
 
 @unittest.skipUnless((REPO_ROOT / "Makefile").exists(), "checkout Makefile is unavailable")
 class LocalDemonstrationTests(unittest.TestCase):
-    def test_consensus_local_uses_unactivated_venv_for_reviewer(self) -> None:
+    def test_review_local_uses_unactivated_venv_for_reviewer(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tribunal checkout ") as directory:
             root = Path(directory)
             (root / "ai-review").symlink_to(REPO_ROOT / "ai-review", target_is_directory=True)
@@ -55,12 +55,12 @@ class LocalDemonstrationTests(unittest.TestCase):
             environment["PATH"] = f"{system_python.parent}{os.pathsep}{environment['PATH']}"
 
             result = subprocess.run(
-                ["make", "-f", str(REPO_ROOT / "Makefile"), "consensus-local"],
+                ["make", "-f", str(REPO_ROOT / "Makefile"), "review-local"],
                 cwd=root, env=environment, capture_output=True, text=True, check=False,
             )
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertTrue((root / ".ai-review-local/out/consensus/consensus.json").is_file())
+            self.assertTrue((root / ".ai-review-local/out/findings/claude.json").is_file())
 
 
 if __name__ == "__main__":
