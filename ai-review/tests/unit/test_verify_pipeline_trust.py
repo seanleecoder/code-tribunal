@@ -34,13 +34,14 @@ def _load_pipeline_trust():
 
 
 _pipeline_trust = _load_pipeline_trust()
-RESERVED_DIRECT_JOB_NAMES = _pipeline_trust.RESERVED_DIRECT_JOB_NAMES
+RESERVED_JOB_NAMES = _pipeline_trust.RESERVED_JOB_NAMES
 find_trust_issues = _pipeline_trust.find_trust_issues
 
 TRUSTED_PROJECT = "org/code-tribunal-ci"
 TRUSTED_SHA = "a" * 40
 OTHER_SHA = "b" * 40
-REVIEW_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+REVIEW_TEMPLATE = REPO_ROOT / "ai-review/ci/review.gitlab-ci.yml"
 
 
 def _project_include(file: str, *, project: str = TRUSTED_PROJECT, ref: str = TRUSTED_SHA):
@@ -154,16 +155,16 @@ def test_flags_direct_cursor_job_overrides() -> None:
         assert any(job_name in issue for issue in issues)
 
 
-def test_reserved_direct_jobs_cover_every_shipped_template_job() -> None:
+def test_reserved_jobs_cover_every_shipped_template_job() -> None:
     template = yaml.safe_load(REVIEW_TEMPLATE.read_text(encoding="utf-8"))
     assert isinstance(template, dict)
     shipped_jobs = set(template) - {"variables"}
 
-    assert shipped_jobs <= RESERVED_DIRECT_JOB_NAMES
+    assert shipped_jobs <= RESERVED_JOB_NAMES
 
 
 def test_shipped_gitlab_installation_example_respects_trust_boundaries() -> None:
-    path = Path(__file__).resolve().parents[3] / "docs/getting-started/examples/gitlab-direct.yml"
+    path = REPO_ROOT / "docs/getting-started/examples/gitlab-direct.yml"
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(config, dict), f"{path}: YAML root must be a mapping"
     issues = find_trust_issues(
@@ -172,17 +173,14 @@ def test_shipped_gitlab_installation_example_respects_trust_boundaries() -> None
         expected_template_sha="1" * 40,
     )
     assert issues == [], f"{path}: {issues}"
-    assert config["workflow"]["rules"] == [
-        {"if": '$CI_PIPELINE_SOURCE == "merge_request_event"'},
-        {"if": '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'},
-        {"if": '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'},
-    ]
+    template = yaml.safe_load(REVIEW_TEMPLATE.read_text(encoding="utf-8"))
+    assert config["workflow"]["rules"] == template[".ai_review_rules"]["rules"]
 
 
-def test_auditor_cli_uses_direct_include_without_a_mode(tmp_path, capsys) -> None:
+def test_auditor_cli_accepts_a_trusted_include(tmp_path, capsys) -> None:
     path = tmp_path / ".gitlab-ci.yml"
     path.write_text(yaml.safe_dump(_direct_config()), encoding="utf-8")
     assert _pipeline_trust.main([
         str(path), "--template-project", TRUSTED_PROJECT, "--template-sha", TRUSTED_SHA,
     ]) == 0
-    assert "OK: trusted Code Tribunal direct integration" in capsys.readouterr().out
+    assert "OK: trusted Code Tribunal integration" in capsys.readouterr().out

@@ -636,10 +636,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             state=str(state),
         )
 
-    @staticmethod
-    def _gitlab_raw_file(_project: str, path: str, ref: str = "main") -> str:
-        del ref
-        return "    return normalize_username(username) in normalized_allowed\n"
+    GITLAB_ACCESS_LINE = "    return normalize_username(username) in normalized_allowed\n"
 
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -753,7 +750,9 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
+                mock.patch.object(
+                    self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE
+                ),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
@@ -791,7 +790,9 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(Path(tmp) / "state.json")
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", side_effect=self._gitlab_raw_file),
+                mock.patch.object(
+                    self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE
+                ),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):
@@ -804,17 +805,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             ["ai-review/ci/review.gitlab-ci.yml"],
         )
         config = yaml.safe_load(committed[self.gitlab.DEMO_PROJECT][0]["content"])
-        self.assertEqual(config["include"], [{
-            "project": self.gitlab.TEMPLATE_PROJECT_PATH,
-            "ref": "d" * 40,
-            "file": "/ai-review/ci/review.gitlab-ci.yml",
-        }])
-        self.assertEqual(config["stages"], ["test", "ai_review"])
-        self.assertEqual(config["workflow"]["rules"], [
-            {"if": '$CI_PIPELINE_SOURCE == "merge_request_event"'},
-            {"if": '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'},
-            {"if": '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'},
-        ])
+        example = yaml.safe_load(self.gitlab.CONSUMER_EXAMPLE.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {key: value for key, value in config.items() if key != "include"},
+            {key: value for key, value in example.items() if key != "include"},
+        )
         self.assertEqual(self.gitlab.find_trust_issues(
             config, expected_template_project=self.gitlab.TEMPLATE_PROJECT_PATH,
             expected_template_sha="d" * 40,

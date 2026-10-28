@@ -23,9 +23,10 @@ else:
     yaml = _yaml
 
 REVIEW_DAG_PATH = "/ai-review/ci/review.gitlab-ci.yml"
+REVIEW_DAG_NAME = Path(REVIEW_DAG_PATH).name
 PROJECT_INCLUDE_KEYS = {"project", "ref", "file"}
 FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
-RESERVED_DIRECT_JOB_NAMES = {
+RESERVED_JOB_NAMES = {
     ".ai_review_rules",
     ".critique_template",
     ".review_template",
@@ -89,43 +90,6 @@ def _include_file(entry: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _validate_direct_mode(
-    config: dict[str, Any], *, expected_project: str, expected_sha: str
-) -> list[str]:
-    issues: list[str] = []
-    includes = _as_list(config.get("include"))
-    review_entries = [entry for entry in includes if _include_file(entry) == REVIEW_DAG_PATH]
-    if len(review_entries) != 1:
-        issues.append(
-            f"direct mode must include {REVIEW_DAG_PATH!r} exactly once; got {len(review_entries)}"
-        )
-    else:
-        issues.extend(
-            _validate_project_entry(
-                review_entries[0],
-                location="direct review include",
-                expected_project=expected_project,
-                expected_sha=expected_sha,
-            )
-        )
-
-    for entry in includes:
-        file_value = _include_file(entry)
-        if (
-            isinstance(file_value, str)
-            and Path(file_value).name == Path(REVIEW_DAG_PATH).name
-            and file_value != REVIEW_DAG_PATH
-        ):
-            issues.append(f"Code Tribunal template path must be exact; got {file_value!r}")
-
-    for name in RESERVED_DIRECT_JOB_NAMES:
-        if name in config:
-            issues.append(
-                f"direct mode consumer must not redefine reserved Code Tribunal job {name!r}"
-            )
-    return issues
-
-
 def find_trust_issues(
     config: dict[str, Any],
     *,
@@ -133,13 +97,34 @@ def find_trust_issues(
     expected_template_sha: str,
 ) -> list[str]:
     issues = _validate_expected_trust_root(expected_template_project, expected_template_sha)
-    issues.extend(
-        _validate_direct_mode(
-            config,
-            expected_project=expected_template_project,
-            expected_sha=expected_template_sha,
+    includes = _as_list(config.get("include"))
+    review_entries = [entry for entry in includes if _include_file(entry) == REVIEW_DAG_PATH]
+    if len(review_entries) != 1:
+        issues.append(
+            f"consumer must include {REVIEW_DAG_PATH!r} exactly once; got {len(review_entries)}"
         )
-    )
+    else:
+        issues.extend(
+            _validate_project_entry(
+                review_entries[0],
+                location="review include",
+                expected_project=expected_template_project,
+                expected_sha=expected_template_sha,
+            )
+        )
+
+    for entry in includes:
+        file_value = _include_file(entry)
+        if (
+            file_value is not None
+            and Path(file_value).name == REVIEW_DAG_NAME
+            and file_value != REVIEW_DAG_PATH
+        ):
+            issues.append(f"Code Tribunal template path must be exact; got {file_value!r}")
+
+    for name in RESERVED_JOB_NAMES:
+        if name in config:
+            issues.append(f"consumer must not redefine reserved Code Tribunal job {name!r}")
     return issues
 
 
@@ -163,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     if issues:
         return 1
     print(
-        "OK: trusted Code Tribunal direct integration uses "
+        "OK: trusted Code Tribunal integration uses "
         f"{args.template_project}@{args.template_sha}"
     )
     return 0

@@ -49,11 +49,14 @@ from candidate_canary_common import (
     saved_wontfix,
     write_state,
 )
-from pipeline_trust import find_trust_issues
+from pipeline_trust import RESERVED_JOB_NAMES, find_trust_issues
 
 API = "https://gitlab.com/api/v4"
 TEMPLATE_PROJECT = "84667707"
 TEMPLATE_PROJECT_PATH = "seanleecoder/code-tribunal-ci-template"
+CONSUMER_EXAMPLE = (
+    Path(__file__).resolve().parents[1] / "docs/getting-started/examples/gitlab-direct.yml"
+)
 SETTLED_STATUSES = frozenset({"success", "failed", "canceled", "skipped", "manual"})
 RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
@@ -220,22 +223,10 @@ def push_template_branch(
 
 
 def consumer_config(template_sha: str) -> str:
-    """The temporary demo composition for this candidate's direct include."""
-    return f"""workflow:
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
-    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
-
-stages:
-  - test
-  - ai_review
-
-include:
-  - project: {TEMPLATE_PROJECT_PATH}
-    ref: "{template_sha}"
-    file: /ai-review/ci/review.gitlab-ci.yml
-"""
+    """The documented direct-include example, pinned to this candidate's template."""
+    config = yaml.safe_load(CONSUMER_EXAMPLE.read_text(encoding="utf-8"))
+    config["include"][0].update(project=TEMPLATE_PROJECT_PATH, ref=template_sha)
+    return yaml.safe_dump(config, sort_keys=False)
 
 
 def push_candidate_change(
@@ -819,8 +810,7 @@ class HostileProbe:
         downstream_statuses = {
             name: job["status"]
             for name, job in self.jobs.items()
-            if name.startswith(("AI review:", "AI critique:"))
-            or name in {"consensus_ai_review", "post_ai_review"}
+            if name in RESERVED_JOB_NAMES - {"prepare_ai_review"}
         }
         expect(
             bool(downstream_statuses)
