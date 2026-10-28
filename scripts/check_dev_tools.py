@@ -16,6 +16,8 @@ from check_supply_chain_pins import (
 )
 
 TOOLS = ("ruff", "mypy")
+# Interpreter startup diagnostics can precede the probe's metadata on stderr.
+_PROVENANCE_PREFIX = "code-tribunal-tool-provenance: "
 # Resolve provenance before run_module: Ruff can replace the process with execv.
 _TOOL_PROBE = """\
 import importlib.util
@@ -29,8 +31,8 @@ binary = ""
 if name == "ruff" and module:
     from ruff._find_ruff import find_ruff_bin
     binary = find_ruff_bin()
-print(json.dumps({"module": module.origin if module else "unavailable",
-                  "executable": binary}), file=sys.stderr, flush=True)
+print(sys.argv[2] + json.dumps({"module": module.origin if module else "unavailable",
+                                "executable": binary}), file=sys.stderr, flush=True)
 sys.argv = [name, "--version"]
 runpy.run_module(name, run_name="__main__", alter_sys=True)
 """
@@ -56,14 +58,15 @@ def required_versions(path: Path = DEV_REQUIREMENTS) -> dict[str, str]:
 def check_tool(name: str, expected: str) -> bool:
     try:
         result = subprocess.run(
-            [sys.executable, "-B", "-c", _TOOL_PROBE, name],
+            [sys.executable, "-B", "-c", _TOOL_PROBE, name, _PROVENANCE_PREFIX],
             text=True, capture_output=True, timeout=20, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"BLOCKED: {name} unavailable: {error}", file=sys.stderr)
         return False
     try:
-        metadata, _, error_text = result.stderr.partition("\n")
+        startup_text, _, probe_text = result.stderr.partition(_PROVENANCE_PREFIX)
+        metadata, _, tool_text = probe_text.partition("\n")
         provenance = json.loads(metadata)
         origin = provenance["module"]
         binary = f" executable={provenance['executable']}" if provenance["executable"] else ""
@@ -79,7 +82,7 @@ def check_tool(name: str, expected: str) -> bool:
         print(f"BLOCKED: {name} must execute pinned version {expected}; "
               "repair the selected development environment", file=sys.stderr)
         if result.returncode:
-            print(error_text.strip(), file=sys.stderr)
+            print((startup_text + tool_text).strip(), file=sys.stderr)
         return False
     return True
 

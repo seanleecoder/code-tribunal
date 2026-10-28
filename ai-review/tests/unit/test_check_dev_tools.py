@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,8 @@ class ExecutedToolTests(unittest.TestCase):
         self.tools = load_repository_script("check_dev_tools", SCRIPT)
 
     def test_executed_version_controls_gate(self) -> None:
-        metadata = json.dumps({"module": "/fixture/mypy/__init__.py", "executable": ""})
+        metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
+            {"module": "/fixture/mypy/__init__.py", "executable": ""})
         for actual, exit_code, accepted in [("2.4.0", 0, True), ("2.3.0", 0, False),
                                             ("2.4.0", 1, False)]:
             with self.subTest(actual=actual, exit_code=exit_code):
@@ -58,6 +60,18 @@ class ExecutedToolTests(unittest.TestCase):
                         contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(self.tools.check_tool("mypy", "2.4.0"), accepted)
                 self.assertEqual(execute.call_args.args[0][:2], [sys.executable, "-B"])
+
+    def test_failed_tool_preserves_startup_and_tool_diagnostics(self) -> None:
+        metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
+            {"module": "/fixture/mypy/__init__.py", "executable": ""})
+        result = subprocess.CompletedProcess(
+            [], 1, "mypy 2.4.0\n", f"startup warning\n{metadata}\ntool failed\n")
+        errors = io.StringIO()
+        with patch.object(self.tools.subprocess, "run", return_value=result), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+            self.assertFalse(self.tools.check_tool("mypy", "2.4.0"))
+        self.assertIn("startup warning", errors.getvalue())
+        self.assertIn("tool failed", errors.getvalue())
 
     def test_missing_provenance_is_not_accepted(self) -> None:
         result = subprocess.CompletedProcess([], 0, "mypy 2.4.0\n", "")
@@ -79,7 +93,7 @@ class ExecutedProvenanceTests(unittest.TestCase):
         self.tools = load_repository_script("check_dev_tools", SCRIPT)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
 
     def check_from_cwd(self, name: str, main_source: str) -> str:
         package = self.root / name
@@ -94,6 +108,10 @@ class ExecutedProvenanceTests(unittest.TestCase):
 
     def test_mypy_provenance(self) -> None:
         self.check_from_cwd("mypy", "print('mypy 97.0.0')\n")
+
+    def test_mypy_provenance_survives_startup_warning(self) -> None:
+        with patch.dict(os.environ, {"PYTHONWARNINGS": "invalid-warning-filter"}):
+            self.check_from_cwd("mypy", "print('mypy 97.0.0')\n")
 
     def test_ruff_provenance_reports_executable(self) -> None:
         binary = self.root / "ruff-executable"

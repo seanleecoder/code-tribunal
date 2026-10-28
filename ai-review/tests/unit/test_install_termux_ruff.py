@@ -46,10 +46,19 @@ class InstallArchiveTests(unittest.TestCase):
 
     def test_install_verified_archive(self) -> None:
         binary = self.install(archive())
+        self.assertEqual(binary, self.scripts / "ruff")
         self.assertEqual(binary.read_bytes(), EXECUTABLE)
         self.assertTrue(binary.stat().st_mode & 0o111)
         self.assertEqual((self.site / "ruff/__main__.py").read_bytes(), b"launcher")
         self.assertFalse(list(self.site.glob("*.dist-info")))
+
+    def test_directory_destination_is_rejected(self) -> None:
+        destination = self.scripts / "ruff"
+        destination.mkdir(parents=True)
+        with self.assertRaises(IsADirectoryError):
+            self.install(archive())
+        self.assertEqual(list(destination.iterdir()), [])
+        self.assertFalse(self.site.exists())
 
     def test_failed_probe_writes_nothing(self) -> None:
         for probe, (binary, error) in FAILED_PROBES.items():

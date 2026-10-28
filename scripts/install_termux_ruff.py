@@ -49,7 +49,9 @@ def install_archive(
         if result.returncode or result.stdout.strip() != f"ruff {version}":
             raise ValueError(f"pinned Ruff cannot execute on this runtime: {result.stderr.strip()}")
         scripts.mkdir(parents=True, exist_ok=True)
-        binary = Path(shutil.copy2(candidate, scripts / "ruff"))
+        binary = scripts / "ruff"
+        shutil.copyfile(candidate, binary)
+        binary.chmod(0o755)
     for name, content in module_data.items():
         target = site / name
         target.parent.mkdir(parents=True, exist_ok=True)
