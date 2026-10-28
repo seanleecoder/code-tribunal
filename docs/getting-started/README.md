@@ -6,5 +6,5 @@ Platform integration guides for deploying Code Tribunal in your CI/CD pipeline:
   workflow, secrets, branch protection, and verification.
 - [GitLab CI integration guide](gitlab.md) — Protected direct include,
   protected templates, pins, variables, and verification.
-- [Example workflows](examples/) — Copy/paste-minimal GitLab direct and child
-  includes. GitHub uses the pinned reusable-workflow caller in the GitHub guide.
+- [Example workflows](examples/) — A minimal GitLab direct include. GitHub uses
+  the pinned reusable-workflow caller in the GitHub guide.

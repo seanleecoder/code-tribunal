@@ -16,11 +16,31 @@ Copy the tested [direct include example](examples/gitlab-direct.yml) and replace
 the example project and SHA. Ensure the consumer pipeline declares an
 `ai_review` stage if its stage list does not already include one.
 
-Keep the example's `workflow: rules` in the consumer CI file: GitLab requires a
-merge-request rule [directly in that file](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/#configure-merge-request-pipelines),
-even when the included jobs already have matching rules. The example also allows
-`web` and `api` reviews when `CI_MERGE_REQUEST_IID` is supplied. Merge these rules
-with any existing workflow rules needed by the consumer's other jobs.
+GitLab requires a merge-request rule
+[directly in the consumer CI file](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/#configure-merge-request-pipelines),
+even when the included jobs already have matching rules. The standalone example's
+`workflow: rules` permits MR pipelines and `web`/`api` reviews when
+`CI_MERGE_REQUEST_IID` is supplied. Workflow rules control the entire pipeline:
+copying this block also prevents push, tag, and scheduled pipelines for the
+consumer's other jobs.
+
+For a consumer with existing workflow rules, add the merge-request rule while
+retaining the rules its other jobs need. For a consumer with other CI jobs but
+**no explicit workflow**, preserve its existing pipeline sources with:
+
+```yaml
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: always
+```
+
+The final rule keeps other pipeline sources eligible, including push, tag,
+schedule, `web`, and `api`. Each job's rules still determine whether it runs;
+Code Tribunal's jobs run only for their supported review sources. A push to a
+branch with an open MR can create both branch and MR pipelines with this
+permissive workflow. Retain any existing policy for avoiding duplicate pipelines
+when adding the MR rule.
 
 ## Protect the CI composition
 
