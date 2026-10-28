@@ -40,9 +40,11 @@ Executable coverage includes
 and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
-proved per deployment. The Candidate Canary's `hostile` campaign proves one scoped
-topology: a merge request from an **unprotected** ref in the hardened mirrored
-child. Its assertions are listed under
+proved per deployment. The Candidate Canary's `hostile` campaign targets a merge
+request from an **unprotected** ref with a direct include. Earlier releases
+recorded the hardened mirrored child topology; that evidence does not prove the
+new composition. The first N02 release must run the direct-include probe. Its
+assertions are listed under
 [Candidate Canary](../CONTRIBUTING.md#candidate-canary), and the body of each
 release that ran it records the run.
 
@@ -53,21 +55,19 @@ Fork-based merge requests and protected-ref insiders are untested.
 
 That same probe established a limit worth stating plainly here: **the trusted
 image pin is not enforced inside the pipeline.** A consumer `.gitlab-ci.yml` that
-declares the image variables in its own top-level `variables:` and enables
-variable forwarding can run the stages on an arbitrary image, and no stage
-verifies what it is running. Containment came from credential withholding and
-from `scripts/pipeline_trust.py`, which rejects such a composition but
-runs out-of-band. Do not read “digest-pinned templates” as a runtime guarantee
-against a hostile consumer config.
+declares the image variables in its own top-level `variables:` can run the stages
+on an arbitrary image, and no stage verifies what it is running. Containment
+comes from credential withholding. `scripts/pipeline_trust.py` rejects reserved
+job replacements but runs out-of-band; it does not audit arbitrary variable
+values or every unrelated include. Do not read “digest-pinned templates” as a
+runtime guarantee against a hostile consumer config.
 
 No in-pipeline check can close this. The consumer CI file composes the pipeline,
 so the edit that swaps the image can also delete a verification job, a required
 audit stage, or the variable a check compares against, and a substituted image
-will not run a check that lives in the trusted image. The hardened child's
-`inherit.variables: false` and `forward.*: false` settings hold only while
-merge-request authors cannot edit the consumer CI file. The boundary is outside
-that file: the composition must come from a project merge-request authors cannot
-edit, and no author-written job may run in a pipeline that receives protected
+will not run a check that lives in the trusted image. The boundary is outside
+the consumer CI file: the composition must come from a project merge-request
+authors cannot edit, and no author-written job may run in a pipeline that receives protected
 credentials. A protected external CI configuration file or an
 `override_project_ci` pipeline execution policy meets that bar. An
 `inject_policy` policy does not, because project jobs still run beside the
@@ -81,8 +81,7 @@ editing any CI file, so restricting pipeline variables is part of the boundary.
 The same route reaches fork content: such a pipeline may name a fork merge
 request, and it carries no `CI_MERGE_REQUEST_SOURCE_PROJECT_ID`, so prepare's
 fork guard does not fire and every seat reviews the fork's diff with protected
-credentials. The deprecated child's `forward.pipeline_variables: false` blocked
-this route.
+credentials. Restrict pipeline variables even after protecting the CI file.
 
 [Protect the CI composition](getting-started/gitlab.md#protect-the-ci-composition)
 gives the settings and schedules `pipeline_trust.py` so that composition drift is

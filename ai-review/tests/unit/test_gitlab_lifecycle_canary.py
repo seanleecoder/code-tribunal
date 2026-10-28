@@ -77,145 +77,6 @@ class ScenarioVariableTests(unittest.TestCase):
         teardown.assert_called_once()
 
 
-class PipelinePollingTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.deadline = time.monotonic() + 60
-
-    def _no_polling(self) -> mock.Mock:
-        return self.enterContext(
-            mock.patch.object(
-                lifecycle.time, "sleep", side_effect=AssertionError("unexpected polling")
-            )
-        )
-
-    def test_child_lookup_stops_on_a_settled_bridge_without_a_child(self) -> None:
-        for status in ("success", "failed", "canceled", "skipped", "manual"):
-            with self.subTest(status=status):
-                sleep = self._no_polling()
-                with (
-                    mock.patch.object(
-                        lifecycle,
-                        "_request",
-                        return_value=[{"id": 7, "status": status, "downstream_pipeline": None}],
-                    ) as request,
-                    self.assertRaisesRegex(
-                        lifecycle.GitLabCanaryError,
-                        f"parent pipeline 9 bridge 7 ended {status} without a child pipeline",
-                    ),
-                ):
-                    lifecycle._child(9, self.deadline)
-                request.assert_called_once_with(
-                    "GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/9/bridges"
-                )
-                sleep.assert_not_called()
-
-    def test_child_lookup_checks_all_bridges_for_a_child_before_status(self) -> None:
-        for status in ("running", "success", "failed", "canceled", "skipped", "manual"):
-            with self.subTest(status=status):
-                sleep = self._no_polling()
-                with mock.patch.object(
-                    lifecycle,
-                    "_request",
-                    return_value=[
-                        {"id": 7, "status": "failed", "downstream_pipeline": None},
-                        {"id": 8, "status": status, "downstream_pipeline": {"id": 10}},
-                    ],
-                ) as request:
-                    self.assertEqual(lifecycle._child(9, self.deadline), 10)
-                request.assert_called_once()
-                sleep.assert_not_called()
-
-    def test_child_lookup_stops_when_parent_settles_without_a_child(self) -> None:
-        for status in ("success", "failed", "canceled", "skipped", "manual"):
-            for bridges in ([], [{"id": 7, "status": "running", "downstream_pipeline": None}]):
-                with self.subTest(status=status, bridges=bridges):
-                    sleep = self._no_polling()
-                    with (
-                        mock.patch.object(
-                            lifecycle,
-                            "_request",
-                            side_effect=[bridges, {"status": status}, bridges],
-                        ) as request,
-                        self.assertRaisesRegex(
-                            lifecycle.GitLabCanaryError,
-                            f"parent pipeline 9 ended {status} without a child pipeline",
-                        ),
-                    ):
-                        lifecycle._child(9, self.deadline)
-                    self.assertEqual(
-                        request.call_args_list,
-                        [
-                            mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/{path}")
-                            for path in ("9/bridges", "9", "9/bridges")
-                        ],
-                    )
-                    sleep.assert_not_called()
-
-    def test_child_lookup_accepts_a_child_appearing_while_parent_settles(self) -> None:
-        sleep = self._no_polling()
-        with mock.patch.object(
-            lifecycle,
-            "_request",
-            side_effect=[
-                [],
-                {"status": "success"},
-                [{"id": 7, "status": "success", "downstream_pipeline": {"id": 10}}],
-            ],
-        ) as request:
-            self.assertEqual(lifecycle._child(9, self.deadline), 10)
-        self.assertEqual(request.call_count, 3)
-        sleep.assert_not_called()
-
-    def test_child_lookup_waits_for_pending_bridges_and_children(self) -> None:
-        with (
-            mock.patch.object(
-                lifecycle,
-                "_request",
-                side_effect=[
-                    [],
-                    {"status": "pending"},
-                    [{"id": 7, "status": "running", "downstream_pipeline": None}],
-                    {"status": "running"},
-                    [{"id": 7, "status": "running", "downstream_pipeline": {"id": 10}}],
-                ],
-            ),
-            mock.patch.object(lifecycle.time, "sleep") as sleep,
-        ):
-            self.assertEqual(lifecycle._child(9, self.deadline), 10)
-        self.assertEqual(sleep.call_args_list, [mock.call(10), mock.call(10)])
-
-    def test_child_lookup_tolerates_a_transient_outage(self) -> None:
-        with (
-            mock.patch.object(
-                lifecycle,
-                "_request",
-                side_effect=[
-                    lifecycle.GitLabCanaryError("outage", transient=True),
-                    [{"id": 7, "status": "running", "downstream_pipeline": {"id": 10}}],
-                ],
-            ),
-            mock.patch.object(lifecycle.time, "sleep") as sleep,
-        ):
-            self.assertEqual(lifecycle._child(9, self.deadline), 10)
-        sleep.assert_called_once_with(10)
-
-    def test_child_lookup_stops_at_campaign_deadline(self) -> None:
-        with (
-            mock.patch.object(
-                lifecycle, "_request", side_effect=[[], {"status": "running"}] * 2
-            ),
-            mock.patch.object(
-                lifecycle.time,
-                "monotonic",
-                side_effect=[self.deadline - 1, self.deadline - 1, self.deadline],
-            ),
-            mock.patch.object(lifecycle.time, "sleep") as sleep,
-            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "started no child pipeline"),
-        ):
-            lifecycle._child(9, self.deadline)
-        sleep.assert_called_once_with(1)
-
-
 class LifecycleStepTests(unittest.TestCase):
     def _driver(self) -> object:
         driver = lifecycle.GitLabLifecycle({"mr_iid": "3"}, time.monotonic() + 60)
@@ -241,75 +102,43 @@ class LifecycleStepTests(unittest.TestCase):
             ["blocking_alt", f"POST projects/{lifecycle.DEMO_PROJECT}/merge_requests/3/pipelines"],
         )
 
-    def test_complete_waits_for_parent_success_before_reading_post_result(self) -> None:
+    def test_complete_waits_for_pipeline_success_before_reading_its_post_result(self) -> None:
         driver = self._driver()
         post = {"status": "success"}
 
-        def post_result(child: int) -> dict[str, str]:
-            self.assertEqual(child, 10)
-            self.assertEqual(request.call_count, 3)
+        def post_result(pipeline: int) -> dict[str, str]:
+            self.assertEqual(pipeline, 9)
+            self.assertEqual(request.call_count, 2)
             return post
 
         with (
-            mock.patch.object(lifecycle, "_child", return_value=10),
             mock.patch.object(
-                lifecycle,
-                "_request",
-                side_effect=[
-                    {"status": "success"},
-                    {"status": "running"},
-                    {"status": "success"},
-                ],
+                lifecycle, "_request", side_effect=[{"status": "running"}, {"status": "success"}]
             ) as request,
             mock.patch.object(lifecycle.time, "sleep") as sleep,
             mock.patch.object(driver, "_post_result", side_effect=post_result),
         ):
-            self.assertEqual(driver.complete(9), (10, post))
-        self.assertEqual(
-            request.call_args_list,
-            [
-                mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/{pipeline}")
-                for pipeline in (10, 9, 9)
-            ],
-        )
+            self.assertEqual(driver.complete(9), (9, post))
+        self.assertEqual(request.call_args_list, [
+            mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/9")
+        ] * 2)
         sleep.assert_called_once_with(15)
 
-    def test_complete_rejects_unsuccessful_parent(self) -> None:
+    def test_complete_rejects_unsuccessful_pipeline_before_reading_artifacts(self) -> None:
         for status in ("failed", "canceled", "skipped", "manual"):
             with self.subTest(status=status):
                 driver = self._driver()
                 with (
-                    mock.patch.object(lifecycle, "_child", return_value=10),
-                    mock.patch.object(
-                        lifecycle,
-                        "_request",
-                        side_effect=[{"status": "success"}, {"status": status}],
-                    ),
-                    mock.patch.object(
-                        driver, "_post_result", return_value={"status": "success"}
-                    ) as post_result,
+                    mock.patch.object(lifecycle, "_request", return_value={"status": status}),
+                    mock.patch.object(driver, "_post_result") as post_result,
                     self.assertRaisesRegex(
-                        lifecycle.GitLabCanaryError, f"parent pipeline 9 ended {status}"
+                        lifecycle.GitLabCanaryError, f"GitLab pipeline 9 ended {status}"
                     ),
                 ):
                     driver.complete(9)
                 post_result.assert_not_called()
 
-    def test_complete_stops_immediately_on_child_failure(self) -> None:
-        driver = self._driver()
-        with (
-            mock.patch.object(lifecycle, "_child", return_value=10),
-            mock.patch.object(lifecycle, "_request", return_value={"status": "failed"}) as request,
-            mock.patch.object(
-                driver, "_post_result", return_value={"status": "success"}
-            ) as post_result,
-            self.assertRaisesRegex(lifecycle.GitLabCanaryError, "child pipeline 10 ended failed"),
-        ):
-            driver.complete(9)
-        request.assert_called_once_with("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/10")
-        post_result.assert_not_called()
-
-    def test_parent_polling_stops_at_campaign_deadline(self) -> None:
+    def test_pipeline_polling_stops_at_campaign_deadline(self) -> None:
         driver = self._driver()
         now = driver.deadline - 20
         sleeps: list[float] = []
@@ -320,25 +149,14 @@ class LifecycleStepTests(unittest.TestCase):
             now += delay
 
         with (
-            mock.patch.object(lifecycle, "_child", return_value=10),
-            mock.patch.object(
-                lifecycle,
-                "_request",
-                side_effect=[
-                    {"status": "success"},
-                    {"status": "running"},
-                    {"status": "running"},
-                ],
-            ) as request,
+            mock.patch.object(lifecycle, "_request", return_value={"status": "running"}) as request,
             mock.patch.object(lifecycle.time, "monotonic", side_effect=lambda: now),
             mock.patch.object(lifecycle.time, "sleep", side_effect=sleep),
-            mock.patch.object(
-                driver, "_post_result", return_value={"status": "success"}
-            ) as post_result,
+            mock.patch.object(driver, "_post_result") as post_result,
             self.assertRaisesRegex(lifecycle.GitLabCanaryError, "pipeline 9"),
         ):
             driver.complete(9)
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_count, 2)
         self.assertEqual(sleeps, [15, 5])
         post_result.assert_not_called()
 

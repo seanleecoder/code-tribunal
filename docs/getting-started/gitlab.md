@@ -1,22 +1,26 @@
 # Install Code Tribunal on GitLab
 
 Install Code Tribunal with a direct include and
-[protect its composition](#protect-the-ci-composition). The hardened mirrored
-child pipeline is [deprecated](#deprecated-hardened-child).
+[protect its composition](#protect-the-ci-composition).
 
 ## Prerequisites
 
-- A protected template project containing the two canonical files under
-  `ai-review/ci/`.
+- A protected template project containing `ai-review/ci/review.gitlab-ci.yml`.
 - The full 40-character commit SHA of the reviewed template revision.
 - Permission to configure protected CI/CD variables and merge-request settings.
 - An OpenRouter API key and a GitLab project access token with `api` scope.
 
-## Choose the integration
+## Install the direct include
 
 Copy the tested [direct include example](examples/gitlab-direct.yml) and replace
 the example project and SHA. Ensure the consumer pipeline declares an
 `ai_review` stage if its stage list does not already include one.
+
+Keep the example's `workflow: rules` in the consumer CI file: GitLab requires a
+merge-request rule [directly in that file](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/#configure-merge-request-pipelines),
+even when the included jobs already have matching rules. The example also allows
+`web` and `api` reviews when `CI_MERGE_REQUEST_IID` is supplied. Merge these rules
+with any existing workflow rules needed by the consumer's other jobs.
 
 ## Protect the CI composition
 
@@ -55,7 +59,6 @@ Audit the composition from a trusted checkout:
 ```bash
 python scripts/pipeline_trust.py \
   path/to/.gitlab-ci.yml \
-  --mode direct \
   --template-project org/code-tribunal-ci \
   --template-sha 1111111111111111111111111111111111111111
 ```
@@ -65,14 +68,17 @@ merge-request variables. Run the auditor from a protected scheduled pipeline or
 as a required check owned by an approval rule, not only ad hoc, so that drift in
 the composition is noticed without someone remembering to look.
 
-### Deprecated: hardened child
+### Migrate from the child pipeline
 
-The [hardened child example](examples/gitlab-child.yml) still works in 2.0.x and
-is removed in the next major release. Once the composition is protected and
-pipeline variables are restricted, its isolation settings add nothing; migrate to
-the direct include. Until then, keep both child includes at the same project and
-SHA, disable inherited/default variables, disable YAML and pipeline-variable
-forwarding, retain `strategy: mirror`, and audit with `--mode child`.
+The next major release removes the child wrapper and `parent_pipeline` rules.
+Before upgrading, protect the composition and restrict pipeline variables as
+described above. Replace the `ai_review` trigger job and its two nested includes
+with the top-level [direct include](examples/gitlab-direct.yml), pinned to the
+reviewed template project's full SHA. Keep `ai_review` in the consumer's stage
+list. Review jobs now run in the merge-request pipeline itself.
+
+Remove `--mode` from trust-auditor commands; the auditor accepts only the direct
+include. Complete the state migration below before switching images.
 
 ## Configure protected variables
 
@@ -84,6 +90,13 @@ In **Settings → CI/CD → Variables**, configure:
 | `GITLAB_TOKEN` | yes | yes | yes | Prepare, discussions, state, and commands |
 | `CURSOR_API_KEY` | yes | yes | only when Cursor is selected | Peer reviewer seat; required only when `AI_REVIEW_REVIEWERS` names `cursor` |
 | `AI_REVIEW_REVIEWERS` | no | yes | optional | Comma-separated panel of at least three seats; defaults to Claude, Codex, and OpenCode |
+
+For automatic MR reviews, enable **Allow merge request pipelines to access
+protected variables and runners** under **Settings → CI/CD → Variables**.
+GitLab requires protected source and target branches in the same project, and
+the triggering user needs push/merge access to the target branch. See
+[protected-resource access](https://docs.gitlab.com/ci/pipelines/merge_request_pipelines/#control-access-to-protected-variables-and-runners).
+An unprotected source ref receives no protected credentials, so prepare fails.
 
 Configure runtime overrides, listed in the
 [environment reference](../configuration.md#environment-variables), as protected

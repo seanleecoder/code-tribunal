@@ -104,7 +104,7 @@ def _request(
         headers={"PRIVATE-TOKEN": token, "Content-Type": "application/json"},
     )
     # Read polling must survive a transient timeout without tearing down a live
-    # child pipeline's protected ref. Only cleanup DELETEs explicitly accepting
+    # pipeline's protected ref. Only cleanup DELETEs explicitly accepting
     # an already-missing resource may be replayed after an ambiguous response.
     attempts = 3 if method == "GET" or idempotent else 1
     for attempt in range(attempts):
@@ -201,8 +201,7 @@ def candidate_template(template: str, args: argparse.Namespace, *, mock: bool = 
 def push_template_branch(
     args: argparse.Namespace, template: str, message: str = "candidate canary template"
 ) -> dict[str, Any]:
-    """Commit both template files to the template branch and record the first state."""
-    child = Path(args.child_template).read_text(encoding="utf-8")
+    """Commit the direct-include template and record the first state."""
     template_commit = _commit(
         TEMPLATE_PROJECT,
         args.branch,
@@ -213,16 +212,30 @@ def push_template_branch(
                 "file_path": "ai-review/ci/review.gitlab-ci.yml",
                 "content": template,
             },
-            {
-                "action": "update",
-                "file_path": "ai-review/ci/review-child.gitlab-ci.yml",
-                "content": child,
-            },
         ],
     )
     state: dict[str, Any] = {"branch": args.branch, "template_sha": str(template_commit["id"])}
     write_state(args.state, state)
     return state
+
+
+def consumer_config(template_sha: str) -> str:
+    """The temporary demo composition for this candidate's direct include."""
+    return f"""workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
+    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
+
+stages:
+  - test
+  - ai_review
+
+include:
+  - project: {TEMPLATE_PROJECT_PATH}
+    ref: "{template_sha}"
+    file: /ai-review/ci/review.gitlab-ci.yml
+"""
 
 
 def push_candidate_change(
@@ -250,17 +263,17 @@ def push_candidate_change(
         },
     )
 
-    demo_ci = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
-    demo_ci, ref_count = re.subn(
-        r'(?m)^(\s*ref:\s*)"[0-9a-f]{40}"$', rf'\g<1>"{template_sha}"', demo_ci
-    )
-    if ref_count != 2:
-        raise GitLabCanaryError(f"demo CI has {ref_count} trusted template refs, expected 2")
     _commit(
         DEMO_PROJECT,
         args.branch,
         message,
-        [{"action": "update", "file_path": ".gitlab-ci.yml", "content": demo_ci}, *fixture],
+        [
+            {
+                "action": "update", "file_path": ".gitlab-ci.yml",
+                "content": consumer_config(template_sha),
+            },
+            *fixture,
+        ],
     )
     _await_protection(args.branch)
     mr = _request(
@@ -300,40 +313,6 @@ def _first_pipeline(mr: str, deadline: float) -> int:
 
     return poll(step, error=GitLabCanaryError, deadline=deadline, interval=5,
                  timeout_message=f"merge request {mr} started no pipeline")
-
-
-def _child(parent: int, deadline: float) -> int:
-    """The child pipeline that ``parent``'s trigger bridge started."""
-    path = f"projects/{DEMO_PROJECT}/pipelines/{parent}"
-
-    def downstream(bridges: list[dict[str, Any]]) -> int | None:
-        for bridge in bridges:
-            if bridge.get("downstream_pipeline"):
-                return int(bridge["downstream_pipeline"]["id"])
-        return None
-
-    def step() -> int | None:
-        bridges = _request("GET", f"{path}/bridges")
-        if (child := downstream(bridges)) is not None:
-            return child
-        for bridge in bridges:
-            if bridge.get("status") in SETTLED_STATUSES:
-                raise GitLabCanaryError(
-                    f"parent pipeline {parent} bridge {bridge['id']} ended "
-                    f"{bridge['status']} without a child pipeline"
-                )
-        status = str(_request("GET", path)["status"])
-        if status in SETTLED_STATUSES:
-            # A child may have appeared between reading the bridges and the parent.
-            if (child := downstream(_request("GET", f"{path}/bridges"))) is not None:
-                return child
-            raise GitLabCanaryError(
-                f"parent pipeline {parent} ended {status} without a child pipeline"
-            )
-        return None
-
-    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=10,
-                 timeout_message=f"parent pipeline {parent} started no child pipeline")
 
 
 def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
@@ -380,15 +359,14 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
-    parent = _first_pipeline(state["mr_iid"], deadline)
-    child = _succeeded(_child(parent, deadline), deadline, "GitLab child")
+    pipeline = _succeeded(_first_pipeline(state["mr_iid"], deadline), deadline, "GitLab")
 
     destination = Path(args.destination)
     inputs = destination / "inputs"
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    for job in _jobs(child["id"]):
+    for job in _jobs(pipeline["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
         archive = destination / f"job-{job['id']}.zip"
@@ -400,8 +378,8 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
             source = extracted / name
             if source.is_dir():
                 shutil.copytree(source, target, dirs_exist_ok=True)
-    state["pipeline_id"] = str(child["id"])
-    state["external_run_url"] = str(child["web_url"])
+    state["pipeline_id"] = str(pipeline["id"])
+    state["external_run_url"] = str(pipeline["web_url"])
     write_state(args.state, state)
     return state
 
@@ -440,16 +418,14 @@ def cleanup_campaign(args: argparse.Namespace) -> None:
 
 def configure_create(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--template", required=True)
-    parser.add_argument("--child-template", required=True)
 
 
 # -- mock lifecycle ------------------------------------------------------
 #
 # The zero-token GitLab mock lifecycle (Chain B). The template branch's stage
 # commands run every seat in mock mode, and the protected demo branch adds the
-# lifecycle fixture. The hardened child topology forwards no pipeline variables,
-# so the scenario is a temporary AI_REVIEW_MOCK_SCENARIO project variable,
-# changed between steps and deleted at cleanup; mock mode itself lives only on the
+# lifecycle fixture. The scenario is a temporary AI_REVIEW_MOCK_SCENARIO project
+# variable, changed between steps and deleted at cleanup; mock mode itself lives only on the
 # temporary template branch, so a leftover scenario variable changes nothing.
 # Every step re-drives the same head with a new merge-request pipeline.
 
@@ -512,13 +488,13 @@ class GitLabLifecycle(Lifecycle):
         # create_lifecycle sets the first scenario before opening the MR.
         self.scenario = "blocking"
 
-    def _archives(self, child: int, name_prefix: str) -> Iterator[zipfile.ZipFile]:
-        for job in _jobs(child):
+    def _archives(self, pipeline: int, name_prefix: str) -> Iterator[zipfile.ZipFile]:
+        for job in _jobs(pipeline):
             if job["name"].startswith(name_prefix) and job.get("artifacts_file"):
                 yield zipfile.ZipFile(io.BytesIO(_artifacts(job)))
 
-    def _post_result(self, child: int) -> dict[str, Any]:
-        for archive in self._archives(child, "post_ai_review"):
+    def _post_result(self, pipeline: int) -> dict[str, Any]:
+        for archive in self._archives(pipeline, "post_ai_review"):
             return json.loads(archive.read("out/post/post_result.json"))
         raise LifecycleFailure("post_ai_review uploaded no post_result.json")
 
@@ -534,11 +510,8 @@ class GitLabLifecycle(Lifecycle):
         return int(pipeline["id"])
 
     def complete(self, run: int) -> tuple[int, dict[str, Any]]:
-        child = _child(run, self.deadline)
-        _succeeded(child, self.deadline, "child")
-        # GitLab can finish the child before updating its mirrored parent.
-        _succeeded(run, self.deadline, "parent")
-        return child, self._post_result(child)
+        _succeeded(run, self.deadline, "GitLab")
+        return run, self._post_result(run)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
         loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
@@ -621,8 +594,8 @@ def run_lifecycle(args: argparse.Namespace) -> int:
 # -- hostile-MR probe ----------------------------------------------------
 #
 # Opens a merge request from an **unprotected** demo branch whose
-# ``.gitlab-ci.yml`` attacks the hardened child topology: it overrides the image
-# pins, turns variable inheritance and forwarding on, enumerates credentials
+# ``.gitlab-ci.yml`` attacks the direct include: it overrides the image
+# pins and a reserved job, enumerates credentials
 # (printing presence only, never values), and forges publication artifacts. The
 # live-only claims are that GitLab withholds every protected credential from the
 # unprotected ref, that prepare fails closed, that nothing consumes the forgery,
@@ -646,35 +619,14 @@ def hostile_config(template_sha: str) -> str:
         f'    - test -n "${{{name}:-}}" && echo "{name} IS PRESENT" || echo "{name} absent"'
         for name in GITLAB_SECRETS
     )
-    include = "\n".join(
-        f"      - project: {TEMPLATE_PROJECT_PATH}\n"
-        f'        ref: "{template_sha}"\n'
-        f"        file: /ai-review/ci/{name}"
-        for name in ("review-child.gitlab-ci.yml", "review.gitlab-ci.yml")
-    )
-    return f"""variables:
+    return consumer_config(template_sha) + f"""
+variables:
   AI_REVIEW_TRUSTED_IMAGE_SHA: "{"0" * 40}"
   AI_REVIEW_BASE_IMAGE: "{HOSTILE_IMAGE}"
   AI_REVIEW_REVIEWER_IMAGE: "{HOSTILE_IMAGE}"
 
-stages:
-  - test
-  - ai_review
-
-ai_review:
-  stage: ai_review
-  needs: []
-  inherit:
-    variables: true
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  trigger:
-    include:
-{include}
-    strategy: mirror
-    forward:
-      yaml_variables: true
-      pipeline_variables: true
+prepare_ai_review:
+  image: {HOSTILE_IMAGE}
 
 hostile_enumerate_credentials:
   stage: test
@@ -686,6 +638,7 @@ hostile_enumerate_credentials:
 
 hostile_forge_publication:
   stage: ai_review
+  needs: []
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   image: {HOSTILE_IMAGE}
@@ -765,9 +718,7 @@ class HostileProbe:
         self.mr = str(state["mr_iid"])
         self.template_sha = str(state["template_sha"])
         self.deadline = deadline
-        self.parent = 0
-        self.parent_jobs: dict[str, dict[str, Any]] = {}
-        self.child_jobs: dict[str, dict[str, Any]] = {}
+        self.jobs: dict[str, dict[str, Any]] = {}
         self.prepare_trace = ""
 
     def _jobs_by_name(self, pipeline: int) -> dict[str, dict[str, Any]]:
@@ -817,34 +768,28 @@ class HostileProbe:
         ]
 
     def auditor_rejects_hostile(self) -> dict[str, Any]:
-        """The auditor rejects the hostile composition and accepts the demo's own
-        default-branch composition at its pinned template."""
+        """Reject the attack and accept the candidate's legitimate direct composition."""
         hostile = find_trust_issues(
             yaml.safe_load(hostile_config(self.template_sha)),
-            mode="child",
             expected_template_project=TEMPLATE_PROJECT_PATH,
             expected_template_sha=self.template_sha,
         )
-        consumer_text = _raw_file(DEMO_PROJECT, ".gitlab-ci.yml")
-        consumer_refs = set(re.findall(r'(?m)^\s*ref:\s*"([0-9a-f]{40})"$', consumer_text))
-        expect(len(consumer_refs) == 1, "the demo's default branch pins no single template")
         legitimate = find_trust_issues(
-            yaml.safe_load(consumer_text),
-            mode="child",
+            yaml.safe_load(consumer_config(self.template_sha)),
             expected_template_project=TEMPLATE_PROJECT_PATH,
-            expected_template_sha=consumer_refs.pop(),
+            expected_template_sha=self.template_sha,
         )
         expect(bool(hostile), "the trust auditor accepted the hostile composition")
-        expect(not legitimate, f"the trust auditor rejected the demo's own config: {legitimate}")
+        expect(not legitimate, f"the trust auditor rejected the candidate config: {legitimate}")
         return {"hostile_issues": len(hostile), "legitimate_issues": 0}
 
     def credentials_withheld(self) -> dict[str, Any]:
         """Protected credentials are withheld from the unprotected ref. Only the
         presence lines are read; the trace itself is never retained."""
-        self.parent = _first_pipeline(self.mr, self.deadline)
-        _settled(self.parent, self.deadline)
-        self.parent_jobs = self._jobs_by_name(self.parent)
-        enumerate_job = self.parent_jobs.get("hostile_enumerate_credentials")
+        pipeline = _first_pipeline(self.mr, self.deadline)
+        _settled(pipeline, self.deadline)
+        self.jobs = self._jobs_by_name(pipeline)
+        enumerate_job = self.jobs.get("hostile_enumerate_credentials")
         expect(
             enumerate_job is not None and enumerate_job["status"] == "success",
             "credential enumeration job did not run",
@@ -868,16 +813,14 @@ class HostileProbe:
         return presence
 
     def prepare_fails_closed(self) -> dict[str, Any]:
-        """The child chain fails closed at prepare and every later stage is skipped."""
-        child = _child(self.parent, self.deadline)
-        _settled(child, self.deadline)
-        self.child_jobs = self._jobs_by_name(child)
-        prepare = self.child_jobs.get("prepare_ai_review")
+        """Prepare fails closed and every later Code Tribunal job is skipped."""
+        prepare = self.jobs.get("prepare_ai_review")
         expect(prepare is not None and prepare["status"] == "failed", "prepare did not fail closed")
         downstream_statuses = {
             name: job["status"]
-            for name, job in self.child_jobs.items()
-            if name != "prepare_ai_review"
+            for name, job in self.jobs.items()
+            if name.startswith(("AI review:", "AI critique:"))
+            or name in {"consensus_ai_review", "post_ai_review"}
         }
         expect(
             bool(downstream_statuses)
@@ -894,16 +837,16 @@ class HostileProbe:
 
     def forgery_unconsumed(self) -> dict[str, Any]:
         """The forged publication artifacts exist but no publication stage ran;
-        prepare_fails_closed already proved every child stage was skipped."""
-        forge = self.parent_jobs.get("hostile_forge_publication")
+        prepare_fails_closed already proved every downstream review job was skipped."""
+        forge = self.jobs.get("hostile_forge_publication")
         expect(
             forge is not None and forge["status"] == "success",
             "the forging job did not upload its artifacts",
         )
         consumers = ("consensus_ai_review", "post_ai_review")
-        missing = [name for name in consumers if name not in self.child_jobs]
-        expect(not missing, f"publication stages are missing from the child: {missing}")
-        return {name: self.child_jobs[name]["status"] for name in consumers}
+        missing = [name for name in consumers if name not in self.jobs]
+        expect(not missing, f"publication stages are missing from the pipeline: {missing}")
+        return {name: self.jobs[name]["status"] for name in consumers}
 
     def image_substituted(self) -> dict[str, Any]:
         """Known limitation, recorded rather than asserted."""

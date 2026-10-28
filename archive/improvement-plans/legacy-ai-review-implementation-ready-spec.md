@@ -2070,8 +2070,8 @@ The executable templates are the only source of truth for CI syntax:
 
 - [`ai-review/ci/review.gitlab-ci.yml`](../../ai-review/ci/review.gitlab-ci.yml)
   defines the review DAG.
-- [`ai-review/ci/review-child.gitlab-ci.yml`](../../ai-review/ci/review-child.gitlab-ci.yml)
-  supplies the child pipeline's single stage.
+- The former `ai-review/ci/review-child.gitlab-ci.yml` supplied the child
+  pipeline's single stage; N02 removed it. Git history retains the template.
 - The [GitLab integration guide](../../docs/getting-started/gitlab.md)
   and trusted-CI runbook
   contain consumer examples.

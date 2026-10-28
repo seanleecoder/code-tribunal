@@ -585,28 +585,26 @@ class CandidateCollectionTests(unittest.TestCase):
             # Opening the PR already started the one review run; dispatching bills a second.
             self.assertFalse(any(command[:3] == ("gh", "workflow", "run") for command in commands))
 
-    def test_gitlab_discovers_child_once_then_polls_only_that_pipeline(self) -> None:
+    def test_gitlab_discovers_mr_pipeline_once_then_polls_only_that_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state.json"
             state.write_text(json.dumps({"mr_iid": "7"}), encoding="utf-8")
-            parent_requests = 0
-            child_polls = iter(
+            discovery_requests = 0
+            pipeline_polls = iter(
                 [
-                    {"id": 22, "web_url": "child", "status": "running"},
-                    {"id": 22, "web_url": "child", "status": "success"},
+                    {"id": 11, "web_url": "pipeline", "status": "running"},
+                    {"id": 11, "web_url": "pipeline", "status": "success"},
                 ]
             )
 
             def request(_method: str, path: str, **_kwargs: object):
-                nonlocal parent_requests
+                nonlocal discovery_requests
                 if path.endswith("merge_requests/7/pipelines"):
-                    parent_requests += 1
+                    discovery_requests += 1
                     return [{"id": 11}]
-                if path.endswith("pipelines/11/bridges"):
-                    return [{"downstream_pipeline": {"id": 22}}]
-                if path.endswith("pipelines/22"):
-                    return next(child_polls)
-                if path.endswith("pipelines/22/jobs?per_page=100"):
+                if path.endswith("pipelines/11"):
+                    return next(pipeline_polls)
+                if path.endswith("pipelines/11/jobs?per_page=100"):
                     return []
                 raise AssertionError(path)
 
@@ -618,8 +616,8 @@ class CandidateCollectionTests(unittest.TestCase):
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):
                 result = self.gitlab.collect_campaign(args)
-            self.assertEqual(parent_requests, 1)
-            self.assertEqual(result["external_run_url"], "child")
+            self.assertEqual(discovery_requests, 1)
+            self.assertEqual(result["external_run_url"], "pipeline")
 
 
 class CandidateCanaryCleanupTests(unittest.TestCase):
@@ -631,7 +629,6 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
     def _gitlab_args(state: Path) -> argparse.Namespace:
         return argparse.Namespace(
             template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
-            child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
             branch="candidate-test",
             base_image="base",
             reviewer_image="reviewer",
@@ -642,8 +639,6 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
     @staticmethod
     def _gitlab_raw_file(_project: str, path: str, ref: str = "main") -> str:
         del ref
-        if path == ".gitlab-ci.yml":
-            return 'first:\n  ref: "' + "0" * 40 + '"\nsecond:\n  ref: "' + "1" * 40 + '"\n'
         return "    return normalize_username(username) in normalized_allowed\n"
 
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
@@ -770,6 +765,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
 
     def test_gitlab_protects_the_branch_before_it_exists_and_waits_before_the_mr(self) -> None:
         events: list[str] = []
+        committed: dict[str, list[dict[str, str]]] = {}
         protected_reports = iter([False, False, True])
 
         def request(method: str, path: str, **_kwargs: object) -> object:
@@ -784,8 +780,11 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 return {"iid": 9, "web_url": "https://gitlab.example/mr/9"}
             raise AssertionError(f"unexpected {method} {path}")
 
-        def commit(project: str, *_args: object, **_kwargs: object) -> dict[str, object]:
+        def commit(
+            project: str, branch: str, message: str, actions: list[dict[str, str]]
+        ) -> dict[str, object]:
             events.append(f"commit:{project}")
+            committed[project] = actions
             return {"id": "d" * 40}
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -800,6 +799,26 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         demo = f"commit:{self.gitlab.DEMO_PROJECT}"
         self.assertLess(events.index("protect"), events.index(demo))
         self.assertEqual(events[events.index(demo) + 1 :], ["check", "check", "check", "open_mr"])
+        self.assertEqual(
+            [action["file_path"] for action in committed[self.gitlab.TEMPLATE_PROJECT]],
+            ["ai-review/ci/review.gitlab-ci.yml"],
+        )
+        config = yaml.safe_load(committed[self.gitlab.DEMO_PROJECT][0]["content"])
+        self.assertEqual(config["include"], [{
+            "project": self.gitlab.TEMPLATE_PROJECT_PATH,
+            "ref": "d" * 40,
+            "file": "/ai-review/ci/review.gitlab-ci.yml",
+        }])
+        self.assertEqual(config["stages"], ["test", "ai_review"])
+        self.assertEqual(config["workflow"]["rules"], [
+            {"if": '$CI_PIPELINE_SOURCE == "merge_request_event"'},
+            {"if": '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'},
+            {"if": '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'},
+        ])
+        self.assertEqual(self.gitlab.find_trust_issues(
+            config, expected_template_project=self.gitlab.TEMPLATE_PROJECT_PATH,
+            expected_template_sha="d" * 40,
+        ), [])
 
     def test_gitlab_cleanup_attempts_every_resource_and_aggregates_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1099,8 +1118,8 @@ class GitLabCanaryPollingTests(unittest.TestCase):
             self.now = 0
             responses = (
                 [b'{"protected":true}'] if protection else [
-                    b'[{"id":11}]', b'[{"downstream_pipeline":{"id":22}}]',
-                    b'{"id":22,"status":"success","web_url":"child"}', b'[]',
+                    b'[{"id":11}]',
+                    b'{"id":11,"status":"success","web_url":"pipeline"}', b'[]',
                 ]
             )
             with (
@@ -1147,18 +1166,18 @@ class GitLabCanaryPollingTests(unittest.TestCase):
             request.assert_called_once()
         self.assertEqual(self.sleeps, [])
 
-    def test_child_poll_outage_retains_discovery_and_settled_failure_is_immediate(self) -> None:
+    def test_pipeline_poll_outage_retains_discovery_and_settled_failure_is_immediate(self) -> None:
         with (
             tempfile.TemporaryDirectory() as tmp,
             mock.patch.object(self.gitlab, "_request", side_effect=[
-                [{"id": 11}], [{"downstream_pipeline": {"id": 22}}],
+                [{"id": 11}],
                 self.gitlab.GitLabCanaryError("outage", transient=True),
-                {"id": 22, "status": "failed"},
+                {"id": 11, "status": "failed"},
             ]) as request,
-            self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "pipeline 22 ended failed"),
+            self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "pipeline 11 ended failed"),
         ):
             self._poll(False, tmp)
-        self.assertEqual(request.call_count, 4)
+        self.assertEqual(request.call_count, 3)
         self.assertEqual(request.call_args_list[-1], request.call_args_list[-2])
         self.assertEqual(self.sleeps, [15])
 
@@ -1166,8 +1185,8 @@ class GitLabCanaryPollingTests(unittest.TestCase):
         for final in (self.gitlab.GitLabCanaryError("job-list outage", transient=True),
                       [{"id": 33, "status": "success", "artifacts_file": {"filename": "out.zip"}}]):
             responses = [
-                [{"id": 11}], [{"downstream_pipeline": {"id": 22}}],
-                {"id": 22, "status": "success", "web_url": "child"}, final,
+                [{"id": 11}],
+                {"id": 11, "status": "success", "web_url": "pipeline"}, final,
             ]
             if isinstance(final, list):
                 responses.append(self.gitlab.GitLabCanaryError("artifact outage", transient=True))

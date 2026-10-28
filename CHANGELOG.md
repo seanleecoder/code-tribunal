@@ -9,6 +9,15 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: GitLab supports protected direct includes
+  only (N02). The child stage wrapper and `parent_pipeline` rules are removed;
+  replace the trigger job with a top-level include and retain the `ai_review`
+  stage before upgrading. The trust auditor no longer takes `--mode`.
+  Protect the CI composition and restrict pipeline variables as described in the
+  [GitLab installation guide](docs/getting-started/gitlab.md).
+  Panel, lifecycle and hostile canaries run in the MR pipeline itself; existing
+  child-topology evidence must be replaced by a direct-include hostile campaign
+  before release.
 - Breaking, for the next major release: GitHub consumers call
   `.github/workflows/ai-review-reusable.yml` at a reviewed release SHA (N03).
   The copied canonical template and synchronization tooling are deleted; this

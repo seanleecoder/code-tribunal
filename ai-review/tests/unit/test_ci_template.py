@@ -15,7 +15,6 @@ from unittest import mock
 import yaml
 
 _CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
-_CHILD_CI_TEMPLATE = Path(__file__).resolve().parents[2] / "ci" / "review-child.gitlab-ci.yml"
 _REVIEW_CONFIG = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _GITHUB_WORKFLOW = _REPO_ROOT / ".github/workflows/ai-review-reusable.yml"
@@ -332,30 +331,17 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
     def test_template_uses_one_stage_and_same_stage_needs_dag(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
-        child_text = _CHILD_CI_TEMPLATE.read_text(encoding="utf-8")
 
         # prepare, review, critique, consensus, post — the gate job is gone and
         # must not come back.
         self.assertEqual(text.count("stage: ai_review"), 5)
         self.assertNotIn("ai_review_gate:", text)
         self.assertNotIn("python -m ai_review.gate", text)
-        self.assertRegex(child_text, r"(?m)^stages:\n  - ai_review$")
-        self.assertNotRegex(child_text, r"(?m)^include:")
         for retired_stage in ("prepare", "review", "critique", "consensus", "post", "gate"):
             self.assertNotIn(f"stage: {retired_stage}\n", text)
         prepare = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
         self.assertIsNotNone(prepare)
         self.assertIn("needs: []", prepare.group(1))
-
-    def test_child_pipeline_source_and_manual_mode_are_supported(self) -> None:
-        text = _CI_TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn('$CI_PIPELINE_SOURCE == "parent_pipeline"', text)
-        self.assertIn(
-            '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID '
-            '&& $AI_REVIEW_MANUAL == "true"',
-            text,
-        )
 
     def test_web_and_api_rules_require_merge_request_iid(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")

@@ -167,6 +167,13 @@ applied, and the review checks the evidence it cites.
   inherited or named secrets, automatic and manual review, fork skipping, and
   the new `ai-review / post` check name. The local-copy canary exercises the call
   structure but does not prove external SHA lookup and cross-repository scope.
+- [ ] **GitLab direct-include cutover:** for the first N02 release, confirm the
+  demo allows MR pipelines to access protected variables/runners, with protected
+  source and target branches for panel/lifecycle. Run `hostile` with the direct
+  include on an unprotected source; earlier child-topology evidence does not
+  prove this composition. The persistent consumer must follow the
+  [GitLab migration guide](../getting-started/gitlab.md#migrate-from-the-child-pipeline)
+  before adoption.
 - [ ] **Known limitations:** update the
   [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps), removing
   what this release closed and adding what it found, and write any gap that limits

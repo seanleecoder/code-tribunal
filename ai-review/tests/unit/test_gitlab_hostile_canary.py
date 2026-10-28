@@ -19,22 +19,6 @@ from tests.support.repository_script import load_repository_script
 ROOT = Path(__file__).resolve().parents[3]
 hostile = load_repository_script("canary_gitlab", ROOT / "scripts/canary_gitlab.py")
 TEMPLATE_SHA = "a" * 40
-CONSUMER = (
-    "ai_review:\n"
-    "  stage: ai_review\n"
-    "  needs: []\n"
-    "  inherit:\n    variables: false\n"
-    "  trigger:\n"
-    "    include:\n"
-    f"      - project: {hostile.TEMPLATE_PROJECT_PATH}\n"
-    f'        ref: "{"b" * 40}"\n'
-    "        file: /ai-review/ci/review-child.gitlab-ci.yml\n"
-    f"      - project: {hostile.TEMPLATE_PROJECT_PATH}\n"
-    f'        ref: "{"b" * 40}"\n'
-    "        file: /ai-review/ci/review.gitlab-ci.yml\n"
-    "    strategy: mirror\n"
-    "    forward:\n      yaml_variables: false\n      pipeline_variables: false\n"
-)
 
 
 def _gitlab_log(lines: list[str]) -> str:
@@ -50,6 +34,7 @@ class FakeGitLab:
         archive: bytes | None = None,
         advertise_archive: bool = False,
         archive_error: int | None = None,
+        downstream_status: str = "skipped",
         prepare_upload: str = "WARNING: inputs/: no matching files\nERROR: No files to upload",
     ) -> None:
         lines = []
@@ -62,6 +47,7 @@ class FakeGitLab:
             {"filename": "artifacts.zip"} if archive is not None or advertise_archive else {}
         )
         self.archive_error = archive_error
+        self.downstream_status = downstream_status
         self.prepare_output = f"Pulling docker image {hostile.HOSTILE_IMAGE} ...\n{prepare_upload}"
         self.prepare_trace = _gitlab_log(self.prepare_output.splitlines())
 
@@ -72,22 +58,18 @@ class FakeGitLab:
             return [
                 {"id": 11, "name": "hostile_enumerate_credentials", "status": "success"},
                 {"id": 12, "name": "hostile_forge_publication", "status": "success"},
-            ]
-        if path.endswith("/pipelines/1/bridges"):
-            return [{"downstream_pipeline": {"id": 2}}]
-        if path.endswith("/pipelines/2/jobs?per_page=100"):
-            return [
                 {
                     "id": 21,
                     "name": "prepare_ai_review",
                     "status": "failed",
                     "artifacts_file": self.artifacts_file,
                 },
-                {"id": 22, "name": "AI review: [claude]", "status": "skipped"},
+                {"id": 22, "name": "AI review: [claude]", "status": self.downstream_status},
+                {"id": 25, "name": "AI critique: [claude]", "status": self.downstream_status},
                 {"id": 23, "name": "consensus_ai_review", "status": "skipped"},
                 {"id": 24, "name": "post_ai_review", "status": "skipped"},
             ]
-        if path.endswith("/pipelines/1") or path.endswith("/pipelines/2"):
+        if path.endswith("/pipelines/1"):
             return {"status": "failed"}
         if path.endswith("/jobs/11/trace"):
             return self.trace.encode()
@@ -110,10 +92,7 @@ def _run(fake: FakeGitLab) -> dict[str, dict[str, Any]]:
     probe = hostile.HostileProbe(
         {"mr_iid": "5", "template_sha": TEMPLATE_SHA}, time.monotonic() + 60
     )
-    with (
-        mock.patch.object(hostile, "_request", side_effect=fake),
-        mock.patch.object(hostile, "_raw_file", return_value=CONSUMER),
-    ):
+    with mock.patch.object(hostile, "_request", side_effect=fake):
         return {name: step() for name, step in probe.steps()}
 
 
@@ -128,7 +107,6 @@ def _archive(*entries: tuple[str | zipfile.ZipInfo, bytes]) -> bytes:
 def _create_args(directory: Path, branch: str) -> argparse.Namespace:
     return argparse.Namespace(
         template=str(ROOT / "ai-review/ci/review.gitlab-ci.yml"),
-        child_template=str(ROOT / "ai-review/ci/review-child.gitlab-ci.yml"),
         branch=branch,
         state=str(directory / "state.json"),
         runtime_source="a" * 40,
@@ -160,11 +138,13 @@ class HostileConfigTests(unittest.TestCase):
                 self.assertNotIn(f"echo ${{{name}", text)
         issues = hostile.find_trust_issues(
             yaml.safe_load(text),
-            mode="child",
             expected_template_project=hostile.TEMPLATE_PROJECT_PATH,
             expected_template_sha=TEMPLATE_SHA,
         )
-        self.assertEqual(len(issues), 2)
+        self.assertTrue(any("prepare_ai_review" in issue for issue in issues))
+        config = yaml.safe_load(text)
+        self.assertEqual(config["include"][0]["ref"], TEMPLATE_SHA)
+        self.assertEqual(config["hostile_forge_publication"]["needs"], [])
 
     def test_create_refuses_unless_the_branch_is_confirmed_unprotected(self) -> None:
         responses = (
@@ -253,10 +233,7 @@ class HostileProbeTests(unittest.TestCase):
             args = argparse.Namespace(
                 state=str(state), timeout_seconds=60, summary_out=str(summary)
             )
-            with (
-                mock.patch.object(hostile, "_request", side_effect=fake),
-                mock.patch.object(hostile, "_raw_file", return_value=CONSUMER),
-            ):
+            with mock.patch.object(hostile, "_request", side_effect=fake):
                 self.assertEqual(hostile.run_probe(args), 1)
             written = json.loads(summary.read_text(encoding="utf-8"))
         self.assertFalse(written["passed"])
@@ -281,6 +258,12 @@ class HostileProbeTests(unittest.TestCase):
                     FakeGitLab(archive=archive, prepare_upload="Uploading artifacts... 201 Created")
                 )
                 self.assertTrue(observed["prepare_fails_closed"]["empty_input_bundle"])
+
+    def test_running_review_jobs_fail_even_when_hostile_jobs_share_the_pipeline(self) -> None:
+        for status in ("success", "failed", "running"):
+            with self.subTest(status=status):
+                written = self._assert_failed_summary(FakeGitLab(downstream_status=status))
+                self.assertIn("a stage ran after the failed prepare", written["steps"][-1]["error"])
 
     def test_nonempty_or_unexpected_archives_fail_despite_absence_markers(self) -> None:
         cases = {

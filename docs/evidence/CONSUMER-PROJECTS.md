@@ -139,19 +139,25 @@ Public, project id `84667714`. Verified present:
   the correct resting state and means 1.0.0's demo-hygiene item was completed here.
   Re-verify before every Chain A run regardless — these are project-wide and sticky,
   and a stale `AI_REVIEW_LOCAL_MOCK=1` silently invalidates a real run.
-- A `.gitlab-ci.yml` in the hardened child topology: a single `ai_review` trigger job
-  with `inherit.variables: false`, `strategy: mirror`, both
-  `forward.yaml_variables` and `forward.pipeline_variables` false, and exactly two
-  same-project includes — `review-child.gitlab-ci.yml` and `review.gitlab-ci.yml` —
-  at **one identical SHA**, currently `f8ae2138261d03447f68e5a30ff9ac44ac202bcb`
-  (2.0.0, consumer commit `5900e34`).
+- The recorded pre-N02 `.gitlab-ci.yml` uses a hardened child trigger with two
+  includes at `f8ae2138261d03447f68e5a30ff9ac44ac202bcb` (2.0.0, consumer commit
+  `5900e34`). N02's temporary canary branches install a direct include at the
+  candidate template SHA, independently of this resting deployment. Migrate the
+  persistent consumer using the [GitLab installation guide](../getting-started/gitlab.md)
+  before its first N02 adoption; complete the state v2 migration as well.
+
+Before the first N02 campaign, enable the demo's **Allow merge request pipelines
+to access protected variables and runners** setting and confirm `main` remains
+protected. The orchestrator protects each panel/lifecycle source branch; the
+hostile source stays unprotected. `make demo-preflight` checks credential
+inventory and flags, but does not inspect this project setting.
 
 The **three GitLab pin variables** live in the template project's
 `ai-review/ci/review.gitlab-ci.yml` `variables:` block, not in the consumer, and must
 be replaced together: `AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`, and
 `AI_REVIEW_TRUSTED_IMAGE_SHA`. Check their current values in the template project
 before the repin; do not trust a value recorded here. Push the update
-as a new template commit and then point **both** consumer includes at that new SHA.
+as a new template commit and then point the consumer's direct include at that new SHA.
 
 **Two branch classes, and the distinction is load-bearing:**
 
@@ -180,9 +186,9 @@ unprotected `hostile/unprotected-71dfabc`). `!1`–`!9` are the earlier
 P0 symlink and hostile-forwarding fixtures. All are closed; none should be deleted.
 
 Mock toggles go in as **project** CI/CD variables, not manual "Run pipeline"
-variables: project variables apply to push-triggered `merge_request_event` pipelines
-and reach the child where forwarding is disabled, whereas manual variables are
-dropped by any push-triggered pipeline and would silently run real. Flip
+variables: project variables apply to push-triggered `merge_request_event`
+pipelines, whereas manual variables are dropped by push-triggered pipelines and
+would silently run real. Flip
 `AI_REVIEW_MOCK_SCENARIO` by editing the project variable in place and re-triggering
 with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
 *retry*, which only re-runs failed jobs and so does not re-drive prepare→post. Project variables are sticky and project-wide: delete them
@@ -213,8 +219,8 @@ refresh surface.
    Use the temporary canary pair for deterministic mock checks; the persistent
    production caller exposes no mock switch.
 4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then
-   point **both** consumer includes at that new SHA. Two different SHAs, or a stale
-   template pin, means the evidence exercised the wrong images.
+   point the consumer's direct include at that new SHA. A stale template pin
+   means the evidence exercised the wrong images.
 5. Confirm no GitHub ruleset requires the retired `gate` check (a leftover entry
    makes every PR unmergeable) and that GitLab
    `only_allow_merge_if_pipeline_succeeds` is still true. On GitLab that setting
