@@ -46,15 +46,15 @@ class RequiredVersionTests(unittest.TestCase):
 class ExecutedToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tools = load_repository_script("check_dev_tools", SCRIPT)
+        self.metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
+            {"module": "/fixture/mypy/__init__.py", "executable": ""})
 
     def test_executed_version_controls_gate(self) -> None:
-        metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
-            {"module": "/fixture/mypy/__init__.py", "executable": ""})
         for actual, exit_code, accepted in [("2.4.0", 0, True), ("2.3.0", 0, False),
                                             ("2.4.0", 1, False)]:
             with self.subTest(actual=actual, exit_code=exit_code):
                 result = subprocess.CompletedProcess([], exit_code, f"mypy {actual}\n",
-                                                     metadata + "\n")
+                                                     self.metadata + "\n")
                 with patch.object(self.tools.subprocess, "run", return_value=result) as execute, \
                         contextlib.redirect_stdout(io.StringIO()), \
                         contextlib.redirect_stderr(io.StringIO()):
@@ -62,10 +62,8 @@ class ExecutedToolTests(unittest.TestCase):
                 self.assertEqual(execute.call_args.args[0][:2], [sys.executable, "-B"])
 
     def test_failed_tool_preserves_startup_and_tool_diagnostics(self) -> None:
-        metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
-            {"module": "/fixture/mypy/__init__.py", "executable": ""})
         result = subprocess.CompletedProcess(
-            [], 1, "mypy 2.4.0\n", f"startup warning\n{metadata}\ntool failed\n")
+            [], 1, "mypy 2.4.0\n", f"startup warning\n{self.metadata}\ntool failed\n")
         errors = io.StringIO()
         with patch.object(self.tools.subprocess, "run", return_value=result), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
