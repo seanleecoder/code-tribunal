@@ -3,9 +3,10 @@
 Use Python 3.14 from the repository root:
 
 ```bash
-python3 -m pip install -r requirements-dev.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 export PYTHONPATH="$PWD/ai-review/src"
-python3 scripts/check_markdown_links.py install \
+.venv/bin/python scripts/check_markdown_links.py install \
   --cache-dir .venv/lychee-cache --bin-dir .venv/bin
 export PATH="$PWD/.venv/bin:$PATH"
 make quality
@@ -18,7 +19,56 @@ The Lychee installer selects the reviewed native archive for Linux x86-64 or
 macOS Intel/Apple Silicon and verifies its pinned SHA-256 before placing it on
 the local `PATH`; the gate never compiles or silently skips the tool.
 
-Useful focused commands:
+`make` selects the checkout's `.venv/bin/python` when present. Override `PYTHON`
+with an **absolute** project interpreter when checking a disposable source copy.
+The Ruff and mypy gates check executed versions against `requirements-dev.txt`
+and print interpreter, module and executable provenance.
+
+### Termux development profile
+
+Test installs in a disposable venv first; do not overwrite an existing
+environment with system packages enabled.
+
+Ruff's ordinary Android source build requires a native Rust toolchain. On
+Termux aarch64 this explicit setup downloads the same pinned upstream static
+musllinux executable and Python shim from PyPI, checks the download against
+PyPI's published SHA-256 (transfer integrity, not a reviewed pin) and probes the
+actual executable without installing incompatible wheel metadata:
+
+```bash
+.venv/bin/python scripts/install_termux_ruff.py
+make lint
+```
+
+The pinned mypy needs `ast-serialize>=0.11.2,<1`. No Android wheel was
+available in the audited release; building it requires Rust/maturin. A fresh
+requirements install remains blocked without native build prerequisites; other
+native dependencies can need them too. Do not call copied packages a clean
+bootstrap or hide missing dependencies with `--no-deps` or a false `pip check`.
+
+If mypy itself is already provisioned, this explicit developer profile keeps
+strict checking and selects its Python parser:
+
+```bash
+make quality MYPY_FLAGS=--no-native-parser
+```
+
+COMPAT-011 is not native parser or CI parity; report the missing parser
+dependency with local successes. The reviewed Lychee archive installer supports
+no Android target: provision native Lychee at the `ai-review/images/lychee.pin`
+version separately. Put the static musllinux zizmor executable pinned in
+`requirements-dev.txt` in `.venv/bin` or `~/.local/bin`, then expose those paths
+explicitly in noninteractive shells:
+
+```bash
+export PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH"
+lychee --version
+zizmor --version
+```
+
+Offline zizmor still lacks CI's authenticated `ref-version-mismatch` audit.
+
+### Focused commands
 
 ```bash
 make docs-check

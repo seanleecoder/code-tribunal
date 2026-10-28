@@ -68,7 +68,10 @@ boundaries, explain why contract, migration, and deletion cannot be staged.
 Separate policy decisions from observational follow-ups. Add an abstraction only
 when it immediately removes duplication or implements an ADR boundary.
 
-Run `make quality`. Use the smallest relevant tests while iterating; consult the
+Run `make quality`; interpreter selection and the Termux profile are in
+[setup](docs/development/setup.md#termux-development-profile). Report missing
+parser/tool prerequisites with local results. Empty pytest collection is a
+failure. Use the smallest relevant tests; consult the
 [testing guide](docs/development/testing.md) for contract/golden changes and the
 [release guide](docs/development/release-process.md) for release work.
 

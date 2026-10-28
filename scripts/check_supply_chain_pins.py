@@ -199,7 +199,7 @@ def image_pin_issues(gitlab: str, github: str) -> list[str]:
     return issues
 
 
-def _requirements(text: str) -> Iterator[str]:
+def requirement_lines(text: str) -> Iterator[str]:
     """Requirement lines without comments or `-c` includes."""
     for line in text.splitlines():
         requirement = line.strip()
@@ -207,13 +207,18 @@ def _requirements(text: str) -> Iterator[str]:
             yield requirement
 
 
+def without_marker(requirement: str) -> str:
+    """The requirement before any `; marker`."""
+    return requirement.split(";", 1)[0].rstrip()
+
+
 def _exact_requirement_issues(name: str, text: str, *, markers: bool = False) -> list[str]:
     """Require `==` pins; `markers` lets an environment marker follow the pin."""
     return [
         f"{name} must use exact == pins only, got {requirement!r}"
-        for requirement in _requirements(text)
+        for requirement in requirement_lines(text)
         if not EXACT_REQUIREMENT.fullmatch(
-            requirement.split(";", 1)[0].rstrip() if markers else requirement
+            without_marker(requirement) if markers else requirement
         )
     ]
 
@@ -226,7 +231,7 @@ def _pip_install_issues(base: str, constraints: str) -> list[str]:
     """Every pip install passes the constraints, and every package it names is pinned there."""
     pinned = {
         _package_name(requirement.split("==", 1)[0])
-        for requirement in _requirements(constraints)
+        for requirement in requirement_lines(constraints)
         if EXACT_REQUIREMENT.fullmatch(requirement)
     }
     issues: list[str] = []

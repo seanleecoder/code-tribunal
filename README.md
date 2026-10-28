@@ -71,7 +71,8 @@ The deterministic local path needs Python 3.14 and the development dependencies,
 but no provider or platform credentials:
 
 ```bash
-python3 -m pip install -r requirements-dev.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 make consensus-local LOCAL_OUT=/tmp/code-tribunal-demo
 ```
 

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,6 +33,34 @@ class QualityWorkflowContractTests(unittest.TestCase):
 
         self.assertIn("run: make quality", workflow)
         self.assertNotIn("continue-on-error", workflow)
+
+
+@unittest.skipUnless((REPO_ROOT / "Makefile").exists(), "checkout Makefile is unavailable")
+class LocalDemonstrationTests(unittest.TestCase):
+    def test_review_local_uses_unactivated_venv_for_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tribunal checkout ") as directory:
+            root = Path(directory)
+            (root / "ai-review").symlink_to(REPO_ROOT / "ai-review", target_is_directory=True)
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+            interpreter.chmod(0o755)
+            system_python = root / "bin/python3"
+            system_python.parent.mkdir()
+            system_python.write_text("#!/bin/sh\necho 'unexpected system Python' >&2\nexit 91\n")
+            system_python.chmod(0o755)
+            environment = os.environ.copy()
+            for name in ("PYTHON", "VIRTUAL_ENV", "MAKEFLAGS", "MAKEOVERRIDES"):
+                environment.pop(name, None)
+            environment["PATH"] = f"{system_python.parent}{os.pathsep}{environment['PATH']}"
+
+            result = subprocess.run(
+                ["make", "-f", str(REPO_ROOT / "Makefile"), "review-local"],
+                cwd=root, env=environment, capture_output=True, text=True, check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((root / ".ai-review-local/out/findings/claude.json").is_file())
 
 
 if __name__ == "__main__":
