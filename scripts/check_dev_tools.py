@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +11,24 @@ from pathlib import Path
 from check_supply_chain_pins import DEV_REQUIREMENTS, EXACT_REQUIREMENT, _requirements
 
 TOOLS = ("ruff", "mypy")
+# Resolve provenance before run_module: Ruff can replace the process with execv.
+_TOOL_PROBE = """\
+import importlib.util
+import json
+import runpy
+import sys
+
+name = sys.argv[1]
+module = importlib.util.find_spec(name)
+binary = ""
+if name == "ruff" and module:
+    from ruff._find_ruff import find_ruff_bin
+    binary = find_ruff_bin()
+print(json.dumps({"module": module.origin if module else "unavailable",
+                  "executable": binary}), file=sys.stderr, flush=True)
+sys.argv = [name, "--version"]
+runpy.run_module(name, run_name="__main__", alter_sys=True)
+"""
 
 
 def required_versions(path: Path = DEV_REQUIREMENTS) -> dict[str, str]:
@@ -33,28 +51,30 @@ def required_versions(path: Path = DEV_REQUIREMENTS) -> dict[str, str]:
 def check_tool(name: str, expected: str) -> bool:
     try:
         result = subprocess.run(
-            [sys.executable, "-B", "-m", name, "--version"],
+            [sys.executable, "-B", "-c", _TOOL_PROBE, name],
             text=True, capture_output=True, timeout=20, check=False,
         )
-        module = importlib.util.find_spec(name)
-        binary = ""
-        if name == "ruff" and module:
-            from ruff._find_ruff import find_ruff_bin
-
-            binary = f" executable={find_ruff_bin()}"
-    except (ImportError, OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, subprocess.TimeoutExpired) as error:
         print(f"BLOCKED: {name} unavailable: {error}", file=sys.stderr)
+        return False
+    try:
+        metadata, _, error_text = result.stderr.partition("\n")
+        provenance = json.loads(metadata)
+        origin = provenance["module"]
+        binary = f" executable={provenance['executable']}" if name == "ruff" else ""
+    except (ValueError, KeyError, TypeError) as error:
+        print(f"BLOCKED: {name} provenance unavailable: {error}", file=sys.stderr)
+        print(result.stderr.strip(), file=sys.stderr)
         return False
     words = result.stdout.split()
     actual = words[1] if len(words) >= 2 and words[0] == name else "unavailable"
-    origin = module.origin if module else "unavailable"
     print(f"{name}: expected={expected} executed={actual} python={sys.executable} "
           f"module={origin}{binary}")
     if result.returncode or actual != expected:
         print(f"BLOCKED: {name} must execute pinned version {expected}; "
               "repair the selected development environment", file=sys.stderr)
         if result.returncode:
-            print(result.stderr.strip(), file=sys.stderr)
+            print(error_text.strip(), file=sys.stderr)
         return False
     return True
 

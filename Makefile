@@ -18,10 +18,10 @@ PYTEST_ARGS := $(AI_REVIEW_ROOT)/tests --cov=ai_review --cov-report=term-missing
 quality: docs-check lint test typecheck supply-chain workflow-pins
 
 docs-check:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_markdown_links.py
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" scripts/check_markdown_links.py
 
 test:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m pytest $(PYTEST_ARGS)
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m pytest $(PYTEST_ARGS)
 
 # The curated packaged-runtime smoke suite that ships in the images, run by module
 # name exactly as the image preflight invokes it. Not part of `make quality`: the
@@ -30,45 +30,45 @@ test:
 # tag's properties to run (base or reviewer); the reviewer scope needs the pinned
 # CLIs, so it is fully green only inside the reviewer image.
 packaged-smoke:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review_smoke $(SCOPE)
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review_smoke $(SCOPE)
 
 lint:
-	$(PYTHON) scripts/check_dev_tools.py ruff
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ruff check $(RUFF_PATHS)
+	"$(PYTHON)" scripts/check_dev_tools.py ruff
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ruff check $(RUFF_PATHS)
 
 typecheck:
-	$(PYTHON) scripts/check_dev_tools.py mypy
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m mypy $(MYPY_FLAGS)
+	"$(PYTHON)" scripts/check_dev_tools.py mypy
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m mypy $(MYPY_FLAGS)
 
 supply-chain:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) scripts/check_supply_chain_pins.py
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" scripts/check_supply_chain_pins.py
 
 # zizmor's pinning audits. Offline without GH_TOKEN; CI also runs it with a token so
 # ref-version-mismatch can resolve action tags.
 workflow-pins:
-	$(PYTHON) scripts/check_workflow_pins.py
+	"$(PYTHON)" scripts/check_workflow_pins.py
 
 # Read-only check of both demo consumers before a live campaign. Needs network
 # and authenticated gh and glab, so it is not part of `quality`.
 demo-preflight:
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/demo_preflight.py
+	PYTHONPATH=$(PYTHONPATH):scripts "$(PYTHON)" scripts/demo_preflight.py
 
 # Check a release commit's pins before signing its tag:
 #   make release-check P=<release commit>
 release-check:
 	@test -n "$(P)" || { echo "usage: make release-check P=<release commit>"; exit 2; }
-	PYTHONPATH=$(PYTHONPATH):scripts $(PYTHON) scripts/check_release.py pins --rev "$(P)"
+	PYTHONPATH=$(PYTHONPATH):scripts "$(PYTHON)" scripts/check_release.py pins --rev "$(P)"
 
 update-golden:
-	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests $(PYTHON) $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py
+	PYTHONPATH=$(PYTHONPATH):$(AI_REVIEW_ROOT)/tests "$(PYTHON)" $(AI_REVIEW_ROOT)/tests/contract/update_golden_consensus.py
 
 review-local:
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review.input_bundle local --config $(AI_REVIEW_ROOT)/config/review.yaml --diff $(DIFF) --repo $(REPO) --out $(LOCAL_OUT)/inputs
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.input_bundle local --config $(AI_REVIEW_ROOT)/config/review.yaml --diff $(DIFF) --repo $(REPO) --out $(LOCAL_OUT)/inputs
 	AI_REVIEW_INPUT_DIR=$(LOCAL_OUT)/inputs AI_REVIEW_OUTPUT_DIR=$(LOCAL_OUT)/out AI_REVIEW_CONFIG=$(AI_REVIEW_ROOT)/config/review.yaml AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true PYTHONPATH=$(PYTHONPATH) ./$(AI_REVIEW_ROOT)/adapters/run_reviewer.sh $(REVIEWER) review
 
 consensus-local: review-local
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review.consensus --config $(AI_REVIEW_ROOT)/config/review.yaml --inputs $(LOCAL_OUT)/inputs --findings-dir $(LOCAL_OUT)/out/findings --out $(LOCAL_OUT)/out/consensus/consensus.json
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review.schema validate --schema consensus.schema.json --input $(LOCAL_OUT)/out/consensus/consensus.json
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.consensus --config $(AI_REVIEW_ROOT)/config/review.yaml --inputs $(LOCAL_OUT)/inputs --findings-dir $(LOCAL_OUT)/out/findings --out $(LOCAL_OUT)/out/consensus/consensus.json
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.schema validate --schema consensus.schema.json --input $(LOCAL_OUT)/out/consensus/consensus.json
 
 validate-local: review-local
-	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m ai_review.schema validate --schema finding_batch.schema.json --input $(LOCAL_OUT)/out/findings/$(REVIEWER).json
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.schema validate --schema finding_batch.schema.json --input $(LOCAL_OUT)/out/findings/$(REVIEWER).json
