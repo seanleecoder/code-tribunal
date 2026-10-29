@@ -1,6 +1,5 @@
-# Canonical Code Tribunal DAG. It can be included directly or combined with
-# review-child.gitlab-ci.yml in a protected child trigger. `needs` preserves
-# order.
+# Canonical Code Tribunal DAG for a protected direct include.
+# Same-stage needs preserve prepare/review/critique/consensus/post order.
 
 variables:
   # Public GHCR images. Replace all three values together when bumping to a
@@ -40,7 +39,6 @@ variables:
 
 .ai_review_rules:
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
@@ -55,10 +53,6 @@ prepare_ai_review:
   # review still runs once triggered). Use allow_failure: false instead if the
   # review must be mandatory-but-manual (every MR blocked awaiting a click).
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline" && $CI_MERGE_REQUEST_ID && $AI_REVIEW_MANUAL == "true"'
-      when: manual
-      allow_failure: true
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $AI_REVIEW_MANUAL == "true"'
       when: manual
       allow_failure: true
@@ -130,7 +124,6 @@ prepare_ai_review:
   rules:
     - if: '$AI_REVIEW_CRITIQUE_ENABLED != "true"'
       when: never
-    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'

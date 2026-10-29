@@ -9,8 +9,6 @@ operator guide. Start with the repository [README](../README.md), then use the
 The supported artifacts are:
 
 - [`ci/review.gitlab-ci.yml`](ci/review.gitlab-ci.yml) — canonical GitLab DAG.
-- [`ci/review-child.gitlab-ci.yml`](ci/review-child.gitlab-ci.yml) — hardened
-  child-pipeline stage wrapper; deprecated, removed in the next major release.
 - [GitHub reusable workflow](../.github/workflows/ai-review-reusable.yml) —
   canonical GitHub implementation, called at a release SHA by consumers.
 - [`config/review.yaml`](config/review.yaml) — shipped `review_config.v3`

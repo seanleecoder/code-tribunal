@@ -113,12 +113,12 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile
 
 - `hostile`: a zero-token GitLab hostile-MR probe.
   - It opens a merge request from an **unprotected** demo branch whose
-    `.gitlab-ci.yml` overrides the image pins, turns inheritance and forwarding
-    on, and forges publication artifacts.
+    `.gitlab-ci.yml` includes the candidate template, overrides the image pins
+    and a reserved job, and forges publication artifacts.
   - It passes when every protected credential is withheld (it reads presence
     lines only, never values), prepare fails closed with every later stage
     skipped, the forgery goes unconsumed, and `pipeline_trust.py` rejects the
-    composition while accepting the demo's own.
+    composition while accepting the documented direct-include example.
   - The image substitution itself is recorded, not asserted, because
     no in-pipeline check can stop a hostile author of the consumer CI file
     (see the [security model](docs/SECURITY_MODEL.md)).

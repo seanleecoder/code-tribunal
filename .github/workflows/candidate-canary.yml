@@ -148,8 +148,7 @@ jobs:
           else
             env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab panel create \
               "${common[@]}" \
-              --template ai-review/ci/review.gitlab-ci.yml \
-              --child-template ai-review/ci/review-child.gitlab-ci.yml
+              --template ai-review/ci/review.gitlab-ci.yml
           fi
       - name: Run and collect review
         env:
@@ -271,8 +270,7 @@ jobs:
           else
             env "$TOKEN_ENV=$token_value" python scripts/canary.py gitlab lifecycle create \
               "${common[@]}" \
-              --template ai-review/ci/review.gitlab-ci.yml \
-              --child-template ai-review/ci/review-child.gitlab-ci.yml
+              --template ai-review/ci/review.gitlab-ci.yml
           fi
       - name: Drive the lifecycle steps
         env:
@@ -340,8 +338,7 @@ jobs:
             --runtime-source "${{ inputs.runtime_source }}" \
             --base-image "${{ inputs.base_image }}" \
             --reviewer-image "${{ inputs.reviewer_image }}" \
-            --template ai-review/ci/review.gitlab-ci.yml \
-            --child-template ai-review/ci/review-child.gitlab-ci.yml
+            --template ai-review/ci/review.gitlab-ci.yml
       - name: Check the credential boundary
         env:
           GITLAB_CANARY_TOKEN: ${{ secrets.CANDIDATE_CANARY_GITLAB_TOKEN }}

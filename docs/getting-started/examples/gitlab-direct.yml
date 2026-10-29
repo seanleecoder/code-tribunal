@@ -1,3 +1,12 @@
+# This standalone workflow permits only review pipelines. When adding Code
+# Tribunal to existing CI jobs, preserve their pipeline sources as described in
+# docs/getting-started/gitlab.md before copying this workflow block.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
+    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
+
 stages:
   - test
   - ai_review

@@ -18,9 +18,7 @@ source is internal container implementation, not a supported Python package or A
 
 ## What is supported
 
-- GitLab merge-request pipelines through a direct protected include. The
-  hardened mirrored child pipeline still works but is deprecated and will be
-  removed in the next major release.
+- GitLab merge-request pipelines through a direct protected include.
 - GitHub reusable pull-request workflows for same-repository branches.
   External-fork reviews are skipped because provider secrets are deliberately withheld.
 - Claude, Codex, OpenCode, and Cursor reviewers through the shipped adapters.

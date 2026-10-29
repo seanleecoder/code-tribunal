@@ -26,8 +26,9 @@ step's observations and the failing step's error.
   summary's `external_run_url` names it only when the demo run succeeded and
   validation failed; when the demo run itself failed it reads `unavailable`, so open
   the summary's `change_url` and take the run from that pull request or merge
-  request (on GitLab, the downstream child pipeline). Never re-dispatch `panel` to
-  diagnose; it spends a real two-platform panel that a release cannot cite.
+  request. GitLab review jobs run in that merge-request pipeline. Never
+  re-dispatch `panel` to diagnose; it spends a real two-platform panel that a
+  release cannot cite.
 - **`lifecycle` or `hostile`:** read the failing step's error in the summary.
   Re-dispatch the campaign, which spends no tokens, only to confirm a concrete fix,
   as [CONTRIBUTING](../../CONTRIBUTING.md#candidate-canary) requires. Drive a step
@@ -218,9 +219,7 @@ your own GitLab deployment, or for a fork-based variant.
    under `inputs/`; any file, symlink, unexpected path or corrupt archive fails the
    probe.
 2. From a trusted checkout, audit the composition:
-   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --mode <direct|child> --template-project <org/template> --template-sha <sha>`.
-   For the deprecated child mode's requirements, see
-   [hardened child](../getting-started/gitlab.md#deprecated-hardened-child).
+   `python scripts/pipeline_trust.py <consumer .gitlab-ci.yml> --template-project <org/template> --template-sha <sha>`.
 3. Attempt template or job replacement, trusted image and configuration overrides,
    and forged `out/consensus/*` or `out/post/*` artifacts. Confirm the trusted
    composition is retained or the pipeline fails closed, and run the
