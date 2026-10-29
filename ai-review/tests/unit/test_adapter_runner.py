@@ -18,7 +18,8 @@ from ai_review.adapter_process import (
     _model_id_validation_error,
 )
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
-from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig, load_config
+from ai_review.canonical import stable_json_hash
+from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig
 from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
@@ -597,7 +598,7 @@ class EffortEnvTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v3",
+                        "schema_version: review_config.v4",
                         "reviewers:",
                         *reviewer_lines,
                         *panel_filler("codex"),
@@ -643,9 +644,9 @@ class EffortEnvTests(unittest.TestCase):
         # so the adapter must see the override, not the yaml default.
         self.assertEqual(self._run_effort_adapter(config_effort="medium", env_effort="low"), "low")
 
-    def test_no_effort_leaves_env_unset(self) -> None:
-        # Neither configured nor overridden: claude.sh then omits --effort.
-        self.assertEqual(self._run_effort_adapter(config_effort=None, env_effort=None), "<unset>")
+    def test_omitted_effort_inherits_shipped_default(self) -> None:
+        # Sparse configuration inherits the shipped low effort.
+        self.assertEqual(self._run_effort_adapter(config_effort=None, env_effort=None), "low")
 
 
 def _scaffold_project(root: Path) -> dict[str, Path]:
@@ -698,13 +699,12 @@ def _write_reviewer_config(
     reviewer: str,
     *,
     timeout_seconds: int = 30,
-    critique_enabled: bool = False,
 ) -> Path:
     config_path = config_dir / "review.yaml"
     config_path.write_text(
         "\n".join(
             [
-                "schema_version: review_config.v3",
+                "schema_version: review_config.v4",
                 "reviewers:",
                 f"  {reviewer}:",
                 "    enabled: true",
@@ -712,7 +712,7 @@ def _write_reviewer_config(
                 f"    timeout_seconds: {timeout_seconds}",
                 "    max_findings: 50",
                 *panel_filler(reviewer),
-                *config_tail(critique_enabled=critique_enabled),
+                *config_tail(),
             ]
         ),
         encoding="utf-8",
@@ -789,16 +789,18 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
             self._set_env(paths, config_path)
             bind_manifest_to_config(paths["input_dir"], config_path)
-            document = load_config(config_path).to_dict()
-            document["limits"]["max_fyi_findings"] = None
-            config_path.write_text(json.dumps(document), encoding="utf-8")
+            manifest_path = paths["input_dir"] / "manifest.json"
+            manifest = load_json_file(manifest_path)
+            manifest["effective_config"]["limits"]["max_fyi_findings"] = None
+            manifest["effective_config_sha256"] = stable_json_hash(manifest["effective_config"])
+            write_canonical_json(manifest_path, manifest)
 
             self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
             self.assertFalse(sentinel.exists())
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["error_class"], "ConfigError")
+            self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
             self.assertIn("limits.max_fyi_findings", status["error_message_redacted"])
 
     def test_trailing_newline_model_is_rejected_before_adapter_invocation(self) -> None:
@@ -883,41 +885,26 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 status["effective_config_sha256"], batch["effective_config_sha256"]
             )
 
-    def test_effective_config_drift_fails_before_any_adapter_work(self) -> None:
-        for drift, divergent in (
-            ({"AI_REVIEW_REVIEWERS": "claude,codex,opencode"}, "reviewers"),
-            ({"AI_REVIEW_CODEX_MODEL": "openai/drifted"}, "reviewers"),
-            ({"AI_REVIEW_CRITIQUE_ENABLED": "true"}, "critique"),
-        ):
-            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp:
-                paths = _scaffold_project(Path(tmp))
-                config_path = _write_reviewer_config(paths["config_dir"], "codex")
-                sentinel = Path(tmp) / "adapter-invoked"
-                _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
-                self._set_env(paths, config_path)
-                bind_manifest_to_config(paths["input_dir"], config_path)
-                manifest = load_json_file(paths["input_dir"] / "manifest.json")
-
-                with mock.patch.dict(os.environ, drift):
-                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
-                self._adapter_command_patch.stop()
-                del self._adapter_command_patch
-
-                self.assertFalse(sentinel.exists())
-                self.assertFalse((paths["output_dir"] / ".tmp").exists())
-                status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-                batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
-                self.assertEqual(status["status"], "config_error")
-                self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
-                self.assertIn(
-                    f"divergent={divergent} ", status["error_message_redacted"]
-                )
-                self.assertEqual(batch["adapter_status"], "config_error")
-                for artifact in (status, batch):
-                    self.assertEqual(
-                        artifact["effective_config_sha256"],
-                        manifest["effective_config_sha256"],
-                    )
+    def test_downstream_environment_and_config_file_cannot_change_prepared_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            sentinel = Path(tmp) / "adapter-invoked"
+            _write_sentinel_adapter(paths["adapter_dir"], "codex", sentinel)
+            self._set_env(paths, config_path)
+            manifest = load_json_file(paths["input_dir"] / "manifest.json")
+            config_path.unlink()
+            with mock.patch.dict(os.environ, {
+                "AI_REVIEW_REVIEWERS": "claude,opencode,cursor",
+                "AI_REVIEW_CODEX_MODEL": "openai/drifted",
+                "AI_REVIEW_CODEX_EFFORT": "invalid",
+                "AI_REVIEW_CRITIQUE_ENABLED": "false",
+            }):
+                self.assertEqual(run_adapter("codex", "review"), 0)
+            self.assertTrue(sentinel.exists())
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["model"], "codex-model")
+            self.assertEqual(batch["effective_config_sha256"], manifest["effective_config_sha256"])
 
     def test_manifest_without_effective_config_digest_fails_before_adapter_work(
         self,
@@ -1183,7 +1170,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v3",
+                        "schema_version: review_config.v4",
                         "reviewers:",
                         "  cursor:",
                         "    enabled: false",
@@ -1215,33 +1202,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(status["status"], "skipped")
             self.assertFalse(sentinel.exists())
 
-    def test_disabled_critique_skips_without_running_adapter_and_uses_stage_status(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "codex")
-            sentinel = paths["output_dir"] / "adapter_ran.txt"
-            _write_adapter(
-                paths["adapter_dir"],
-                "codex",
-                f'#!/bin/sh\ntouch "{sentinel}"\nprintf \'{{"critiques":[]}}\'\n',
-            )
-            self._set_env(paths, config_path)
-
-            self.assertEqual(run_prepared_adapter("codex", "critique"), 0)
-
-            batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
-            self.assertEqual(batch["adapter_status"], "skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
-            self.assertEqual(status["stage"], "critique")
-            self.assertEqual(status["status"], "skipped")
-            self.assertFalse((paths["output_dir"] / "status" / "codex.json").exists())
-            self.assertFalse(sentinel.exists())
-
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(
-                paths["config_dir"], "codex", critique_enabled=True
+                paths["config_dir"], "codex"
             )
             _write_author_findings(paths["output_dir"], title="Preserve this finding")
             _write_adapter(
@@ -1268,7 +1233,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(
-                paths["config_dir"], "codex", critique_enabled=True
+                paths["config_dir"], "codex"
             )
             _write_author_findings(paths["output_dir"], title="Original pool")
             _write_adapter(
@@ -1292,7 +1257,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(
-                paths["config_dir"], "codex", critique_enabled=True
+                paths["config_dir"], "codex"
             )
             _write_author_findings(paths["output_dir"], title="Pooled")
             critiques = [
@@ -1319,7 +1284,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(
-                paths["config_dir"], "codex", critique_enabled=True
+                paths["config_dir"], "codex"
             )
             _write_author_findings(paths["output_dir"], title="Pooled")
             payload = json.dumps(

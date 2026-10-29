@@ -120,7 +120,7 @@ An unprotected source ref receives no protected credentials, so prepare fails.
 
 Configure runtime overrides, listed in the
 [environment reference](../configuration.md#environment-variables), as protected
-project/group variables so every stage sees the same effective configuration.
+project/group variables so prepare records them in the resolved configuration.
 GitLab variable precedence can override the template's
 `AI_REVIEW_LOCAL_MOCK: "0"`, so never set `AI_REVIEW_LOCAL_MOCK` or
 `AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. State-load failures always stop
@@ -176,7 +176,7 @@ prove protected-variable behavior in a particular GitLab deployment.
 
 Change the template SHA only after reviewing the target revision and its image
 pins. Read the
-[upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
+[upgrade notes](../operations.md#next-major-upgrade) before moving from
 1.0.x to 2.0: remove custom jobs, `needs`, or rules that reference `ai_review_gate`. A rollback restores the previous
 template SHA and reruns prepare; never feed artifacts created by one source or
 configuration into another.

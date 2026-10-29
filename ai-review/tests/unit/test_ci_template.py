@@ -345,7 +345,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
     def test_web_and_api_rules_require_merge_request_iid(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
-        for block_name in (".ai_review_rules", "prepare_ai_review", ".critique_template"):
+        for block_name in (".ai_review_rules", "prepare_ai_review"):
             match = re.search(rf"(?ms)^{re.escape(block_name)}:\n(.*?)(?=^\S)", text)
             self.assertIsNotNone(match, f"{block_name} block not found")
             block = match.group(1)
@@ -369,71 +369,20 @@ class GitLabCiTemplateTests(unittest.TestCase):
             self.assertNotIn(stale_path, text)
         self.assertIn("out/status/", text)
 
-    def test_critique_source_gate_stays_within_prepare_so_needs_never_dangles(self) -> None:
-        # Regression: `.critique_template` once used `extends: .ai_review_rules`
-        # for pipeline-source gating while ALSO declaring its own rules: block.
-        # A job's own rules: fully REPLACES rules inherited via extends (GitLab
-        # overrides the array, it does not merge), so the source gate was
-        # silently dropped and critique ran on EVERY pipeline source. On a
-        # push/tag/schedule pipeline its non-optional `needs: prepare_ai_review`
-        # (a job gated to MR/web/api) does not exist, failing pipeline creation.
-        #
-        # Compare against prepare_ai_review DIRECTLY, not .ai_review_rules:
-        # prepare carries its own inline rules: block, so it is the real target
-        # of the non-optional need whose sources critique must not exceed.
-        text = _CI_TEMPLATE.read_text(encoding="utf-8")
-
-        def _code_block(name: str) -> str:
-            match = re.search(rf"(?ms)^{re.escape(name)}:\n(.*?)(?=^\S)", text)
-            self.assertIsNotNone(match, f"{name} block not found")
-            return "\n".join(
-                line for line in match.group(1).splitlines() if not line.lstrip().startswith("#")
-            )
-
-        critique_block = _code_block(".critique_template")
-        source_re = r'\$CI_PIPELINE_SOURCE == "([a-z_]+)"'
-        prepare_sources = set(re.findall(source_re, _code_block("prepare_ai_review")))
-        critique_sources = set(re.findall(source_re, critique_block))
-        self.assertTrue(prepare_sources, "expected prepare_ai_review to gate on pipeline source")
-        # (1) Critique must carry an EXPLICIT source gate. A missing gate (the
-        # original bug) is not an empty source set — in GitLab it means "runs on
-        # every source", which is exactly the leak. Assert non-empty first, or
-        # the subset check below passes vacuously (set().issubset(x) is True).
-        self.assertTrue(
-            critique_sources,
-            "critique has no CI_PIPELINE_SOURCE gate; it would run on every pipeline "
-            "and dangle its non-optional needs: prepare_ai_review",
-        )
-        # (2) Every source that creates critique must also create prepare, so
-        # critique can never exist in a pipeline that lacks prepare_ai_review.
-        # Subset (not equality): a narrower critique is safe; only a critique
-        # source that prepare lacks dangles the need.
-        self.assertTrue(
-            critique_sources.issubset(prepare_sources),
-            f"critique sources {sorted(critique_sources)} must be within prepare sources "
-            f"{sorted(prepare_sources)}, or needs: prepare_ai_review dangles",
-        )
-
-        # The enable flag still gates critique, via a disable-guard that must
-        # come first so first-match rules evaluation lets it win over the
-        # source matches below.
-        disable_idx = critique_block.find('$AI_REVIEW_CRITIQUE_ENABLED != "true"')
-        never_idx = critique_block.find("when: never")
-        first_source_idx = min(
-            critique_block.find(f'$CI_PIPELINE_SOURCE == "{source}"') for source in critique_sources
-        )
-        self.assertNotEqual(disable_idx, -1, "critique enable-flag disable-guard missing")
-        self.assertNotEqual(never_idx, -1, "critique when: never guard missing")
-        self.assertLess(disable_idx, never_idx)
-        self.assertLess(never_idx, first_source_idx)
-
-        # Document the coupling the source gate protects: critique's need on
-        # prepare is non-optional, so critique may never exist without prepare.
-        prepare_need = re.search(
-            r"(?ms)^    - job: prepare_ai_review\n(.*?)(?=^    - job:|\Z)", critique_block
-        )
-        self.assertIsNotNone(prepare_need, "critique must need prepare_ai_review")
-        self.assertNotIn("optional: true", prepare_need.group(1))
+    def test_critique_inherits_source_rules_without_overriding_them(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        critique = template[".critique_template"]
+        self.assertEqual(critique["extends"], ".ai_review_rules")
+        self.assertNotIn("rules", critique)
+        shared_sources = {
+            rule["if"].split('"')[1] for rule in template[".ai_review_rules"]["rules"]
+        }
+        prepare_sources = {
+            rule["if"].split('"')[1] for rule in template["prepare_ai_review"]["rules"]
+        }
+        self.assertTrue(shared_sources)
+        self.assertLessEqual(shared_sources, prepare_sources)
+        self.assertIn({"job": "prepare_ai_review", "artifacts": True}, critique["needs"])
 
     def test_publish_workflow_builds_preflights_and_publishes_public_images(self) -> None:
         if not _PUBLISH_WORKFLOW.exists():
@@ -774,7 +723,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             [
                 {"job": "prepare_ai_review", "artifacts": True},
                 {"job": "AI review", "artifacts": True},
-                {"job": "AI critique", "artifacts": True, "optional": True},
+                {"job": "AI critique", "artifacts": True},
             ],
         )
         for need in (*critique_needs, *consensus_needs):
@@ -849,11 +798,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertNotIn("AI_REVIEW_BASE_IMAGE:", text)
         self.assertNotIn("AI_REVIEW_REVIEWER_IMAGE:", text)
         self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", review)
-        self.assertNotIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
-        self.assertIn(
-            "AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || ''",
-            critique,
-        )
+        self.assertIn("OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}", critique)
+        self.assertNotIn("AI_REVIEW_CRITIQUE_ENABLED", text)
 
     def test_github_post_uses_dedicated_resolution_secret(self) -> None:
         text = _GITHUB_WORKFLOW.read_text(encoding="utf-8")
@@ -866,7 +812,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         )
         self.assertEqual(text.count("secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN"), 1)
 
-    def test_github_actions_maps_runtime_overrides_at_workflow_scope(self) -> None:
+    def test_github_actions_maps_policy_overrides_only_in_prepare(self) -> None:
         text = _GITHUB_WORKFLOW.read_text(encoding="utf-8")
         expected_mappings = {
             "AI_REVIEW_CLAUDE_MODEL": "${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}",
@@ -877,44 +823,29 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             "AI_REVIEW_CLAUDE_EFFORT": "${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}",
             "AI_REVIEW_CODEX_EFFORT": "${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}",
             "AI_REVIEW_OPENCODE_EFFORT": "${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}",
-            "AI_REVIEW_CRITIQUE_ENABLED": ("${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}"),
         }
 
+        workflow = yaml.safe_load(text)
+        step = next(step for step in workflow["jobs"]["prepare"]["steps"]
+                    if step.get("name") == "Prepare input bundle")
         for name, expression in expected_mappings.items():
             with self.subTest(name=name):
-                self.assertEqual(text.count(f"  {name}: {expression}"), 1)
+                self.assertEqual(step["env"][name], expression)
+                self.assertNotIn(name, workflow["env"])
         self.assertNotIn("AI_REVIEW_CURSOR_EFFORT", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
         self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
         self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
         self.assertNotIn("AI_REVIEW_MERGE_GATE_ENABLED", text)
 
-    def test_gitlab_documents_runtime_override_env_consistency_contract(self) -> None:
-        template = Path(__file__).resolve().parents[2] / "ci" / "review.gitlab-ci.yml"
-        text = template.read_text(encoding="utf-8")
-        expected_overrides = [
-            "AI_REVIEW_REVIEWERS",
-            "AI_REVIEW_CLAUDE_MODEL",
-            "AI_REVIEW_CODEX_MODEL",
-            "AI_REVIEW_OPENCODE_MODEL",
-            "AI_REVIEW_CURSOR_MODEL",
-            "AI_REVIEW_CLAUDE_EFFORT",
-            "AI_REVIEW_CODEX_EFFORT",
-            "AI_REVIEW_OPENCODE_EFFORT",
-            "AI_REVIEW_CRITIQUE_ENABLED",
-            "AI_REVIEW_POSTING_MODE",
-        ]
-        self.assertIn("effective_config_sha256", text)
-        self.assertIn("Environment-consistency contract", text)
-        for name in expected_overrides:
-            with self.subTest(name=name):
-                self.assertIn(name, text)
-        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED", text)
-        self.assertNotIn("AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD", text)
-        self.assertNotIn("AI_REVIEW_STATE_BACKEND", text)
-        # Critique enablement remains an explicit top-level variable shared by
-        # job rules and apply_env_overrides.
-        self.assertRegex(text, r"(?m)^  AI_REVIEW_CRITIQUE_ENABLED: \"true\"$")
+    def test_downstream_commands_read_prepared_config(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        for name in ("consensus_ai_review", "post_ai_review"):
+            with self.subTest(job=name):
+                command = template[name]["script"][0]
+                self.assertIn("--inputs inputs", command)
+                self.assertNotIn("--config", command)
+        self.assertNotIn("AI_REVIEW_CRITIQUE_ENABLED", template["variables"])
 
     def test_github_prepare_selects_pr_from_event_or_input(self) -> None:
         prepare = _workflow_job(_GITHUB_WORKFLOW.read_text(encoding="utf-8"), "prepare")

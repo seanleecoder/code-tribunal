@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 
-from ai_review.config import CritiqueConfig, ReviewConfig, effective_config_binding
+from ai_review.config import effective_config_binding
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
 from ai_review.reviewers import trusted_runtime_root
@@ -20,12 +19,8 @@ _SHIPPED_CRITIQUE_PROMPT = (_IMAGE / "prompts" / "critique.md").read_text(encodi
 _SHIPPED_RULES = (_IMAGE / "rules" / "README.md").read_text(encoding="utf-8")
 
 
-def _full_config() -> ReviewConfig:
-    return replace(_config(), critique=CritiqueConfig(enabled=True))
-
-
 def _manifest() -> dict:
-    return {**_unbound_manifest(), **effective_config_binding(_full_config())}
+    return {**_unbound_manifest(), **effective_config_binding(_config())}
 
 
 def _batch(reviewer: str, finding: dict) -> dict:
@@ -43,7 +38,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
                 _batch("codex", _finding("codex", "2" * 64, "major")),
                 _batch("claude", _finding("claude", "1" * 64, "minor")),
             ],
-            _full_config(),
+            _config(),
             "opencode",
         )
 
@@ -76,7 +71,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
         pooled = build_pooled_findings(
             _manifest(),
             [_batch("claude", finding)],
-            _full_config(),
+            _config(),
             "opencode",
         )
 
@@ -102,7 +97,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
             )
 
             rendered, pool = render_critique_prompt(
-                input_dir, _full_config(), "opencode", findings_dir
+                input_dir, _config(), "opencode", findings_dir
             )
 
             self.assertIn("<POOLED_FINDINGS_JSON>", rendered)
@@ -117,9 +112,9 @@ class CritiquePromptRenderTests(unittest.TestCase):
     def test_pool_ids_are_stable_when_batches_and_findings_are_reordered(self) -> None:
         first = _batch("claude", _finding("claude", "1" * 64, "major"))
         second = _batch("codex", _finding("codex", "2" * 64, "minor"))
-        expected = build_pooled_findings(_manifest(), [first, second], _full_config(), "opencode")
+        expected = build_pooled_findings(_manifest(), [first, second], _config(), "opencode")
         self.assertEqual(
-            build_pooled_findings(_manifest(), [second, first], _full_config(), "opencode"),
+            build_pooled_findings(_manifest(), [second, first], _config(), "opencode"),
             expected,
         )
 
@@ -131,7 +126,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
             [valid, valid],
         ):
             with self.subTest(batches=batches), self.assertRaises(ConsensusIntegrityError):
-                build_pooled_findings(_manifest(), batches, _full_config(), "opencode")
+                build_pooled_findings(_manifest(), batches, _config(), "opencode")
 
     def test_repository_critique_prompt_requires_verdict_per_finding(self) -> None:
         prompt = _SHIPPED_CRITIQUE_PROMPT

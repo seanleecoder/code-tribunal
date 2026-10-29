@@ -148,7 +148,7 @@ project has proven live, and its limits, is indexed in the
 
 Update the caller's `uses:` SHA to one reviewed Code Tribunal release commit.
 Both images and the implementation move together. Read the
-[upgrade notes](../operations.md#upgrade-from-10x-to-20) before moving from
+[upgrade notes](../operations.md#next-major-upgrade) before moving from
 1.0.x to 2.0: the required `gate` check must be removed first. To roll back,
 restore the previous caller SHA (or the complete copied workflow for a pre-cutover
 release) and rerun against a fresh PR revision;

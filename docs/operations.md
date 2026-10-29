@@ -1,59 +1,17 @@
 # Operations
 
-## Upgrade from 1.0.x to 2.0
+## Next-major upgrade
 
-2.0 removes the merge gate and retires the 1.x configuration contract. Code
-Tribunal now only publishes review output; it never decides whether a change may
-merge. Upgrade the template, both images, variables, and any custom
-configuration together, in this order.
+Save the current workflow/include SHA, image digests, custom configuration and CI
+variables for rollback. Follow the [configuration migration](configuration.md#next-major-migration),
+upgrade the canonical workflow/include and both images together, complete the
+explicit state migration below, then run fresh artifacts from prepare through
+post. The runtime does not support replaying pre-cutover artifacts. A rollback
+must restore the complete saved deployment and configuration.
 
-1. **Save the rollback set:** the current workflow or template SHA, both image
-   digests, custom `review.yaml`, branch-protection or ruleset entries, and
-   CI variables.
-2. **Remove the gate first.** On GitHub, delete any branch-protection or
-   ruleset entry that requires the `gate` check: 2.0 has no such job, and a
-   required check that never reports leaves pull requests permanently
-   unmergeable. On GitLab, remove custom jobs, `needs`, or rules that reference
-   `ai_review_gate`.
-3. **Delete retired variables.** Config load rejects each of these with a
-   migration message rather than ignoring it:
-   `AI_REVIEW_CLAUDE_ENABLED`, `AI_REVIEW_CODEX_ENABLED`,
-   `AI_REVIEW_OPENCODE_ENABLED`, `AI_REVIEW_CURSOR_ENABLED`,
-   `AI_REVIEW_MERGE_GATE_ENABLED`, and `AI_REVIEW_STATE_BACKEND`. On GitLab,
-   project and group variables reach every job, so a leftover value fails the
-   pipeline. On GitHub the canonical workflow no longer forwards them, but a
-   hand-edited copy that still does will fail.
-4. **Select the panel with `AI_REVIEW_REVIEWERS`.** It must name at least three
-   seats; 1.0.x accepted two. The default remains Claude, Codex, and OpenCode.
-   On GitHub, Cursor receives `CURSOR_API_KEY` only when the repository variable
-   `AI_REVIEW_REVIEWERS` names `cursor`, so enabling Cursor in YAML alone
-   leaves it without a credential.
-5. **Migrate custom configuration to `review_config.v3`.** Every 1.x release
-   shipped `review_config.v1`, which is rejected once with the complete list of
-   removed keys. Delete the keys listed in
-   [the 1.x migration summary](configuration.md#1x-migration-summary) and set
-   `schema_version: review_config.v3`.
-6. **Update the template and both images together:** the complete canonical
-   GitHub workflow, or the protected GitLab template SHA with its base image,
-   reviewer image, and trusted source SHA.
-7. **Update GitLab `needs`.** Review and critique are now one parallel matrix
-   job apiece, `AI review` and `AI critique`. The expanded names such as
-   `AI review: [claude]` remain, but a custom job that needed one of them must
-   now use `needs:parallel:matrix` against the matrix job.
-8. **Update artifact consumers.** Tools that read `consensus.json` must accept
-   `consensus.v2`: independent support and informational decisions replace the
-   removed blocking and vote-count fields. There is no `out/gate/` artifact.
-9. **Expect one cosmetic thread update.** Existing threads keep their hidden
-   marker and are refreshed once from `render-body.v3` to `render-body.v4`,
-   which uses a `Support:` footer. Identities are updated, not duplicated.
-10. **Verify:** open a test change, then confirm posting, state, and commands.
-    `post` is the terminal job. It fails only on a publication failure, never
-    because of a finding's severity.
-
-To roll back, restore the saved workflow or template SHA with its matching
-images, variables, and configuration, and start again at prepare. Threads receive
-one reverse cosmetic update back to `render-body.v3`. Re-add the required gate
-check only if you restore a 1.0.x template.
+For a 1.x deployment, also remove the retired merge-gate job and any required
+`gate` check before upgrading; Code Tribunal publishes informational review
+output and never decides whether a change may merge.
 
 ## Unreleased major: consensus artifact cutover
 
@@ -72,9 +30,9 @@ state uses version 2 inside the summary comment; see the migration below.
 |---|---|---|
 | One reviewer/provider fails | Panel degrades; other trustworthy evidence may proceed | Inspect `out/status/`; retry or fix credential/model |
 | All findings from a seat are malformed | Seat is not resolution-eligible or operationally successful | Fix model/schema compatibility; do not lower thresholds reflexively |
-| Critique disabled or optional evidence absent | Consensus uses valid reviewer evidence without critique | Confirm this matches rollout policy |
+| Critique evidence absent | Consensus uses valid reviewer evidence and reports missing critique jobs in run health | Restore critique execution or retry |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
-| Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with identical project-scoped overrides |
+| Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with the intended operator overrides |
 | State is inaccessible, corrupt, duplicated, or still v1 | Prepare/post stop before publication | Restore state/API access or complete the explicit v2 migration |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
 | Head changes before posting | No stale mutation; `post` reports `stale_head` and exits 0 | Let the newer revision's run own the review |

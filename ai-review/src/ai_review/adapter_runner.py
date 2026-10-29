@@ -27,9 +27,8 @@ from .adapter_process import (
 )
 from .config import (
     ConfigError,
-    load_config,
+    config_from_manifest,
     recorded_effective_config_digest,
-    require_effective_config_binding,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
 from .redact import redact_text
@@ -56,14 +55,13 @@ _EXIT_ERROR = 1
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
-    config_path = Path(os.environ.get("AI_REVIEW_CONFIG", "config/review.yaml"))
     output_file = _output_file(stage, reviewer)
     started_at = now_iso()
     started_monotonic = time.monotonic()
     manifest = _load_manifest(input_dir)
     run_id = str(manifest.get("run_id") or "unknown-run")
-    # Prepare's digest stamps every artifact; past the binding check below, the
-    # live digest equals it.
+    # Prepare's digest stamps every artifact; its configuration is admitted
+    # before any skip decision, prompt rendering, or provider call.
     config_digest = recorded_effective_config_digest(manifest)
     model = "unknown-model"
 
@@ -141,18 +139,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
             raise ConfigError(str(exc)) from exc
         if stage not in reviewer_definition.supported_stages:
             raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
-        config = load_config(config_path)
-        # Before the skip decision, prompt rendering, or adapter spawn: a job whose
-        # AI_REVIEW_* view differs from prepare's must not spend provider
-        # credentials. A mismatch is an EffectiveConfigMismatch config_error. The
-        # returned digest equals prepare's; assigning it narrows the type to str.
-        config_digest = require_effective_config_binding(config, manifest)
+        config = config_from_manifest(manifest)
+        config_digest = recorded_effective_config_digest(manifest)
+        assert config_digest is not None
         reviewer_config = config.reviewers[reviewer]
         model = reviewer_config.model
         if not reviewer_config.enabled:
-            return _fail("skipped", digest=config_digest, model=model, exit_code=0)
-
-        if stage == "critique" and not config.critique.enabled:
             return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
         if (validation_error := _model_id_validation_error(model)) is not None:

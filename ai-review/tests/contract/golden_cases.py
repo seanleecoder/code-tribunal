@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ai_review.config import CritiqueConfig, PanelConfig, ReviewConfig, ReviewerConfig
+from ai_review.config import PanelConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus
 from ai_review.schema import adapter_status_artifact, empty_critique_batch, empty_finding_batch
 
@@ -129,6 +129,13 @@ def default_transitive_split_consensus() -> dict:
         _manifest(),
         [_batch("claude", hub), _batch("codex", left), _batch("opencode", right)],
         _config(),
+        critique_batches=[
+            empty_critique_batch(
+                critic, "success", run_id="run", started_at="2026-06-29T00:00:00Z",
+                effective_config_sha256="0" * 64,
+            )
+            for critic in ("claude", "codex", "opencode")
+        ],
     )
 
 
@@ -219,7 +226,6 @@ def degraded_run_health_config() -> ReviewConfig:
             )
             for name, reviewer in config.reviewers.items()
         },
-        critique=CritiqueConfig(enabled=True),
     )
 
 

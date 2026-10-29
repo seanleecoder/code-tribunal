@@ -11,8 +11,8 @@ from .canonical import CanonicalError, stable_json_hash
 from .config import (
     EffectiveConfigMismatch,
     ReviewConfig,
+    config_from_manifest,
     enabled_reviewers,
-    load_config,
     require_effective_config_binding,
 )
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
@@ -108,11 +108,7 @@ def build_consensus(
 
     groups = []
     if status != "failed":
-        valid_duplicate_links = (
-            _valid_duplicate_links(all_findings, critique_batches)
-            if config.critique.enabled
-            else set()
-        )
+        valid_duplicate_links = _valid_duplicate_links(all_findings, critique_batches)
         for findings in group_findings(all_findings, valid_duplicate_links):
             issue_id = issue_id_for_group(findings)
             representative = min(findings, key=finding_sort_key)
@@ -267,14 +263,12 @@ def validate_consensus_inputs(
 
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--findings-dir", default="out/findings")
     parser.add_argument("--critiques-dir", default="out/critiques")
     parser.add_argument("--status-dir", default="out/status")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
-    config = load_config(args.config)
     inputs = Path(args.inputs)
     try:
         manifest = load_json_file(inputs / "manifest.json")
@@ -284,18 +278,18 @@ def cli(argv: list[str] | None = None) -> int:
         if not run_id:
             raise ConsensusIntegrityError("manifest missing run_id")
 
+        config = config_from_manifest(manifest)
         batches = []
         for path in sorted(Path(args.findings_dir).glob("*.json")):
             batches.append(load_json_file(path))
         critique_inputs: list[tuple[str, dict[str, Any]]] = []
-        if config.critique.enabled:
-            for path in sorted(Path(args.critiques_dir).glob("*.json")):
-                raw = load_json_file(path)
-                if not isinstance(raw, dict):
-                    raise ConsensusIntegrityError(
-                        f"critique batch is not an object for critic={path.stem}"
-                    )
-                critique_inputs.append((path.stem, raw))
+        for path in sorted(Path(args.critiques_dir).glob("*.json")):
+            raw = load_json_file(path)
+            if not isinstance(raw, dict):
+                raise ConsensusIntegrityError(
+                    f"critique batch is not an object for critic={path.stem}"
+                )
+            critique_inputs.append((path.stem, raw))
 
         validate_consensus_inputs(
             config=config,
@@ -316,7 +310,9 @@ def cli(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"ai-review consensus: cannot read artifact: {exc}", file=sys.stderr)
         return 3
-    except (ConsensusIntegrityError, SchemaValidationError, CanonicalError) as exc:
+    except (
+        EffectiveConfigMismatch, ConsensusIntegrityError, SchemaValidationError, CanonicalError
+    ) as exc:
         print(f"ai-review consensus: {exc}", file=sys.stderr)
         return 3
 

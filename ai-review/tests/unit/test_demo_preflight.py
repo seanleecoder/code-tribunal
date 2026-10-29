@@ -121,7 +121,7 @@ class DemoPreflightTests(unittest.TestCase):
                     "AI_REVIEW_GITHUB_RESOLVE_TOKEN": RECENT,
                 }
             ),
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED": _state(
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED": _state(
                 gitlab_variables=[
                     *_state()["gitlab_variables"],  # type: ignore[misc]
                     _gitlab_variable("AI_REVIEW_MERGE_GATE_ENABLED", scope="production"),
@@ -182,7 +182,7 @@ class DemoPreflightTests(unittest.TestCase):
         checks = preflight.run(_runner(state), NOW)
         for expected in (
             "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED", "active ruleset 'later-page'",
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED", "active ruleset 'later-page'",
         ):
             with self.subTest(expected=expected):
                 self.assertTrue(any(expected in c.message for c in checks), checks)
@@ -204,7 +204,7 @@ class DemoPreflightTests(unittest.TestCase):
         self.assertEqual([c.level for c in checks], ["FAIL"] * 3)
         for expected in (
             "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED",
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED",
         ):
             self.assertTrue(any(expected in c.message for c in checks), checks)
 

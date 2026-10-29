@@ -52,10 +52,6 @@ def _one_line(value: object, limit: int) -> str | None:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _job_stages(config: ReviewConfig) -> list[JobStage]:
-    return ["review", "critique"] if config.critique.enabled else ["review"]
-
-
 def load_status_files(
     status_dir: Path, config: ReviewConfig, run_id: str
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -67,7 +63,7 @@ def load_status_files(
     """
     statuses: dict[tuple[str, str], dict[str, Any]] = {}
     for reviewer in sorted(enabled_reviewers(config)):
-        for stage in _job_stages(config):
+        for stage in ("review", "critique"):
             try:
                 status = load_json_file(status_dir / f"{status_file_stem(stage, reviewer)}.json")
                 validate_instance(status, "adapter_status.schema.json")
@@ -111,7 +107,7 @@ def build_run_health_jobs(
         "critique": {str(batch["critic"]): batch for batch in critique_batches or []},
     }
     jobs: list[RunHealthJob] = []
-    for stage in _job_stages(config):
+    for stage in ("review", "critique"):
         for reviewer in sorted(enabled_reviewers(config)):
             reviewer_cfg = config.reviewers[reviewer]
             batch = batches[stage].get(reviewer)

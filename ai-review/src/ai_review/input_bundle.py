@@ -479,16 +479,13 @@ def prepare_local_bundle(
     )
 
 
-def _external_fork_secrets_blocked(config: ReviewConfig) -> str | None:
+def _external_fork_secrets_blocked() -> str | None:
     source_project_id = os.environ.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID")
     project_id = os.environ.get("CI_PROJECT_ID")
     if not source_project_id or not project_id or source_project_id == project_id:
         return None
-    if config.security.allow_external_fork_secrets:
-        return None
     return (
-        "external fork MR secret-bearing prepare path is disabled because "
-        "security.allow_external_fork_secrets is false "
+        "external fork MR secret-bearing prepare path is disabled "
         f"(source_project_id={source_project_id}, project_id={project_id})"
     )
 
@@ -692,7 +689,7 @@ def prepare_gitlab_bundle(
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
         raise SystemExit("prepare requires CI_PROJECT_ID and CI_MERGE_REQUEST_IID")
-    fork_block_reason = _external_fork_secrets_blocked(config)
+    fork_block_reason = _external_fork_secrets_blocked()
     if fork_block_reason is not None:
         raise SystemExit(f"prepare refused to run: {fork_block_reason}")
     try:

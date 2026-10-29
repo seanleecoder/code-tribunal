@@ -54,11 +54,9 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         # adapter that stores persistent state, and AI_REVIEW_STATE_BACKEND is
         # retired and now rejected outright.
         "AI_REVIEW_POSTING_MODE": "github_reviews",
-        "AI_REVIEW_CRITIQUE_ENABLED": "false",
     }
 
     # Critique on, so prepare stamps it into the manifest's effective config.
-    CRITIQUE_ENV = {**CONSENSUS_ENV, "AI_REVIEW_CRITIQUE_ENABLED": "true"}
 
     def _bundle(self, tmp: Path) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         bundle = prepare_simple_bundle(tmp)
@@ -321,7 +319,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
         self.assertNotEqual(record["anchor"]["start"]["new_line"], marker_line_1)
 
     def test_majority_noise_on_a_rerun_keeps_the_thread_open(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", self.CRITIQUE_ENV):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
+        ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             batches = self._batches("blocking", bundle, manifest, config)[:2]
@@ -346,7 +347,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     def test_noise_demoted_body_change_still_updates_the_thread_when_it_surfaces(self) -> None:
         # Surface A, then B demoted by noise, then B surfaced. The demoted run
         # leaves the thread showing A, so the surfaced run must update it.
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", self.CRITIQUE_ENV):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict("os.environ", self.CONSENSUS_ENV),
+        ):
             config, manifest, diff_text, bundle = self._bundle(Path(tmp))
             client = FakeGitHubClient(head_sha=manifest["head_sha"], diff_text=diff_text)
             blocking = self._batches("blocking", bundle, manifest, config)[:2]

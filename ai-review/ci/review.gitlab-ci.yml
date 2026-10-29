@@ -9,31 +9,11 @@ variables:
   AI_REVIEW_TRUSTED_IMAGE_SHA: "6ca538106d1eef7f449e5227408c99013c75aedc"
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
-  # Single source of truth for critique: this exact variable gates BOTH the
-  # critique job-creation rule below and config's critique.enabled (via
-  # apply_env_overrides). Default matches review.yaml; set "false" to disable.
-  # Must be exactly "true"/"false" — any other value fails the pipeline loudly.
-  AI_REVIEW_CRITIQUE_ENABLED: "true"
-  # Environment-consistency contract: set AI_REVIEW_* policy overrides as
-  # project/group/pipeline variables (inherited by every job). Prepare records
-  # effective_config_sha256; review, critique, consensus, and post each fail
-  # closed if they see a different effective config. Supported override names:
-  # AI_REVIEW_REVIEWERS AI_REVIEW_CLAUDE_MODEL AI_REVIEW_CODEX_MODEL
-  # AI_REVIEW_OPENCODE_MODEL AI_REVIEW_CURSOR_MODEL
-  # AI_REVIEW_CLAUDE_EFFORT AI_REVIEW_CODEX_EFFORT AI_REVIEW_OPENCODE_EFFORT
-  # AI_REVIEW_CRITIQUE_ENABLED AI_REVIEW_POSTING_MODE
-  # AI_REVIEW_REVIEWERS is the panel roster: a comma-separated list of reviewers
-  # (e.g. "claude,codex,cursor") that enables exactly those seats and disables
-  # every other configured seat. All four reviewers are peers, so any of them may
-  # be left out. It must be project/group-scoped like every other override — a
-  # roster visible to only some jobs is caught by the effective_config_sha256
-  # check, not silently applied per stage. Seats left out produce skipped artifacts, so
-  # their statically declared jobs below complete quickly and do not vote.
-  # AI_REVIEW_REVIEWERS requires a runtime that supports it. Jobs run
-  # /opt/ai-review from $AI_REVIEW_BASE_IMAGE/$AI_REVIEW_REVIEWER_IMAGE, so an
-  # image pinned before roster support ignores the variable and leaves the panel
-  # at the seats enabled in review.yaml. Confirm the image pins ship roster
-  # support before relying on it.
+  # Prepare resolves model, effort, roster and posting-mode overrides once.
+  # Downstream stages consume effective_config from the prepared manifest;
+  # environment changes in later jobs cannot change this run's policy.
+  # AI_REVIEW_REVIEWERS selects three or four first-party seats. Jobs for omitted
+  # seats write skipped artifacts and never call a provider.
   # Do not set AI_REVIEW_LOCAL_MOCK as a project/pipeline variable in production
   # (mock is forbidden).
 
@@ -112,21 +92,7 @@ prepare_ai_review:
   interruptible: true
   allow_failure: true
   variables: *reviewer_variables
-  # Critique gating must combine BOTH the enabled-flag AND the source gate in
-  # this one rules: block. A job's own rules: FULLY REPLACES any rules inherited
-  # via `extends` (GitLab overrides the array, it does not merge), so we cannot
-  # rely on `.ai_review_rules` here — extending it would be silently shadowed.
-  # Without the source gate, critique jobs are created on push/tag/schedule
-  # pipelines where prepare_ai_review does NOT exist, and their non-optional
-  # `needs: prepare_ai_review` fails pipeline creation. Keep these sources in
-  # sync with prepare_ai_review / .ai_review_rules. The disabled-guard
-  # (when: never) must be first so it wins over the source matches below.
-  rules:
-    - if: '$AI_REVIEW_CRITIQUE_ENABLED != "true"'
-      when: never
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_MERGE_REQUEST_IID'
-    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
+  extends: .ai_review_rules
   needs:
     - job: prepare_ai_review
       artifacts: true
@@ -160,9 +126,8 @@ consensus_ai_review:
       artifacts: true
     - job: "AI critique"
       artifacts: true
-      optional: true
   script:
-    - python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --status-dir out/status --out out/consensus/consensus.json
+    - python -m ai_review.consensus --inputs inputs --findings-dir out/findings --critiques-dir out/critiques --status-dir out/status --out out/consensus/consensus.json
   artifacts:
     when: always
     expire_in: 30 days
@@ -195,7 +160,7 @@ post_ai_review:
     - job: consensus_ai_review
       artifacts: true
   script:
-    - python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+    - python -m ai_review.post --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
   artifacts:
     when: always
     expire_in: 30 days

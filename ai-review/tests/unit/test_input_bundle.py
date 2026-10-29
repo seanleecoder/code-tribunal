@@ -87,20 +87,9 @@ class InputBundleLimitTests(unittest.TestCase):
             {"CI_PROJECT_ID": "1", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "2"},
             clear=True,
         ):
-            reason = _external_fork_secrets_blocked(runtime_config())
+            reason = _external_fork_secrets_blocked()
         self.assertIsNotNone(reason)
-        self.assertIn("allow_external_fork_secrets is false", reason or "")
-
-    def test_external_fork_secret_gate_allows_explicit_opt_in(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {"CI_PROJECT_ID": "1", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "2"},
-            clear=True,
-        ):
-            reason = _external_fork_secrets_blocked(
-                runtime_config(lambda c: c["security"].update(allow_external_fork_secrets=True))
-            )
-        self.assertIsNone(reason)
+        self.assertIn("external fork MR secret-bearing prepare path is disabled", reason or "")
 
     def test_prepare_state_load_fails_closed_when_current_user_unavailable(self) -> None:
         class BrokenUserClient:

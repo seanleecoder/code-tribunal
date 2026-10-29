@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ai_review.config import (
     ReviewConfig,
@@ -65,15 +66,20 @@ class ConsensusCliTests(unittest.TestCase):
                 write_canonical_json(findings / f"{reviewer}.json", batch)
             out = root / "consensus.json"
             argv = [
-                "--config", str(config_path), "--inputs", str(inputs),
+                 "--inputs", str(inputs),
                 "--findings-dir", str(findings), "--out", str(out),
             ]
             self.assertEqual(cli(argv), 0)
             before = out.read_bytes()
             (inputs / "state_aliases.json").write_text("invalid json")
             (inputs / "state.json").write_text("invalid json")
-
-            self.assertEqual(cli(argv), 0)
+            with mock.patch.dict("os.environ", {
+                "AI_REVIEW_CODEX_MODEL": "provider/drifted",
+                "AI_REVIEW_POSTING_MODE": "github_reviews",
+                "AI_REVIEW_REVIEWERS": "cursor",
+                "AI_REVIEW_CONFIG": "/missing/config",
+            }):
+                self.assertEqual(cli(argv), 0)
             self.assertEqual(out.read_bytes(), before)
 
     def test_failed_panel_still_writes_consensus_artifact(self) -> None:
@@ -88,8 +94,6 @@ class ConsensusCliTests(unittest.TestCase):
 
             code = cli(
                 [
-                    "--config",
-                    str(config_path),
                     "--inputs",
                     str(input_dir),
                     "--findings-dir",
@@ -124,8 +128,6 @@ class ConsensusCliTests(unittest.TestCase):
 
             code = cli(
                 [
-                    "--config",
-                    str(config_path),
                     "--inputs",
                     str(input_dir),
                     "--findings-dir",
@@ -151,7 +153,7 @@ class ConsensusCliTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v3",
+                        "schema_version: review_config.v4",
                         "reviewers:",
                         "  claude:",
                         "    enabled: true",
@@ -164,7 +166,7 @@ class ConsensusCliTests(unittest.TestCase):
                         "    timeout_seconds: 30",
                         "    max_findings: 50",
                         *panel_filler("claude", "codex"),
-                        *config_tail(critique_enabled=True),
+                        *config_tail(),
                     ]
                 ),
                 encoding="utf-8",
@@ -201,8 +203,6 @@ class ConsensusCliTests(unittest.TestCase):
 
             code = cli(
                 [
-                    "--config",
-                    str(config_path),
                     "--inputs",
                     str(input_dir),
                     "--findings-dir",
@@ -251,8 +251,6 @@ class ConsensusStatusDirTests(unittest.TestCase):
             with contextlib.redirect_stdout(stdout):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",

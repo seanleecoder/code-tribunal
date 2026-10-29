@@ -124,8 +124,6 @@ class PanelDegradationTests(unittest.TestCase):
         out_path = root / "out" / "consensus.json"
         code = cli(
             [
-                "--config",
-                str(_REPO_CONFIG),
                 "--inputs",
                 str(input_dir),
                 "--findings-dir",
@@ -232,8 +230,6 @@ class PanelDegradationTests(unittest.TestCase):
                 out_path = root / "out" / "consensus.json"
                 code = cli(
                     [
-                        "--config",
-                        str(_REPO_CONFIG),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",

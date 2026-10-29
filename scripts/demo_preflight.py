@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from ai_review.config import RETIRED_ENV_OVERRIDES
+from ai_review.config import unknown_environment_overrides
 from candidate_canary_common import (
     DEMO_PROJECT,
     DEMO_REPOSITORY,
@@ -83,7 +83,7 @@ def _variable_checks(platform: str, names: set[str]) -> list[Check]:
         Check("FAIL", f"{platform}: {kind} variable {name} is set; {consequence}")
         for kind, known, consequence in (
             ("mock", MOCK_VARIABLES, "delete it before a run"),
-            ("retired", RETIRED_ENV_OVERRIDES, "it fails config load"),
+            ("unsupported", unknown_environment_overrides(names), "it fails config load"),
         )
         for name in sorted(names & set(known))
     ]

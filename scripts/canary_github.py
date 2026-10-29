@@ -87,14 +87,14 @@ def candidate_workflow(workflow: str, *, base_image: str, reviewer_image: str) -
             raise GitHubCanaryError(f"canonical workflow had no image matching {pattern}")
     roster = ",".join(reviewer_ids())
     workflow, roster_count = re.subn(
-        r"(?m)^  AI_REVIEW_REVIEWERS:.*$",
-        f'  AI_REVIEW_REVIEWERS: "{roster}"',
+        r"(?m)^( +)AI_REVIEW_REVIEWERS:.*$",
+        rf'\1AI_REVIEW_REVIEWERS: "{roster}"',
         workflow,
     )
     if roster_count != 1:
         raise GitHubCanaryError("canonical workflow must declare AI_REVIEW_REVIEWERS once")
     for variable in effort_variables():
-        workflow, count = re.subn(rf"(?m)^  {variable}:.*$", f'  {variable}: ""', workflow)
+        workflow, count = re.subn(rf"(?m)^( +){variable}:.*$", rf'\1{variable}: ""', workflow)
         if count != 1:
             raise GitHubCanaryError(f"canonical workflow must declare {variable} once")
     # Opening the PR is the campaign's only review trigger, so the copy's

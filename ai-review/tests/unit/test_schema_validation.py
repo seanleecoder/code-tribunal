@@ -654,7 +654,7 @@ class SchemaValidationTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "schema_version: review_config.v3",
+                        "schema_version: review_config.v4",
                         "reviewers:",
                         "  codex:",
                         "    enabled: true",

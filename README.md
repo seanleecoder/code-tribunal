@@ -104,7 +104,7 @@ One logical DAG performs five operations:
 1. `prepare` binds the diff, repository snapshot, state, configuration, and
    revision metadata into an input bundle.
 2. `review` runs enabled reviewers independently and validates their findings.
-3. `critique` optionally asks reviewers to assess anonymized peer findings.
+3. `critique` asks reviewers to assess anonymized peer findings.
 4. `consensus` validates cross-stage integrity, groups findings, and surfaces
    each group two reviewer identities support independently.
 5. `post` reconciles prior state and upserts GitLab discussions or GitHub review

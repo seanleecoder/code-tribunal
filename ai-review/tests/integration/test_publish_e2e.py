@@ -299,9 +299,7 @@ class PublishEndToEndTests(unittest.TestCase):
     def _prepare_bundle(self, tmp: Path) -> tuple[ReviewConfig, dict[str, Any], str]:
         bundle = prepare_simple_bundle(tmp)
         config = load_config(SHIPPED_CONFIG_PATH).to_dict()
-        config["critique"]["enabled"] = False
         config["posting"]["inline_multiline"] = False
-        config["posting"]["v1_inline_sides"] = ["new"]
         config["panel"]["min_successful_reviewers_for_resolution"] = 1
         config["state"]["retention"] = {"max_records": 200}
         manifest = load_json_file(bundle / "manifest.json")

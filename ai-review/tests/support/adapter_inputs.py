@@ -26,10 +26,10 @@ def bind_manifest_to_config(
 ) -> None:
     """Record the effective config in the manifest, as prepare does.
 
-    The runner refuses to run when its effective config differs from the
-    manifest's, so a hand-written manifest is bound under the same ``AI_REVIEW_*``
-    environment the runner will see. An invalid config is left unbound: the
-    runner reports it itself.
+    This simulates trusted prepare for tests that construct a bundle directly.
+    The runner consumes the recorded settings without reading this YAML again.
+    An invalid document is left unbound, so runtime admission reports missing
+    prepared configuration.
     """
     manifest_path = input_dir / "manifest.json"
     try:
