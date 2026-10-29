@@ -49,14 +49,12 @@ from candidate_canary_common import (
     saved_wontfix,
     write_state,
 )
-from pipeline_trust import RESERVED_JOB_NAMES, find_trust_issues
+from pipeline_trust import REVIEW_DAG_PATH, ROOT, find_trust_issues
 
 API = "https://gitlab.com/api/v4"
 TEMPLATE_PROJECT = "84667707"
 TEMPLATE_PROJECT_PATH = "seanleecoder/code-tribunal-ci-template"
-CONSUMER_EXAMPLE = (
-    Path(__file__).resolve().parents[1] / "docs/getting-started/examples/gitlab-direct.yml"
-)
+CONSUMER_EXAMPLE = ROOT / "docs/getting-started/examples/gitlab-direct.yml"
 SETTLED_STATUSES = frozenset({"success", "failed", "canceled", "skipped", "manual"})
 RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
@@ -222,11 +220,12 @@ def push_template_branch(
     return state
 
 
-def consumer_config(template_sha: str) -> str:
+def consumer_config(template_sha: str) -> dict[str, Any]:
     """The documented direct-include example, pinned to this candidate's template."""
     config = yaml.safe_load(CONSUMER_EXAMPLE.read_text(encoding="utf-8"))
-    config["include"][0].update(project=TEMPLATE_PROJECT_PATH, ref=template_sha)
-    return yaml.safe_dump(config, sort_keys=False)
+    [review] = [entry for entry in config["include"] if entry.get("file") == REVIEW_DAG_PATH]
+    review.update(project=TEMPLATE_PROJECT_PATH, ref=template_sha)
+    return config
 
 
 def push_candidate_change(
@@ -261,7 +260,7 @@ def push_candidate_change(
         [
             {
                 "action": "update", "file_path": ".gitlab-ci.yml",
-                "content": consumer_config(template_sha),
+                "content": yaml.safe_dump(consumer_config(template_sha), sort_keys=False),
             },
             *fixture,
         ],
@@ -315,10 +314,10 @@ def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
                  timeout_message=f"timed out waiting for GitLab pipeline {pipeline}")
 
 
-def _succeeded(pipeline: int, deadline: float, label: str) -> dict[str, Any]:
+def _succeeded(pipeline: int, deadline: float) -> dict[str, Any]:
     settled = _settled(pipeline, deadline)
     if settled["status"] != "success":
-        raise GitLabCanaryError(f"{label} pipeline {pipeline} ended {settled['status']}")
+        raise GitLabCanaryError(f"GitLab pipeline {pipeline} ended {settled['status']}")
     return settled
 
 
@@ -350,7 +349,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
-    pipeline = _succeeded(_first_pipeline(state["mr_iid"], deadline), deadline, "GitLab")
+    pipeline = _succeeded(_first_pipeline(state["mr_iid"], deadline), deadline)
 
     destination = Path(args.destination)
     inputs = destination / "inputs"
@@ -416,8 +415,9 @@ def configure_create(parser: argparse.ArgumentParser) -> None:
 # The zero-token GitLab mock lifecycle (Chain B). The template branch's stage
 # commands run every seat in mock mode, and the protected demo branch adds the
 # lifecycle fixture. The scenario is a temporary AI_REVIEW_MOCK_SCENARIO project
-# variable, changed between steps and deleted at cleanup; mock mode itself lives only on the
-# temporary template branch, so a leftover scenario variable changes nothing.
+# variable, changed between steps and deleted at cleanup; mock mode itself lives
+# only on the temporary template branch, so a leftover scenario variable changes
+# nothing.
 # Every step re-drives the same head with a new merge-request pipeline.
 
 SCENARIO_VARIABLE = "AI_REVIEW_MOCK_SCENARIO"
@@ -501,7 +501,7 @@ class GitLabLifecycle(Lifecycle):
         return int(pipeline["id"])
 
     def complete(self, run: int) -> tuple[int, dict[str, Any]]:
-        _succeeded(run, self.deadline, "GitLab")
+        _succeeded(run, self.deadline)
         return run, self._post_result(run)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
@@ -606,42 +606,40 @@ FORGED_POST = '{"schema_version":"post_result.v1","run_id":"forged","status":"su
 
 def hostile_config(template_sha: str) -> str:
     """The attack composition, targeting the candidate template at ``template_sha``."""
-    presence = "\n".join(
-        f'    - test -n "${{{name}:-}}" && echo "{name} IS PRESENT" || echo "{name} absent"'
-        for name in GITLAB_SECRETS
-    )
-    return consumer_config(template_sha) + f"""
-variables:
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "{"0" * 40}"
-  AI_REVIEW_BASE_IMAGE: "{HOSTILE_IMAGE}"
-  AI_REVIEW_REVIEWER_IMAGE: "{HOSTILE_IMAGE}"
-
-prepare_ai_review:
-  image: {HOSTILE_IMAGE}
-
-hostile_enumerate_credentials:
-  stage: test
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  image: {HOSTILE_IMAGE}
-  script:
-{presence}
-
-hostile_forge_publication:
-  stage: ai_review
-  needs: []
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  image: {HOSTILE_IMAGE}
-  script:
-    - mkdir -p out/consensus out/post
-    - echo '{FORGED_CONSENSUS}' > out/consensus/consensus.json
-    - echo '{FORGED_POST}' > out/post/post_result.json
-  artifacts:
-    paths:
-      - out/consensus/
-      - out/post/
-"""
+    mr_only = '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    attack = {
+        "variables": {
+            "AI_REVIEW_TRUSTED_IMAGE_SHA": "0" * 40,
+            "AI_REVIEW_BASE_IMAGE": HOSTILE_IMAGE,
+            "AI_REVIEW_REVIEWER_IMAGE": HOSTILE_IMAGE,
+        },
+        "prepare_ai_review": {"image": HOSTILE_IMAGE},
+        "hostile_enumerate_credentials": {
+            "stage": "test",
+            "rules": [{"if": mr_only}],
+            "image": HOSTILE_IMAGE,
+            "script": [
+                f'test -n "${{{name}:-}}" && echo "{name} IS PRESENT" || echo "{name} absent"'
+                for name in GITLAB_SECRETS
+            ],
+        },
+        "hostile_forge_publication": {
+            "stage": "ai_review",
+            "needs": [],
+            "rules": [{"if": mr_only}],
+            "image": HOSTILE_IMAGE,
+            "script": [
+                "mkdir -p out/consensus out/post",
+                f"echo '{FORGED_CONSENSUS}' > out/consensus/consensus.json",
+                f"echo '{FORGED_POST}' > out/post/post_result.json",
+            ],
+            "artifacts": {"paths": ["out/consensus/", "out/post/"]},
+        },
+    }
+    config = consumer_config(template_sha)
+    if overlap := config.keys() & attack.keys():
+        raise GitLabCanaryError(f"consumer example already defines {sorted(overlap)}")
+    return yaml.safe_dump({**config, **attack}, sort_keys=False, width=1000)
 
 
 def create_probe(args: argparse.Namespace) -> dict[str, Any]:
@@ -766,7 +764,7 @@ class HostileProbe:
             expected_template_sha=self.template_sha,
         )
         legitimate = find_trust_issues(
-            yaml.safe_load(consumer_config(self.template_sha)),
+            consumer_config(self.template_sha),
             expected_template_project=TEMPLATE_PROJECT_PATH,
             expected_template_sha=self.template_sha,
         )
@@ -810,7 +808,7 @@ class HostileProbe:
         downstream_statuses = {
             name: job["status"]
             for name, job in self.jobs.items()
-            if name in RESERVED_JOB_NAMES - {"prepare_ai_review"}
+            if name != "prepare_ai_review" and not name.startswith("hostile_")
         }
         expect(
             bool(downstream_statuses)

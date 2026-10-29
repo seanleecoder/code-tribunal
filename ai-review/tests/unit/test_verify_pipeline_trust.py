@@ -8,7 +8,8 @@ import yaml
 
 from tests.support.repository_script import load_repository_script
 
-_PIPELINE_TRUST = Path(__file__).resolve().parents[3] / "scripts" / "pipeline_trust.py"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+_PIPELINE_TRUST = REPO_ROOT / "scripts" / "pipeline_trust.py"
 
 # The image copies only the handful of scripts it actually executes — the auditor
 # is not one of them, by the same reasoning that moved it out of the ai_review
@@ -40,7 +41,6 @@ find_trust_issues = _pipeline_trust.find_trust_issues
 TRUSTED_PROJECT = "org/code-tribunal-ci"
 TRUSTED_SHA = "a" * 40
 OTHER_SHA = "b" * 40
-REPO_ROOT = Path(__file__).resolve().parents[3]
 REVIEW_TEMPLATE = REPO_ROOT / "ai-review/ci/review.gitlab-ci.yml"
 
 

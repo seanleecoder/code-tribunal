@@ -136,13 +136,13 @@ class HostileConfigTests(unittest.TestCase):
                 self.assertIn(f'echo "{name} IS PRESENT"', text)
                 self.assertNotIn(f'echo "${name}', text)
                 self.assertNotIn(f"echo ${{{name}", text)
+        config = yaml.safe_load(text)
         issues = hostile.find_trust_issues(
-            yaml.safe_load(text),
+            config,
             expected_template_project=hostile.TEMPLATE_PROJECT_PATH,
             expected_template_sha=TEMPLATE_SHA,
         )
         self.assertTrue(any("prepare_ai_review" in issue for issue in issues))
-        config = yaml.safe_load(text)
         self.assertEqual(config["include"][0]["ref"], TEMPLATE_SHA)
         self.assertEqual(config["hostile_forge_publication"]["needs"], [])
 
