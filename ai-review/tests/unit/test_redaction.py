@@ -56,6 +56,36 @@ class RedactionTests(unittest.TestCase):
         self.assertIn("[REDACTED]", redacted)
         self.assertIn("after", redacted)
 
+    def test_incomplete_pem_private_key_is_redacted_through_eof(self) -> None:
+        self.assertEqual(
+            redact_text("before\n-----BEGIN PRIVATE KEY-----\npartial-private-key"),
+            "before\n[REDACTED]",
+        )
+
+    def test_file_tail_masks_non_ascii_secret_values_before_clipping(self) -> None:
+        for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):
+            with self.subTest(value=value[:8]), tempfile.TemporaryFile() as capture:
+                capture.write(("token=" + value + "\nlast progress\n").encode())
+                capture.flush()
+                self.assertEqual(
+                    redact_file_tail(capture),
+                    "...[truncated]...\n[REDACTED]\nlast progress\n",
+                )
+
+    def test_file_tail_recognizes_all_unicode_whitespace_before_clipping(self) -> None:
+        whitespace = (chr(value) for value in range(0x110000) if chr(value).isspace())
+        for character in whitespace:
+            for prefix in (f"token{character}={character}", f"Bearer{character}"):
+                with self.subTest(prefix=prefix), tempfile.TemporaryFile() as capture:
+                    capture.write(
+                        (prefix + "never-publish-this" * 2000 + "\nlast progress\n").encode()
+                    )
+                    capture.flush()
+                    self.assertEqual(
+                        redact_file_tail(capture),
+                        "...[truncated]...\n[REDACTED]\nlast progress\n",
+                    )
+
     def test_file_tail_masks_bearer_values_with_unicode_case_folds_before_clipping(self) -> None:
         for character in ("İ", "ı", "ſ", "K"):
             with self.subTest(character=character), tempfile.TemporaryFile() as capture:

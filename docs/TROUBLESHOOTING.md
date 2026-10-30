@@ -58,6 +58,7 @@ as a clean review. After completion, the job log shows at most the last 4,000 re
 stderr characters, with a truncation notice when necessary. Capture files are
 closed and removed after the adapter's process group is terminated, including
 any children remaining after a normal adapter exit.
+Incomplete private-key blocks are redacted through the end of the captured output.
 
 A parse or validation failure writes two redacted artifacts:
 

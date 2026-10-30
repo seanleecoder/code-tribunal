@@ -18,12 +18,24 @@ SECRET_PATTERNS = [
     re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
-    # PEM private key blocks (multi-line)
-    re.compile(r"-----BEGIN[^-]*PRIVATE KEY-----.*?-----END[^-]*PRIVATE KEY-----", re.DOTALL),
+    # An incomplete PEM block masks through EOF. Besides protecting partial keys,
+    # this prevents repeated BEGIN markers from each scanning to EOF for an END.
+    re.compile(
+        r"-----BEGIN[^-]*PRIVATE KEY-----.*?(?:-----END[^-]*PRIVATE KEY-----|\Z)",
+        re.DOTALL,
+    ),
     # keyword=value / keyword: value. The value is \S+ so the entire secret token
     # is masked even when it contains characters like ! # $ % &.
     re.compile(r"(?i)(api[_-]?key|token|secret|password)(\s*[=:]\s*)(\S+)"),
 ]
+
+# UTF-8 encodings of Python's Unicode whitespace, including the ASCII separators
+# U+001C-U+001F that bytes \s omits. Match complete encodings so a separator cannot
+# consume non-whitespace Unicode bytes belonging to the secret value.
+_UTF8_WHITESPACE = (
+    r"(?:[\s\x1c-\x1f]|\xc2[\x85\xa0]|\xe1\x9a\x80|"
+    r"\xe2\x80[\x80-\x8a\xa8\xa9\xaf]|\xe2\x81\x9f|\xe3\x80\x80)"
+)
 
 
 def redact_text(text: str) -> str:
@@ -64,9 +76,7 @@ def redact_file_tail(stream: BinaryIO, *, limit: int = 4000) -> str:
                 # conservative byte superset keeps a Bearer value containing
                 # those characters from ending before the clipped window.
                 source = source.replace("A-Za-z", r"A-Za-z\x80-\xff")
-            # A conservative superset of Unicode whitespace in UTF-8: this may
-            # mask extra non-ASCII text, but cannot miss a split Bearer value.
-            source = source.replace(r"\s", r"[\s\x80-\xff]")
+            source = source.replace(r"\s", _UTF8_WHITESPACE)
             byte_pattern = re.compile(source.encode(), pattern.flags & ~re.UNICODE)
             for match in byte_pattern.finditer(capture):
                 # The keyword pattern preserves its name and separator, masking

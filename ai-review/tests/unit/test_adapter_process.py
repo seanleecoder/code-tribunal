@@ -11,6 +11,35 @@ import pytest
 from ai_review.adapter_process import AdapterOutputLimitError, _run_adapter_process
 
 
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_group_cleanup_keeps_exited_leader_unreaped(
+    monkeypatch: pytest.MonkeyPatch, returncode: int
+) -> None:
+    from ai_review import adapter_process
+
+    cleanup = adapter_process._kill_process_group
+    observed = []
+
+    def observe(proc: subprocess.Popen[str]) -> None:
+        try:
+            observed.append(os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+        except ChildProcessError:
+            observed.append(None)
+        finally:
+            cleanup(proc)
+
+    monkeypatch.setattr(adapter_process, "_kill_process_group", observe)
+    result = _run_adapter_process(
+        [sys.executable, "-c", f"raise SystemExit({returncode})"], os.environ.copy(), 5
+    )
+    assert result.returncode == returncode
+    assert len(observed) == 1
+    exited = observed[0]
+    assert exited is not None, "the leader was already reaped before signalling its group"
+    assert exited.si_code == os.CLD_EXITED
+    assert exited.si_status == returncode
+
+
 @pytest.mark.parametrize("timeout", [False, True])
 def test_capture_cleans_up_children_holding_output_open(tmp_path: Path, timeout: bool) -> None:
     lock_path = tmp_path / "child.lock"
@@ -129,3 +158,29 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
     assert "private-key-material" not in result.stderr
     assert "never-publish-this" not in result.stderr
     assert capfd.readouterr() == ("", "")
+
+
+def test_timeout_diagnostics_finish_with_many_incomplete_pem_blocks() -> None:
+    child = (
+        "import os, time\n"
+        "os.write(2, b'-----BEGIN PRIVATE KEY-----\\n' * 10000)\n"
+        "time.sleep(30)\n"
+    )
+    # The outer deadline also bounds a regression that hangs inside redaction
+    # after the inner adapter has already been killed at its one-second budget.
+    worker = (
+        "import os, subprocess, sys\n"
+        "from ai_review.adapter_process import _run_adapter_process\n"
+        "try:\n"
+        f"    _run_adapter_process([sys.executable, '-c', {child!r}], os.environ.copy(), 1)\n"
+        "except subprocess.TimeoutExpired as exc:\n"
+        "    assert exc.stderr == '...[truncated]...\\n[REDACTED]'\n"
+        "    print('timeout diagnostics completed')\n"
+        "else:\n"
+        "    raise AssertionError('expected TimeoutExpired')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", worker], capture_output=True, text=True, timeout=5, check=True
+    )
+    assert result.stdout == "timeout diagnostics completed\n"
+    assert result.stderr == ""

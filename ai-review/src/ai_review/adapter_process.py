@@ -173,6 +173,8 @@ def _check_output_size(stdout: BinaryIO, stderr: BinaryIO) -> None:
 def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     # start_new_session makes the adapter PID its process-group ID. Use it even
     # after the adapter exits: a remaining CLI child still belongs to that group.
+    # The caller keeps the leader unreaped until this signal, reserving its PID
+    # so an empty group's ID cannot be reused for an unrelated process group.
     with contextlib.suppress(ProcessLookupError, OSError):
         os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(subprocess.TimeoutExpired):
@@ -202,14 +204,15 @@ def _run_adapter_process(
         timed_out = False
         try:
             try:
-                while proc.poll() is None:
+                # Observe exit without reaping: cleanup must signal the group
+                # while its leader's PID is still reserved, even with no children.
+                while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
                     _check_output_size(stdout, stderr)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         timed_out = True
                         break
-                    with contextlib.suppress(subprocess.TimeoutExpired):
-                        proc.wait(timeout=min(remaining, 0.1))
+                    time.sleep(min(remaining, 0.1))
             finally:
                 # Also clean up descendants after a normal exit or an output-limit
                 # failure, before reading and closing the capture files.
