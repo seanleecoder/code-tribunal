@@ -84,7 +84,7 @@ class BodyHashTests(unittest.TestCase):
             "JSON escaped newline": f"`{header}`\\n{material}",
         }
         chunks = [material[index:index + 4] for index in range(0, len(material), 4)]
-        for separator in (" ", ",", ".", "-", "` `", "​", "­"):
+        for separator in (" ", ",", ".", "-", "` `", "\u200b", "\u00ad"):
             cases[f"payload split by {separator!r}"] = f"`{header}` " + separator.join(chunks)
         for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
             cases[f"Unicode line separator {separator!r}"] = f"`{header}`{separator}{material}"

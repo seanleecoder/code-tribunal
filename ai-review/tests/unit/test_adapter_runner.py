@@ -28,7 +28,6 @@ from ai_review.schema import (
     finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
-    validate_instance,
     write_canonical_json,
 )
 
@@ -1227,22 +1226,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertFalse(batch["usable_for_resolution"])
 
     def test_output_limit_log_tails_neutralize_workflow_commands(self) -> None:
-        raw = json.dumps({"findings": [{
-            "location": {
-                "path": "src/reviewed.py",
-                "side": "new",
-                "start_line": 1,
-                "end_line": 1,
-                "symbol": None,
-            },
-            "severity": "major",
-            "category": "correctness",
-            "title": "Check input",
-            "body": "x" * 2048 + "##[add-mask]body-marker",
-            "evidence": [],
-            "suggestion": None,
-        }]})
-        validate_instance(json.loads(raw), "raw_finding_batch.schema.json")
+        # The limit fails the run before parsing, so stdout needs no schema.
+        raw = '{"findings":[]}' + " " * 2048 + '"##[add-mask]body-marker"'
         diagnostic = (
             "::add-mask::stderr-marker\n"
             "  ::stop-commands::stop-marker\r"

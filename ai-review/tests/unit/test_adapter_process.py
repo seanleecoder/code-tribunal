@@ -164,16 +164,22 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
     assert capfd.readouterr() == ("", "")
 
 
+_TRUNCATED = "...[truncated]...\n"
+
+
 @pytest.mark.parametrize(
-    "diagnostic, expected_suffix",
+    "diagnostic, expected",
     [
-        ("b'-----BEGIN PRIVATE KEY-----\\n' * 10000", "[REDACTED]"),
-        ("b'eyJ' * 200000", "eyJ"),
+        ("b'-----BEGIN PRIVATE KEY-----\\n' * 10000", _TRUNCATED + "[REDACTED]"),
+        (
+            "b'eyJ' * 200000",
+            _TRUNCATED + ("eyJ" * 200000)[-(_ADAPTER_DIAGNOSTIC_TAIL_CHARS - len(_TRUNCATED)):],
+        ),
     ],
     ids=["incomplete-pem", "repeated-jwt-prefix"],
 )
 def test_timeout_diagnostics_finish_with_malformed_secret_prefixes(
-    diagnostic: str, expected_suffix: str,
+    diagnostic: str, expected: str,
 ) -> None:
     child = (
         "import os, time\n"
@@ -188,11 +194,7 @@ def test_timeout_diagnostics_finish_with_malformed_secret_prefixes(
         "try:\n"
         f"    _run_adapter_process([sys.executable, '-c', {child!r}], os.environ.copy(), 1)\n"
         "except subprocess.TimeoutExpired as exc:\n"
-        "    assert len(exc.stderr) <= 4000\n"
-        "    assert exc.stderr.startswith('...[truncated]...\\n')\n"
-        f"    assert exc.stderr.endswith({expected_suffix!r})\n"
-        f"    if {expected_suffix!r} == '[REDACTED]':\n"
-        "        assert exc.stderr == '...[truncated]...\\n[REDACTED]'\n"
+        f"    assert exc.stderr == {expected!r}\n"
         "    print('timeout diagnostics completed')\n"
         "else:\n"
         "    raise AssertionError('expected TimeoutExpired')\n"

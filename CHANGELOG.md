@@ -92,18 +92,12 @@ versioning.
   bounded, redacted parse and timeout artifacts remain available. Diagnostics
   redact complete secret spans before truncation, including multiline keys.
   Unicode secret values and control-character whitespace remain masked across
-  tail boundaries. JWT scanning handles repeated malformed header prefixes
-  without quadratic rescans during timeout cleanup. Output-limit log tails
+  tail boundaries. Incomplete private-key blocks are redacted through
+  end-of-file, and repeated malformed PEM or JWT prefixes are scanned without
+  quadratic rescans, keeping timeout diagnostics responsive. Rendered findings
+  may keep prose after a standalone backtick-quoted PEM header; key blocks and
+  recognizable key payloads after it stay masked. Output-limit log tails
   neutralize GitHub Actions workflow commands on every diagnostic line.
-  Incomplete private-key blocks are redacted through end-of-file
-  without repeated scans, keeping timeout diagnostics responsive. Rendered findings
-  preserve single-line prose after a standalone quoted PEM header while still
-  masking complete and incomplete key blocks, including malformed footers.
-  Quoting a header does not exempt following key payloads, including payloads
-  split by whitespace, punctuation, backticks or invisible separators. Key
-  preambles are recognized without treating ordinary sentences, source paths,
-  commit SHAs or identifiers as payloads. Unicode line separators cannot bypass
-  incomplete-block masking.
   The CLI restores normal child reaping when `SIGCHLD` was inherited as ignored;
   process-group cleanup retains the leader PID until signalling, preventing ID
   reuse races.

@@ -34,6 +34,7 @@ from .config import (
     recorded_effective_config_digest,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
+from .redact import escape_legacy_workflow_commands
 from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
@@ -300,11 +301,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
     except AdapterOutputLimitError as exc:
         for stream, tail in (("stdout", exc.stdout), ("stderr", exc.stderr)):
             if tail:
-                sys.stderr.write(f"adapter {stream} tail:\n")
-                # Prefix every line to stop :: commands; legacy ##[ commands
-                # are recognized anywhere in a line and must also be escaped.
-                for line in tail.splitlines():
-                    sys.stderr.write(f"  | {line.replace('##[', '## [')}\n")
+                # Prefixing every line stops :: workflow commands.
+                lines = escape_legacy_workflow_commands(tail).splitlines()
+                sys.stderr.write(
+                    f"adapter {stream} tail:\n" + "".join(f"  | {line}\n" for line in lines)
+                )
         return _fail(
             "model_error",
             digest=config_digest,

@@ -14,7 +14,7 @@ from typing import Any, cast
 from .canonical import CanonicalError, canonical_json
 from .config import ReviewConfig, enabled_reviewers
 from .critique import critique_batch_succeeded
-from .redact import redact_text
+from .redact import escape_legacy_workflow_commands, redact_text
 from .schema import (
     SchemaValidationError,
     batch_usable_for_panel,
@@ -318,9 +318,9 @@ def longest(jobs: list[RunHealthJob], stage: str) -> str | None:
 
 
 def _plain(value: str) -> str:
-    # One line per value, and GitHub's legacy parser matches "##[" anywhere in a
-    # line: a disabled legacy command would otherwise fail the consensus step.
-    return " ".join(value.split()).replace("##[", "## [")
+    # One line per value; a disabled legacy command would otherwise fail the
+    # consensus step.
+    return escape_legacy_workflow_commands(" ".join(value.split()))
 
 
 def run_health_text(run_health: RunHealth) -> str:

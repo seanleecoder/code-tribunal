@@ -22,6 +22,14 @@ _PEM_ENCRYPTED = re.compile(r"(?:Proc-Type|DEK-Info)\s*:")
 # so adjacent candidates cannot hide each other.
 _PEM_PAYLOAD_START = re.compile(r"(?=(?P<der>M[A-P])|b3)")
 _OPENSSH_MAGIC = b"openssh-key-v1\x00"
+# Each base64url run commits atomically to its first eyJ; possessive components
+# keep failures linear, and the value group preserves text before an embedded
+# JWT. Without a literal prefix the engine tries every position, so callers skip
+# this pattern when the text has no eyJ.
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])(?>[A-Za-z0-9_-]*?(?=eyJ))"
+    r"(?P<value>eyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++)"
+)
 
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"),
@@ -32,13 +40,7 @@ SECRET_PATTERNS = [
     # GitHub tokens: personal (ghp_), oauth (gho_), user-to-server (ghu_),
     # server-to-server (ghs_), refresh (ghr_)
     re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}"),
-    # Anchor to each base64url run and fix its first eyJ in a lookahead.
-    # Possessive components keep failures linear; the value group preserves
-    # any text before an embedded JWT.
-    re.compile(
-        r"(?<![A-Za-z0-9_-])(?=(?P<prefix>[A-Za-z0-9_-]*?)eyJ)"
-        r"(?P=prefix)(?P<value>eyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++)"
-    ),
+    _JWT,
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
     _PEM_PRIVATE_KEY,
@@ -123,6 +125,8 @@ def redact_text(text: str, *, preserve_pem_header_prose: bool = False) -> str:
     redacted = text
     for pattern in SECRET_PATTERNS:
         replacement: str | Callable[[re.Match[str]], str]
+        if pattern is _JWT and "eyJ" not in redacted:
+            continue
         if preserve_pem_header_prose and pattern is _PEM_PRIVATE_KEY:
             replacement = _redact_pem_prose
         elif "value" in pattern.groupindex:
@@ -151,6 +155,7 @@ def _byte_pattern(pattern: re.Pattern[str]) -> re.Pattern[bytes]:
 
 
 _SECRET_BYTE_PATTERNS = [_byte_pattern(pattern) for pattern in SECRET_PATTERNS]
+_JWT_BYTES = _SECRET_BYTE_PATTERNS[SECRET_PATTERNS.index(_JWT)]
 
 _TRUNCATED_PREFIX = "...[truncated]...\n"
 
@@ -170,6 +175,8 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
     spans: list[tuple[int, int]] = []
     with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as capture:
         for byte_pattern in _SECRET_BYTE_PATTERNS:
+            if byte_pattern is _JWT_BYTES and capture.find(b"eyJ") == -1:
+                continue
             # Named value groups preserve the keyword/separator or JWT prefix,
             # masking only the secret, just as redact_text does.
             group = "value" if "value" in byte_pattern.groupindex else 0
@@ -190,3 +197,11 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
     if offset or len(redacted) > limit:
         return _TRUNCATED_PREFIX + redacted[-(limit - len(_TRUNCATED_PREFIX)):]
     return redacted
+
+
+def escape_legacy_workflow_commands(text: str) -> str:
+    """Break GitHub's legacy ``##[`` commands, which match anywhere in a line.
+
+    Callers still keep untrusted text from starting a ``::`` command line.
+    """
+    return text.replace("##[", "## [")
