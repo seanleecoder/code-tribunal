@@ -59,6 +59,8 @@ stderr characters, with a truncation notice when necessary. Capture files are
 closed and removed after the adapter's process group is terminated, including
 any children remaining after a normal adapter exit.
 Incomplete private-key blocks are redacted through the end of the captured output.
+Rendered findings preserve explanatory prose that quotes only a PEM header;
+complete private-key blocks remain masked.
 
 A parse or validation failure writes two redacted artifacts:
 

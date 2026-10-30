@@ -93,8 +93,11 @@ versioning.
   redact complete secret spans before truncation, including multiline keys.
   Unicode secret values and control-character whitespace remain masked across
   tail boundaries. Incomplete private-key blocks are redacted through end-of-file
-  without repeated scans, keeping timeout diagnostics responsive. Process-group
-  cleanup retains the leader PID until signalling, preventing ID reuse races.
+  without repeated scans, keeping timeout diagnostics responsive. Rendered findings
+  preserve prose after a quoted PEM header while still masking complete keys.
+  The CLI restores normal child reaping when `SIGCHLD` was inherited as ignored;
+  process-group cleanup retains the leader PID until signalling, preventing ID
+  reuse races.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out

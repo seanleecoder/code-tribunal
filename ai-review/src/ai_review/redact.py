@@ -18,10 +18,11 @@ SECRET_PATTERNS = [
     re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
-    # An incomplete PEM block masks through EOF. Besides protecting partial keys,
-    # this prevents repeated BEGIN markers from each scanning to EOF for an END.
+    # Matching through EOF prevents repeated BEGIN markers from each scanning
+    # to EOF for an END. Capture the closing marker so rendered prose can keep
+    # a quoted opening marker while diagnostics still mask incomplete blocks.
     re.compile(
-        r"-----BEGIN[^-]*PRIVATE KEY-----.*?(?:-----END[^-]*PRIVATE KEY-----|\Z)",
+        r"-----BEGIN[^-]*PRIVATE KEY-----.*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
         re.DOTALL,
     ),
     # keyword=value / keyword: value. The value is \S+ so the entire secret token
@@ -38,12 +39,18 @@ _UTF8_WHITESPACE = (
 )
 
 
-def redact_text(text: str) -> str:
+def redact_text(text: str, *, preserve_incomplete_pem: bool = False) -> str:
+    """Mask secrets, allowing finding prose to quote a standalone PEM header."""
     redacted = text
     for pattern in SECRET_PATTERNS:
         if pattern.groups >= 3:
             redacted = pattern.sub(
                 lambda match: match.group(1) + match.group(2) + "[REDACTED]", redacted
+            )
+        elif preserve_incomplete_pem and "pem_end" in pattern.groupindex:
+            redacted = pattern.sub(
+                lambda match: "[REDACTED]" if match["pem_end"] is not None else match[0],
+                redacted,
             )
         else:
             redacted = pattern.sub("[REDACTED]", redacted)

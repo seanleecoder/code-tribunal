@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -322,6 +323,10 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("reviewer")
     parser.add_argument("stage", choices=["review", "critique"])
     args = parser.parse_args(argv)
+    # Ignored signals survive exec. The runner must own child reaping so waitid
+    # can reserve the leader PID until process-group cleanup has signalled it.
+    if signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     return run_adapter(args.reviewer, args.stage)
 
 
