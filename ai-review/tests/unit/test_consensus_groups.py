@@ -16,8 +16,10 @@ from ai_review.schema import (
 def _config() -> ReviewConfig:
     return ReviewConfig(
         reviewers={
-            name: ReviewerConfig(enabled=True, model="model", timeout_seconds=600, max_findings=50)
-            for name in ("opencode", "claude", "codex")
+            name: ReviewerConfig(
+                enabled=name != "cursor", model="model", timeout_seconds=600, max_findings=50
+            )
+            for name in ("opencode", "claude", "codex", "cursor")
         },
         panel=PanelConfig(2),
     )

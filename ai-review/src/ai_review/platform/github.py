@@ -260,8 +260,7 @@ class GitHubReviewPlatform:
         if not isinstance(head, dict) or not isinstance(base, dict):
             raise GitHubReviewPlatformError("pull request requires valid base.sha and head.sha")
         head_repo = head.get("repo")
-        # GitHub's secret-bearing path always refuses forks. The configurable
-        # allow_external_fork_secrets exception applies only to GitLab.
+        # Secret-bearing preparation always refuses external forks.
         if not isinstance(head_repo, dict) or head_repo.get("full_name") != str(project_id_or_path):
             raise GitHubReviewPlatformError("external fork PR secret-bearing path is disabled")
         base_sha = str(base.get("sha") or "")

@@ -38,8 +38,7 @@ before the first N03 release, following the
   removed on 2026-09-27; Code Tribunal informs and never gates merges. Classic
   protection otherwise remains (no force pushes, no deletions). `main` accepts direct pushes, but land a
   workflow adoption as a PR anyway so the new copy runs once before it is merged.
-- **Repository variables** (persisted): `AI_REVIEW_CRITIQUE_ENABLED=true`,
-  `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
+- **Repository variables** (persisted): `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
   `pull_request` runs, which manual mode skips),
   `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`.
   Since 2026-10-18 the other seats pin the 2.0.3 shipped defaults explicitly,
@@ -125,8 +124,8 @@ Public, project id `84667714`. Verified present:
 
 - A runner.
 - `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
-  masked**. `AI_REVIEW_CRITIQUE_ENABLED=true` is deliberately *unprotected*, so
-  it applies on any ref including the hostile probe. Delete retired per-seat
+  masked**. Remove the obsolete `AI_REVIEW_CRITIQUE_ENABLED` variable before the next major;
+  critique always runs. Delete retired per-seat
   `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
   packaged roster. `AI_REVIEW_MERGE_GATE_ENABLED` is absent, and must stay so: it
   is retired and a current image fails at config load while it is set.

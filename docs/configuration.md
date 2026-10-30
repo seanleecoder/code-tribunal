@@ -2,25 +2,23 @@
 
 The shipped configuration is
 [`ai-review/config/review.yaml`](../ai-review/config/review.yaml). Unknown keys
-are rejected at every active mapping. Environment overrides are applied before
-validation; set them at repository/project scope so every job derives the same
-effective configuration.
-
-Each job resolves these settings once into an immutable runtime configuration.
-The manifest records all resolved defaults explicitly, including an omitted
-critique timeout and state, posting, limit, or security settings. Credentials stay
-in the environment and are never part of that configuration.
+are rejected at every active mapping. Trusted prepare overlays image defaults,
+custom YAML and operator environment overrides once, validates the result, and
+records the complete immutable configuration in the input manifest. Review,
+critique, consensus and post consume that configuration without reading YAML or
+reapplying environment overrides. Credentials stay outside it.
 
 ## YAML keys
 
 Defaults below are the shipped defaults. A custom configuration
-must retain `schema_version: review_config.v3`.
+must retain `schema_version: review_config.v4`.
 
 ### Reviewers
 
 `reviewers.<name>` is repeated for `claude`, `codex`, `opencode`, and `cursor`.
-All four keys must always be present. They are peer seats with the same deployment
-contract; see
+Custom YAML may omit seats and individual fields: the shipped YAML supplies
+their defaults, including disabled seats. The resolved roster always contains all
+four first-party seats. They share the same deployment contract; see
 [Choosing the panel](#choosing-the-panel) for how to select which of them vote.
 Adapter paths, credential names, endpoint families, real-provider controls, effort
 support, and supported stages are fixed by the trusted image's first-party reviewer
@@ -28,10 +26,10 @@ registry; they are not operator configuration.
 
 | Key | Type/default | Meaning |
 |---|---|---|
-| `schema_version` | string, `review_config.v3` | Configuration contract version; no other value is accepted. |
+| `schema_version` | string, `review_config.v4` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
 | `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
-| `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor rejects this key. |
+| `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor accepts only null effort; choose its model variant instead. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. The summary's run details show it as each review job's limit and mark a job that used at least 80% of it. |
 | `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
 | `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. Findings it cuts are reported as "omitted by the per-seat cap" in the summary's review health and grade the run `degraded`. |
@@ -62,8 +60,9 @@ Rules, all enforced at config load with a loud `ConfigError`:
   clean one.
 - Unknown or duplicated reviewer names are rejected, so a typo cannot silently
   shrink the panel.
-- The configuration must contain exactly the four first-party reviewer keys.
-  Omit a seat from the active panel with `enabled: false`, not by deleting it.
+- The resolved configuration contains exactly the four first-party reviewer keys.
+  Unknown names are rejected. Omitted seats inherit shipped defaults; use
+  `enabled: false` or the roster variable to disable one.
 - `AI_REVIEW_REVIEWERS` is the only environment-level panel selector. The YAML
   `enabled` values provide the default when it is unset. Retired per-seat
   `AI_REVIEW_<REVIEWER>_ENABLED` variables are rejected by name.
@@ -81,10 +80,9 @@ snapshot content it reads reach Cursor rather than OpenRouter (the
 Enable it only if you deliberately accept that path; `AI_REVIEW_CURSOR_MODEL`
 selects its model.
 
-Roster changes are part of the effective-config digest, so a roster visible to
-only some pipeline jobs fails the cross-stage consistency check instead of
-producing a differently-sized panel per stage. Set it at repository/project or
-group scope.
+Prepare captures the roster in the effective-config digest. Set it at
+repository/project or group scope so prepare receives it. Later job environments
+cannot change this run's roster.
 
 The resolution threshold is authored against the configured reviewer count and
 takes effect clamped to the enabled count, so changing the roster never requires
@@ -98,7 +96,7 @@ review and 895 seconds for critique. The CI templates independently allow 40
 minutes for review jobs and 20 minutes for critique jobs. These timeout values
 are trusted image configuration; there is no timeout environment-variable
 override. Both resolved stage values are included in the effective-config
-summary and digest, so all pipeline stages must use the same policy. Explicit
+manifest and digest, so all pipeline stages must use the same policy. Explicit
 `critique_timeout_seconds` values are used as configured; keep them at or below
 900 seconds while using the shipped 20-minute critique CI ceiling.
 
@@ -141,8 +139,7 @@ sets when a separate smoke is needed.
 
 Model recommendations last reviewed: 2026-10-04.
 
-Choose one complete profile at project/repository scope so all pipeline stages
-see the same effective configuration. Set the model override for each enabled
+Choose one complete profile at project/repository scope so prepare captures it. Set the model override for each enabled
 seat. Set its effort override to the profile's level, or to `unset` when the
 profile requires absent effort; model-only overrides inherit YAML effort (see
 [effort inheritance and clearing](#effort-inheritance-and-clearing)).
@@ -155,8 +152,8 @@ Each cell is `model` / `effort`; Cursor is optional.
 
 Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and supported
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
-below. For both MiMo models, **unset** means the resolved configuration has no
-`effort` key. The shipped YAML sets OpenCode effort to `low`, so set
+below. For both MiMo models, **unset** means the resolved configuration records
+`effort: null` and the adapter omits the provider effort setting. The shipped YAML sets OpenCode effort to `low`, so set
 `AI_REVIEW_OPENCODE_EFFORT=unset` as described in
 [effort inheritance and clearing](#effort-inheritance-and-clearing). MiMo uses the existing
 OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
@@ -201,10 +198,11 @@ anchor to the same code, not when they happen to choose similar phrasing.
 
 ### Critique
 
+One blind critique round always runs for each enabled seat. Failed or missing
+critique evidence degrades run health; it does not suppress valid reviews.
+
 | Key | Type/default | Meaning |
 |---|---|---|
-| `critique.enabled` | boolean, `true` | Run blind peer assessment. |
-| `critique.blind_reviewer_identity` | boolean, `true` | Replace reviewer identities with stable anonymous labels. |
 | `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
 
 ### Posting and state
@@ -212,10 +210,11 @@ anchor to the same code, not when they happen to choose similar phrasing.
 | Key | Type/default | Meaning |
 |---|---|---|
 | `posting.mode` | enum, `gitlab_discussions` | `gitlab_discussions` or `github_reviews`. |
-| `posting.v1_inline_sides` | list, `[new, old, unchanged]` | Diff sides eligible for inline placement; each item must be `new`, `old`, or `unchanged`. |
 | `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
-| `posting.fyi_mode` | enum, `summary_comment` | FYI (unsurfaced) findings go to the summary comment; other values are rejected. |
-| `posting.stale_head_guard` | boolean, `true` | Refuse mutations when the change-request head moved. |
+
+All three supported diff sides (`new`, `old`, `unchanged`) are eligible for
+inline placement. FYI findings always go to the summary. Posting always refuses
+stale-head mutations; these behaviors have no configuration switches.
 
 Persistent cross-run state is always active and has no backend setting.
 `posting.mode` selects the adapter that stores it inside the bot's summary
@@ -234,7 +233,7 @@ automatically resolved records are retained.
 |---|---|---|
 | `state.retention.max_records` | integer, `200` | Total record cap. |
 
-### Limits and security
+### Limits
 
 | Key | Type/default | Meaning |
 |---|---|---|
@@ -242,7 +241,9 @@ automatically resolved records are retained.
 | `limits.max_files` | integer, `200` | Maximum changed files. |
 | `limits.max_fyi_findings` | integer, `50` | Maximum FYI findings listed in the summary comment; the section renders a visible "more" trailer when it truncates. There is no equivalent cap on surfaced threads — every anchorable surfaced finding becomes a thread, and the volume bound is each reviewer's `max_findings`. |
 | `limits.max_prompt_bytes` | integer, `500000` | Maximum rendered prompt bytes sent to a model. |
-| `security.allow_external_fork_secrets` | boolean, `false` | Guard against provider/platform credentials in external-fork execution. Canonical GitHub workflows skip forks independently. |
+
+External-fork secret-bearing preparation is always refused. The canonical
+GitHub workflow also skips fork pull requests. There is no safety opt-out.
 
 ## Platform differences
 
@@ -295,7 +296,6 @@ artifacts.
 | `AI_REVIEW_CLAUDE_EFFORT` | `low` (YAML) | Closed effort enum, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). |
 | `AI_REVIEW_CODEX_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach Codex as `model_reasoning_effort`, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). The selected model route must accept the level; forwarding does not probe provider compatibility. |
 | `AI_REVIEW_OPENCODE_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
-| `AI_REVIEW_CRITIQUE_ENABLED` | `true` | Exact boolean; also controls GitLab critique job creation. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
 | `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
@@ -306,7 +306,7 @@ Missing, empty, and whitespace-only effort variables inherit YAML effort, and so
 do model-only overrides: changing only `AI_REVIEW_CODEX_MODEL` retains the
 shipped `low`. The trimmed, lowercase value `unset` removes YAML effort for
 Claude, Codex, and OpenCode, so the adapter omits the provider setting. It is an
-instruction to remove a key before validation, never a provider effort value:
+instruction to resolve effort to null before validation, never a provider effort value:
 YAML `effort: unset` is invalid. Cursor rejects `AI_REVIEW_CURSOR_EFFORT`,
 including `unset`; choose its model variant instead.
 
@@ -317,8 +317,8 @@ export AI_REVIEW_CODEX_MODEL=openai/your-model
 export AI_REVIEW_CODEX_EFFORT=unset
 ```
 
-Set these controls at repository/project scope so prepare, review, critique,
-consensus, and post resolve the same configuration.
+Set these controls where prepare can read them. Changing them after prepare
+only affects a subsequent run.
 
 ### Credentials
 
@@ -363,17 +363,9 @@ accepted host for that family, so nothing reads either name from the environment
 setting one has no effect, because an ambient value is overridden rather than
 rejected. Native Anthropic routing is not supported.
 
-| Rejected variable | Reason |
-|---|---|
-| `AI_REVIEW_CURSOR_EFFORT` | Cursor selects reasoning depth through its model variant; a separate effort variable is rejected. |
-| `AI_REVIEW_CLAUDE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CODEX_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_OPENCODE_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_CURSOR_ENABLED` | Retired in 2.0 (`review_config.v3`); set the complete panel with `AI_REVIEW_REVIEWERS`. |
-| `AI_REVIEW_MERGE_GATE_ENABLED` | Retired in 2.0 (`review_config.v3`) with the merge gate itself. Code Tribunal publishes review output and never decides whether a change may merge. Remove the `gate` job and any branch-protection or ruleset entry requiring it, then unset this variable. |
-| `AI_REVIEW_STATE_BACKEND` | Retired in 2.0 (`review_config.v3`); persistent state has no configurable backend, and `posting.mode` selects the adapter that stores it. Set `AI_REVIEW_POSTING_MODE` instead. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
-| `AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD` | Retired in 2.0 (`review_config.v3`) with semantic grouping itself. |
+Prepare rejects unsupported `AI_REVIEW_` names, including typos and removed
+controls, with one unknown-variable diagnostic. Cursor effort is unsupported;
+choose its model variant. Migration instructions are [below](#next-major-migration).
 
 ### Template and internal runtime variables
 
@@ -386,7 +378,7 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_REVIEWER_IMAGE` | GitLab template reviewer image pin. |
 | `AI_REVIEW_TRUSTED_IMAGE_SHA` | Source SHA bound to both GitLab image pins. |
 | `AI_REVIEW_PACKAGED_RUNTIME` | Set by the base image; carries no production runtime behavior. |
-| `AI_REVIEW_CONFIG` | Active configuration path. |
+| `AI_REVIEW_CONFIG` | Configuration path read only by prepare. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
 | `AI_REVIEW_LOCAL_MOCK` | Selects the deterministic mock in the Python runner only when `1`, with the companion allow flag below. Production templates set `0`; never set as a consumer project/pipeline variable. |
@@ -431,35 +423,41 @@ with its SHA-256, in
 
 ## Stage visibility and integrity
 
-Configuration overrides must be visible to prepare, review, critique,
-consensus, and post. Prepare records the whole validated configuration, after
-defaults and overrides, as the manifest's `effective_config`, and its digest as
-`effective_config_sha256`; successful reviewer and critique evidence is bound to
-it. Every later stage loads `AI_REVIEW_CONFIG` itself and must reproduce that
-digest before consequential work, and the failure names the differing top-level
-keys:
+Prepare records every resolved default and override in `effective_config`, with
+its whole-document `effective_config_sha256`. Later stages validate this complete
+versioned document and digest at the input artifact boundary. They do not load
+`AI_REVIEW_CONFIG` or resolve policy from their environment. Successful finding
+and critique batches remain bound to the run and configuration digest; post also
+checks the consensus artifact against the complete input-manifest digest.
 
-- a review or critique job writes a `config_error` status with error class
-  `EffectiveConfigMismatch` and exits nonzero before rendering a prompt or
-  calling a provider;
-- consensus exits 3, as it does when run or artifact identity differs;
-- post exits 1 before creating a platform client, and also refuses a consensus
-  artifact from another run.
+Missing, incomplete, unsupported or corrupt manifest configuration fails before
+consequential work: review/critique write `config_error`, consensus exits 3, and
+post exits 1 before creating a platform client. Downstream environment changes
+cannot alter the prepared roster, model, budget, platform or policy.
 
-This digest detects pipeline misconfiguration; it is not cryptographic
-authentication against a writer that already controls a trusted job.
+The digest detects mixed or corrupt artifacts; it does not authenticate a writer
+that already controls a trusted job. Trusted CI delivery remains the boundary.
 
-## 1.x migration summary
+## Next-major migration
 
-Every 1.x release shipped `review_config.v1`; 2.0 accepts only
-`review_config.v3` and rejects a v1 document once, listing every removed key.
-Delete `severity_policy`, `merge_gate`, `state.backend`, `panel.grouping`,
-`panel.quorum`, `panel.min_successful_reviewers_for_blocking`,
-`critique.rounds`, `critique.can_add_quorum_votes`,
-`critique.allow_advisory_escalation`, `posting.fallback_to_summary_comment`,
-`limits.max_posted_surface_findings`, and per-reviewer `adapter` and
-`credential_variable`. Configure at least three seats with
-`AI_REVIEW_REVIEWERS`, and unset the
-[rejected variables](#platform-and-provider-runtime). The complete procedure,
-including removing the required gate check, is in
-[operations](operations.md#upgrade-from-10x-to-20).
+Upgrade the canonical workflow/include and both images together and start a new
+run at prepare. Existing v3 configuration and old run artifacts are rejected.
+
+- Set `schema_version: review_config.v4`. Retain supported reviewer overrides,
+  resolution threshold, resource limits, state record cap, posting mode and
+  multiline preference. Sparse reviewer configuration now inherits image defaults;
+  use `effort: null` to clear a shipped effort in YAML.
+- Delete `critique.enabled`, `critique.blind_reviewer_identity`,
+  `posting.v1_inline_sides`, `posting.stale_head_guard`, `posting.fyi_mode`, and
+  the `security` object. Their safe behavior is unconditional. Severity
+  downgrading remains a separate opt-in policy pending the S11 decision.
+- Delete `AI_REVIEW_CRITIQUE_ENABLED` from CI variables and custom rules. One
+  blind critique round always runs. Unknown `AI_REVIEW_` variables fail prepare;
+  older per-seat enable flags should be replaced by `AI_REVIEW_REVIEWERS`.
+- Remove `--config` from consensus and post commands; only prepare accepts it.
+  Keep operator overrides visible to prepare. Re-running a downstream job uses
+  the prepared policy; start again at prepare to change it.
+- Upgrading from 1.x requires rebuilding configuration from these supported keys,
+  removing the old merge-gate job and any branch protection that requires it,
+  and completing the explicit [state migration](operations.md#state-v2-migration).
+  Runtime no longer contains per-version removal tables or environment tombstones.

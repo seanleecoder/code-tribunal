@@ -83,8 +83,6 @@ def _write_post_cli_run(root: Path, consensus: dict[str, Any]) -> list[str]:
     bound = {**consensus, "input_manifest_sha256": stable_json_hash(manifest)}
     write_canonical_json(root / "consensus.json", bound)
     return [
-        "--config",
-        str(_REPO_CONFIG),
         "--inputs",
         str(inputs),
         "--consensus",
@@ -145,8 +143,6 @@ class PostTests(PostCase):
                     with self.assertRaisesRegex(ValueError, "critical|injected|category"):
                         post_module.cli(
                             [
-                                "--config",
-                                str(_REPO_CONFIG),
                                 "--inputs",
                                 str(inputs),
                                 "--consensus",
@@ -264,17 +260,26 @@ class PostTests(PostCase):
             message = self._assert_refused_before_platform(root, argv)
             self.assertIn("consensus input_manifest_sha256 does not match", message)
 
-    def test_cli_refuses_an_effective_config_that_differs_from_prepare(self) -> None:
-        for env, divergent in (
-            ({"AI_REVIEW_POSTING_MODE": "github_reviews"}, "posting"),
-            ({"AI_REVIEW_REVIEWERS": "codex,opencode,cursor"}, "reviewers"),
-        ):
-            with self.subTest(env=env), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
-                with patch.dict("os.environ", env):
-                    message = self._assert_refused_before_platform(root, argv)
-                self.assertIn(f"divergent={divergent} ", message)
+    def test_cli_uses_prepared_config_after_downstream_environment_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+            with (
+                patch.dict("os.environ", {
+                    "AI_REVIEW_POSTING_MODE": "github_reviews",
+                    "AI_REVIEW_REVIEWERS": "cursor",
+                    "AI_REVIEW_CONFIG": "/missing/config",
+                }),
+                patch("ai_review.post.create_runtime_platform") as factory,
+                patch("ai_review.post.post_consensus") as post,
+                patch("ai_review.post.validate_instance"),
+            ):
+                post.return_value = {"status": "success"}
+                self.assertEqual(post_module.cli(argv), 0)
+            config = factory.call_args.args[0]
+            self.assertEqual(config.posting.mode, "gitlab_discussions")
+            self.assertFalse(config.reviewers["cursor"].enabled)
+            self.assertEqual(post.call_args.args[1], config)
 
     def test_cli_refuses_a_manifest_without_an_effective_config_digest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -319,6 +324,10 @@ class PostTests(PostCase):
             ]
             + [rejected],
             config,
+            critique_batches=[
+                {"critic": name, "adapter_status": "success", "critiques": []}
+                for name in ("claude", "codex", "opencode", "cursor")
+            ],
         )
         validate_instance(consensus, "consensus.schema.json")
         self.assertEqual(consensus["run_health"]["grade"], "degraded")
@@ -357,9 +366,9 @@ class PostTests(PostCase):
         base = self._consensus()["groups"][0]
         surface = copy.deepcopy(base)
         surface["issue_id"] = "1" * 64
-        unsupported = copy.deepcopy(base)
-        unsupported["issue_id"] = "2" * 64
-        unsupported["representative_anchor"]["side"] = "old"
+        old_side = copy.deepcopy(base)
+        old_side["issue_id"] = "2" * 64
+        old_side["representative_anchor"]["side"] = "old"
         multiline = copy.deepcopy(base)
         multiline["issue_id"] = "3" * 64
         multiline["representative_anchor"]["end"] = {
@@ -372,23 +381,22 @@ class PostTests(PostCase):
         fyi["decision"] = "fyi"
 
         classification = _classify_post_groups(
-            [surface, unsupported, multiline, fyi],
-            inline_sides={"new"},
+            [surface, old_side, multiline, fyi],
             inline_multiline=False,
         )
 
         self.assertEqual(
-            [group["issue_id"] for group in classification.inline_candidates], ["1" * 64]
+            [group["issue_id"] for group in classification.inline_candidates],
+            ["1" * 64, "2" * 64]
         )
         self.assertEqual(
             [group["issue_id"] for group in classification.summary_fallback_groups],
-            ["2" * 64, "3" * 64],
+            ["3" * 64],
         )
         self.assertEqual([group["issue_id"] for group in classification.fyi_groups], ["4" * 64])
         self.assertEqual(
             classification.warnings,
             [
-                "summary fallback required for unsupported side: old",
                 "summary fallback required for multiline anchor",
             ],
         )
@@ -411,7 +419,6 @@ class PostTests(PostCase):
 
         classification = _classify_post_groups(
             groups,
-            inline_sides={"new"},
             inline_multiline=False,
         )
 
@@ -423,7 +430,6 @@ class PostTests(PostCase):
         with self.assertRaises(AttributeError):
             _classify_post_groups(
                 [object()],  # type: ignore[list-item]
-                inline_sides={"new"},
                 inline_multiline=False,
             )
 
@@ -776,9 +782,9 @@ class PostTests(PostCase):
         """
         client = FakePostClient("head")
         consensus = self._consensus()
-        consensus["groups"][0]["representative_anchor"]["side"] = "old"
+        consensus["groups"][0]["representative_anchor"]["end"]["new_line"] = 4
 
-        config = self._config()
+        config = self._config(inline_multiline=False)
         invalid = config.to_dict()
         invalid["posting"]["fallback_to_summary_comment"] = False
         with self.assertRaisesRegex(ConfigError, "fallback_to_summary_comment"):
@@ -802,37 +808,6 @@ class PostTests(PostCase):
         self.assertEqual(result["summary_comment"]["surface_findings"], 1)
         self.assertEqual(len(client.summary_notes), 1)
         validate_instance(result, "post_result.schema.json")
-
-    def test_post_unsupported_side_falls_back_to_summary_and_is_idempotent(self) -> None:
-        # Bug #2: a side=old surface finding must be posted to the MR summary comment,
-        # not silently dropped; a re-run with identical content must be a no-op.
-        client = FakePostClient("head")
-        consensus = self._consensus()
-        consensus["groups"][0]["representative_anchor"]["side"] = "old"
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(result["created_discussions"], 0)
-        self.assertEqual(client.created, 0)
-        self.assertEqual(result["summary_comment"]["action"], "created")
-        self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        self.assertEqual(len(client.summary_notes), 1)
-        self.assertTrue(any("unsupported side" in warning for warning in result["warnings"]))
-        validate_instance(result, "post_result.schema.json")
-
-        rerun = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(),
-            self._manifest("head"),
-            consensus,
-        )
-        self.assertEqual(rerun["summary_comment"]["action"], "unchanged")
-        self.assertEqual(len(client.summary_notes), 1)
-        self.assertEqual(client.updated_summary_notes, [])
-        validate_instance(rerun, "post_result.schema.json")
 
     def _summary_fallback_consensus(self, title: str | None = None) -> dict[str, Any]:
         consensus = self._consensus()
@@ -922,7 +897,7 @@ class PostTests(PostCase):
         for side in ("new", "old", "unchanged"):
             with self.subTest(side=side):
                 client = FakePostClient("head")
-                config = runtime_config(lambda c: c["posting"].pop("v1_inline_sides"))
+                config = runtime_config()
                 consensus = self._consensus()
                 anchor = consensus["groups"][0]["representative_anchor"]
                 anchor["side"] = side
@@ -1595,7 +1570,7 @@ class PostTests(PostCase):
                     group["representative_anchor"]["start"]
                 )
                 client = StatePostClient("head", state)
-                config = self._config(v1_inline_sides=["new", "old"])
+                config = self._config()
 
                 result = post_consensus(
                     client,  # type: ignore[arg-type]

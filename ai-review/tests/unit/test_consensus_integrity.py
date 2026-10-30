@@ -26,12 +26,12 @@ from support.config_yaml import config_tail, panel_filler  # noqa: E402
 
 
 class ConsensusIntegrityTests(unittest.TestCase):
-    def _mini_config(self, root: Path, *, critique_enabled: bool = False) -> Path:
+    def _mini_config(self, root: Path) -> Path:
         path = root / "review.yaml"
         path.write_text(
             "\n".join(
                 [
-                    "schema_version: review_config.v3",
+                    "schema_version: review_config.v4",
                     "reviewers:",
                     "  claude:",
                     "    enabled: true",
@@ -44,7 +44,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "    timeout_seconds: 30",
                     "    max_findings: 50",
                     *panel_filler("claude", "codex"),
-                    *config_tail(critique_enabled=critique_enabled),
+                    *config_tail(),
                 ]
             ),
             encoding="utf-8",
@@ -138,7 +138,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_critique_wrong_run_id_before_finalize(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             input_dir = root / "inputs"
@@ -179,8 +179,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -227,8 +225,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -277,8 +273,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             for findings_dir, out in ((findings_a, out_a), (findings_b, out_b)):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -300,22 +294,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     **config.reviewers,
                     "claude": replace(config.reviewers["claude"], max_findings=1),
                 },
-            )
-            self.assertNotEqual(
-                effective_config_digest(config),
-                effective_config_digest(modified),
-            )
-
-    def test_effective_config_digest_changes_when_blind_identity_changes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config = load_config(self._mini_config(root))
-            modified = replace(
-                config,
-                critique=replace(
-                    config.critique,
-                    blind_reviewer_identity=not config.critique.blind_reviewer_identity,
-                ),
             )
             self.assertNotEqual(
                 effective_config_digest(config),
@@ -386,7 +364,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_success_critique_from_disabled_critic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             input_dir = root / "inputs"
@@ -417,8 +395,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -435,7 +411,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_allows_skipped_critique_from_disabled_critic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             input_dir = root / "inputs"
@@ -463,8 +439,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             )
             code = cli(
                 [
-                    "--config",
-                    str(config_path),
                     "--inputs",
                     str(input_dir),
                     "--findings-dir",
@@ -480,7 +454,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_critique_raw_critic_filename_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             input_dir = root / "inputs"
@@ -511,8 +485,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -529,7 +501,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_critique_missing_verdict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             input_dir = root / "inputs"
@@ -568,8 +540,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -590,7 +560,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_garbage_json_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             for label in ("manifest", "findings", "critiques"):
@@ -629,8 +599,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     with redirect_stderr(stderr):
                         code = cli(
                             [
-                                "--config",
-                                str(config_path),
                                 "--inputs",
                                 str(input_dir),
                                 "--findings-dir",
@@ -647,7 +615,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_rejects_missing_top_level_and_per_entry_critic_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root, critique_enabled=True)
+            config_path = self._mini_config(root)
             config = load_config(config_path)
             digest = effective_config_digest(config)
             for label, critique in (
@@ -700,8 +668,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     with redirect_stderr(stderr):
                         code = cli(
                             [
-                                "--config",
-                                str(config_path),
                                 "--inputs",
                                 str(input_dir),
                                 "--findings-dir",
@@ -720,7 +686,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
     def test_cli_unreadable_manifest_exits_3_with_artifact_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config_path = self._mini_config(root)
             input_dir = root / "inputs"
             input_dir.mkdir()
             # Missing manifest → FileNotFoundError (OSError). Avoid chmod: root in
@@ -729,8 +694,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             with redirect_stderr(stderr):
                 code = cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",
@@ -769,8 +732,6 @@ class ConsensusIntegrityTests(unittest.TestCase):
             ):
                 cli(
                     [
-                        "--config",
-                        str(config_path),
                         "--inputs",
                         str(input_dir),
                         "--findings-dir",

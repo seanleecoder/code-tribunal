@@ -9,6 +9,20 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: configuration moves to `review_config.v4`
+  (S04). Prepare resolves shipped defaults, sparse custom reviewer settings and
+  operator overrides once; downstream stages validate the complete manifest
+  configuration without reading YAML or reapplying environment overrides.
+  Consensus and post no longer accept `--config`. One blind critique round,
+  all supported inline sides, FYI summary placement, stale-head protection and
+  external-fork secret refusal are unconditional. Delete their old YAML switches
+  and `AI_REVIEW_CRITIQUE_ENABLED`; unsupported keys and `AI_REVIEW_` variables
+  receive generic migration errors. Per-version removal tables and environment
+  tombstones are deleted. Explicit `effort: null` or the existing `unset`
+  environment value clears inherited effort. Severity downgrading remains an
+  opt-in policy pending S11; absence-based resolution is unchanged. Upgrade the
+  canonical workflow/include and both images together and run fresh artifacts
+  from prepare; see the [configuration migration](docs/configuration.md#next-major-migration).
 - Breaking, for the next major release: GitLab supports protected direct includes
   only (N02). The child stage wrapper and `parent_pipeline` rules are removed;
   replace the trigger job with a top-level include and retain the `ai_review`

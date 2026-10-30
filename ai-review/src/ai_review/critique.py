@@ -156,9 +156,6 @@ def _apply_critiques(
     config: ReviewConfig,
     valid_duplicate_links: set[DuplicateLink],
 ) -> None:
-    if not config.critique.enabled:
-        return
-
     source_to_group: dict[str, int] = {}
     for index, group in enumerate(groups):
         for source_id in group["source_finding_ids"]:

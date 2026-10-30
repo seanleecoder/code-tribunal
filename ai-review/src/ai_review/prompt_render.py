@@ -137,7 +137,6 @@ def build_pooled_findings(
         batch for batch in finding_batches if batch.get("adapter_status") == "success"
     ]
     aliases = _reviewer_aliases([str(batch["reviewer"]) for batch in successful_batches])
-    blind = config.critique.blind_reviewer_identity
     ordered = sorted(
         [
             {**finding, "reviewer": batch["reviewer"]}
@@ -153,7 +152,7 @@ def build_pooled_findings(
         findings.append(
             {
                 "id": short_id,
-                "reviewer": aliases[finding["reviewer"]] if blind else finding["reviewer"],
+                "reviewer": aliases[finding["reviewer"]],
                 "location": anchor_location(finding["anchor"]),
                 **{
                     key: finding[key]
@@ -166,7 +165,7 @@ def build_pooled_findings(
         "run_id": manifest["run_id"],
         "critic": critic,
         "effective_config_sha256": manifest["effective_config_sha256"],
-        "blind_reviewer_identity": blind,
+        "blind_reviewer_identity": True,
         "source_finding_ids": mapping,
         "findings": findings,
     }

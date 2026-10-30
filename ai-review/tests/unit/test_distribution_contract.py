@@ -241,16 +241,9 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         self.assertFalse((package_root / "gate.py").exists())
         self.assertFalse((schemas_root / "gate_result.schema.json").exists())
 
-        # `config.py` is exempt from the `merge_gate` name check and only from
-        # that one: it holds the deliberate tombstones — the v2→v3 removed-key
-        # list and the retired `AI_REVIEW_MERGE_GATE_ENABLED` override — whose
-        # whole purpose is to name the deleted key back at an operator. The
-        # active-surface assertions below cover it instead.
         for source in sorted(package_root.rglob("*.py")):
             text = source.read_text(encoding="utf-8")
-            tokens = ("GateResult", "GateStatus", "gate_result")
-            if source.name != "config.py":
-                tokens += ("merge_gate",)
+            tokens = ("GateResult", "GateStatus", "gate_result", "merge_gate")
             with self.subTest(source=source.name):
                 for token in tokens:
                     self.assertNotIn(token, text, f"{source.name} still names {token}")
@@ -259,10 +252,6 @@ class RepositoryDistributionContractTests(unittest.TestCase):
 
         self.assertNotIn("merge_gate", config_module.TOP_LEVEL_KEYS)
         self.assertFalse(hasattr(config_module, "MERGE_GATE_KEYS"))
-        self.assertIn("merge_gate", config_module.V3_REMOVED_CONFIG_KEYS)
-        self.assertIn(
-            "AI_REVIEW_MERGE_GATE_ENABLED", config_module.RETIRED_ENV_OVERRIDES
-        )
 
         for schema in sorted(schemas_root.glob("*.json")):
             with self.subTest(schema=schema.name):

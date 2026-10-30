@@ -5,7 +5,7 @@ Artifacts from different runs or effective configurations must never be mixed.
 
 | Path | Producer | Consumer | Schema or contract |
 |---|---|---|---|
-| `inputs/manifest.json` | prepare | all later stages | revision, run ID, and effective-config binding: the whole validated config as `effective_config` and its digest as `effective_config_sha256`, which every later stage must reproduce |
+| `inputs/manifest.json` | prepare | all later stages | revision, run ID, and effective-config binding: the whole validated config as `effective_config` and its digest as `effective_config_sha256`, which later stages consume and validate |
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
@@ -20,14 +20,15 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
 | encoded summary comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and the embedded `state_hash` |
 
-The bundle carries no prompt, rule, or configuration copy. Review and critique
+The bundle carries no prompt, rule, or separate YAML configuration copy. Review and critique
 render prompts and rules from `prompts/` and `rules/` below the image's trusted
 runtime root, never from the bundle or from wherever `AI_REVIEW_CONFIG` points.
-Every stage loads `AI_REVIEW_CONFIG` itself and must reproduce the manifest's
-`effective_config_sha256`.
+Only prepare reads `AI_REVIEW_CONFIG`. Later stages admit the complete resolved
+configuration from the manifest and validate `effective_config_sha256`; their
+environment cannot reinterpret this run's policy.
 
 `consensus.json` carries `run_health`, an observational record of the run: one
-job row per enabled review seat (and per critic when critique is enabled), with
+job row per enabled review and critique seat, with
 model, effort, stage timeout, outcome, duration, finding counts and the redacted
 error, plus a `full`, `degraded` or `rerun_recommended` grade. Consensus builds
 it from the finding and critique batches and the status files it is given with

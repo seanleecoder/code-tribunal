@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .canonical import stable_json_hash
-from .config import EffectiveConfigMismatch, load_config, require_effective_config_binding
+from .config import EffectiveConfigMismatch, config_from_manifest
 from .platform.runtime import create_runtime_platform
 from .posting import post_consensus
 from .schema import load_json_file, validate_instance, write_canonical_json
@@ -68,14 +68,12 @@ def _require_consensus_from_run(consensus: Any, manifest: Any) -> None:
 
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--consensus", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
-    config = load_config(args.config)
     manifest = load_json_file(Path(args.inputs) / "manifest.json")
     loaded_consensus = load_json_file(args.consensus)
     validate_instance(loaded_consensus, "consensus.schema.json")
@@ -83,7 +81,7 @@ def cli(argv: list[str] | None = None) -> int:
     # Both bindings run before the platform client exists, so a mismatch mutates
     # no thread or state and writes no post_result.json, like an invalid config.
     try:
-        require_effective_config_binding(config, manifest)
+        config = config_from_manifest(manifest)
         _require_consensus_from_run(loaded_consensus, manifest)
     except (EffectiveConfigMismatch, ConsensusRunMismatch) as exc:
         print(f"ai-review post: {exc}", file=sys.stderr)

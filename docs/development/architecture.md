@@ -65,11 +65,13 @@ from the package at all.
 
 These rules are worth stating because breaking them is silent:
 
-- Each entry point resolves YAML and environment overrides once into
-  `ReviewConfig`. Runtime consumers read its frozen sections and reviewer roster;
-  only manifest serialization creates a mutable copy. Each job still checks its
-  resolved config against prepare before consequential work, so overrides scoped
-  to only some jobs fail as configuration drift.
+- Trusted prepare resolves image defaults, custom YAML and environment overrides
+  once into frozen `ReviewConfig` settings. The complete v4 document travels in
+  the manifest; downstream entry points admit it without interpreting their
+  environment or reading YAML. Run/config digests still bind evidence at CI
+  transport boundaries. S04 changes the configuration contract, all consumers
+  and canonical invocations together: staging them would require a second
+  loading path for old and new artifacts. There is no online compatibility path.
 - The reviewer registry selects each seat's launcher (a shell adapter, or a
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and

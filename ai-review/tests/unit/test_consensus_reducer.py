@@ -41,7 +41,7 @@ def _critique_config(**overrides: object) -> ReviewConfig:
                 enabled=True, model="model", timeout_seconds=600, max_findings=50
             ),
         },
-        critique=CritiqueConfig(**{"enabled": True, **overrides}),
+        critique=CritiqueConfig(**overrides),
     )
 
 
@@ -378,23 +378,8 @@ class EffectiveVerdictTests(unittest.TestCase):
         self.assertEqual(group["critique_summary"]["dispute"], 1)
         self.assertEqual(group["critique_disputes"], [])
 
-    def test_disabled_critique_and_unknown_targets_fail_at_the_policy_boundary(self) -> None:
-        source_id = _SOURCE_IDS["claude"]
-        batch = _batch("claude", _finding("claude", source_id, "major"))
-        critique = _critique_batch(
-            "codex", [_critique("codex", source_id, "noise")]
-        )
-        disabled = build_consensus(
-            _manifest(),
-            [batch],
-            _critique_config(enabled=False),
-            critique_batches=[critique],
-        )
-        baseline = build_consensus(
-            _manifest(), [batch], _critique_config(enabled=False)
-        )
-        self.assertEqual(disabled, baseline)
-
+    def test_unknown_critique_targets_fail_at_the_policy_boundary(self) -> None:
+        batch = _batch("claude", _finding("claude", _SOURCE_IDS["claude"], "major"))
         unknown = _critique_batch(
             "codex", [_critique("codex", "f" * 64, "dispute")]
         )
@@ -628,13 +613,13 @@ class RunHealthTests(unittest.TestCase):
         self.assertEqual(critique["timeout_seconds"], 900)
         self.assertIsNone(critique["raw_finding_count"])
 
-    def test_disabled_critique_lists_review_jobs_only(self) -> None:
+    def test_missing_critique_is_reported_for_every_enabled_reviewer(self) -> None:
         consensus = self._health(self._ok(["claude", "codex", "opencode"]), config=_config())
 
         self.assertEqual(
-            {job["stage"] for job in consensus["run_health"]["jobs"]}, {"review"}
+            {job["stage"] for job in consensus["run_health"]["jobs"]}, {"review", "critique"}
         )
-        self.assertEqual(consensus["run_health"]["grade"], "full")
+        self.assertEqual(consensus["run_health"]["grade"], "rerun_recommended")
 
     def test_failed_panel_grades_rerun_recommended(self) -> None:
         consensus = self._health([], None)

@@ -48,8 +48,8 @@ The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
-- **Done, unreleased for the next major:** N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
-- **Partial:** S04 (typed configuration and defaults, through N05), S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
+- **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
+- **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
@@ -140,7 +140,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 7. Done: per-seat output codecs (N06) and OpenCode launched from Python (N07).
 8. Done: the S03 Python mock switch and seat setup in the registry (N08).
 9. Done: the frozen typed configuration object and centralized defaults (N05).
-   S04's knob removal stays in the next major release.
+   S04 completes prepare-only resolution and knob removal in the next major release.
 10. Done: the `input_bundle` revision cleanup (N17): platform-owned GitHub
     metadata, initial/final revision checks, no JavaScript resolver or unread
     diff/snapshot digests.
@@ -167,7 +167,12 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
       `parent_pipeline` rules, auditor mode switch and child polling are removed.
       All three canaries use the MR pipeline; run the direct-include hostile
       campaign before release. COMPAT-004 is removed;
-    - S04 configuration knob removal.
+    - Done, unreleased: S04 resolves configuration once in prepare and carries
+      `review_config.v4` in the manifest. Downstream environment overrides and
+      YAML reloads are removed; sparse reviewer settings inherit image defaults.
+      Critique enablement/blinding, inline sides, stale-head and fork-secret
+      switches are deleted. COMPAT-001/002 are removed. Severity downgrading is
+      retained pending S11's separate policy decision; S13 is unchanged.
 
 **Rejected:** structured-output-only seats, thread-only state, merged prompts,
 dropping effort settings, and a single cross-platform canary.

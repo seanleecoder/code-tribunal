@@ -61,8 +61,8 @@ class PackagedReviewerImageTests(unittest.TestCase):
         cls.output_dir = cls._workspace / "out"
         # The shipped roster leaves cursor off, so name every seat explicitly:
         # the seat is in the image and the preflight must prove it runs there.
-        # Nothing else is overridden -- critique is already on in the shipped
-        # document, so this exercises the default config an install receives.
+        # The one blind critique round is unconditional. Everything else uses
+        # the shipped configuration an install receives.
         cls._env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", tempfile.gettempdir()),
@@ -111,8 +111,6 @@ class PackagedReviewerImageTests(unittest.TestCase):
                 sys.executable,
                 "-m",
                 "ai_review.consensus",
-                "--config",
-                cls._env["AI_REVIEW_CONFIG"],
                 "--inputs",
                 str(input_dir),
                 "--findings-dir",

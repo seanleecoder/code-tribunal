@@ -88,6 +88,21 @@ class DemoPreflightTests(unittest.TestCase):
     def test_unprotected_branch_is_not_an_error(self) -> None:
         self.assertEqual(_failures(_state(protection=None)), [])
 
+    def test_unknown_variables_follow_platform_transport(self) -> None:
+        for name in ("AI_REVIEW_CUSTOM_LABEL", "AI_REVIEW_CRITIQUE_ENABLED"):
+            for platform, level in (("github", "WARN"), ("gitlab", "FAIL")):
+                with self.subTest(name=name, platform=platform):
+                    state = _state()
+                    if platform == "github":
+                        state["github_variables"][name] = "configured"
+                    else:
+                        state["gitlab_variables"].append(_gitlab_variable(name))
+                    checks = preflight.run(_runner(state), NOW)
+                    self.assertEqual([check.level for check in checks], [level])
+                    self.assertIn(name, checks[0].message)
+                    if platform == "github":
+                        self.assertNotIn("fails config load", checks[0].message)
+
     def test_each_2_0_0_drift_is_reported(self) -> None:
         cases = {
             "requires status checks": _state(
@@ -121,7 +136,7 @@ class DemoPreflightTests(unittest.TestCase):
                     "AI_REVIEW_GITHUB_RESOLVE_TOKEN": RECENT,
                 }
             ),
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED": _state(
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED": _state(
                 gitlab_variables=[
                     *_state()["gitlab_variables"],  # type: ignore[misc]
                     _gitlab_variable("AI_REVIEW_MERGE_GATE_ENABLED", scope="production"),
@@ -182,12 +197,12 @@ class DemoPreflightTests(unittest.TestCase):
         checks = preflight.run(_runner(state), NOW)
         for expected in (
             "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED", "active ruleset 'later-page'",
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED", "active ruleset 'later-page'",
         ):
             with self.subTest(expected=expected):
                 self.assertTrue(any(expected in c.message for c in checks), checks)
-        self.assertEqual([c.level for c in checks].count("WARN"), 1)
-        self.assertEqual([c.level for c in checks].count("FAIL"), 3)
+        self.assertEqual([c.level for c in checks].count("WARN"), 2)
+        self.assertEqual([c.level for c in checks].count("FAIL"), 2)
 
     def test_gitlab_inspects_more_than_100_variables(self) -> None:
         variables = [
@@ -204,7 +219,7 @@ class DemoPreflightTests(unittest.TestCase):
         self.assertEqual([c.level for c in checks], ["FAIL"] * 3)
         for expected in (
             "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
-            "retired variable AI_REVIEW_MERGE_GATE_ENABLED",
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED",
         ):
             self.assertTrue(any(expected in c.message for c in checks), checks)
 

@@ -36,7 +36,6 @@ from .state_plan import (
 from .summary_render import _sort_groups, render_summary_body
 from .types import (
     Anchor,
-    AnchorSide,
     Consensus,
     FindingGroup,
     PostResult,
@@ -98,7 +97,6 @@ class PostGroupClassification:
 def _classify_post_groups(
     groups: list[FindingGroup],
     *,
-    inline_sides: set[AnchorSide],
     inline_multiline: bool,
 ) -> PostGroupClassification:
     """Route each consensus group to a thread, the summary fallback, or FYI.
@@ -121,10 +119,6 @@ def _classify_post_groups(
         if decision != "surface":
             continue
         anchor = group["representative_anchor"]
-        if anchor.get("side") not in inline_sides:
-            warnings.append(f"summary fallback required for unsupported side: {anchor.get('side')}")
-            summary_fallback_groups.append(group)
-            continue
         if anchor.get("start") != anchor.get("end") and not inline_multiline:
             warnings.append("summary fallback required for multiline anchor")
             summary_fallback_groups.append(group)
@@ -607,12 +601,11 @@ def post_consensus(
         manifest=manifest,
         current_head_sha=current_head_sha,
     )
-    if posting.stale_head_guard and current_head_sha != manifest["head_sha"]:
+    if current_head_sha != manifest["head_sha"]:
         result["status"] = "stale_head"
         return result
 
     inline_multiline = posting.inline_multiline
-    inline_sides = set(posting.v1_inline_sides)
     max_fyi = config.limits.max_fyi_findings
     context = prepare_post_context(
         client,
@@ -624,10 +617,9 @@ def post_consensus(
     )
 
     # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (unsupported side or multiline anchor), and FYI findings.
+    # back to the summary comment (a disabled multiline anchor), and FYI findings.
     classification = _classify_post_groups(
         consensus.get("groups", []),
-        inline_sides=inline_sides,
         inline_multiline=inline_multiline,
     )
     inline_candidates = classification.inline_candidates

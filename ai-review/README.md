@@ -11,7 +11,7 @@ The supported artifacts are:
 - [`ci/review.gitlab-ci.yml`](ci/review.gitlab-ci.yml) — canonical GitLab DAG.
 - [GitHub reusable workflow](../.github/workflows/ai-review-reusable.yml) —
   canonical GitHub implementation, called at a release SHA by consumers.
-- [`config/review.yaml`](config/review.yaml) — shipped `review_config.v3`
+- [`config/review.yaml`](config/review.yaml) — shipped `review_config.v4`
   defaults.
 - [`schemas/`](schemas/) — JSON Schema contracts for stage artifacts.
 - [`images/`](images/) — base and reviewer container build inputs.

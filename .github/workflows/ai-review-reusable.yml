@@ -29,23 +29,7 @@ concurrency:
 env:
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
-  AI_REVIEW_POSTING_MODE: github_reviews
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
-  # `vars` comes from the caller repository. Caller workflow `env` is not
-  # inherited. Map overrides here so every stage resolves the same configuration.
-  AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
-  AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
-  AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
-  AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
-  # Panel roster. Every reviewer is a peer: set AI_REVIEW_REVIEWERS to a
-  # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
-  # enabled while every other configured seat sits out. Leave it unset to use the
-  # defaults in config/review.yaml.
-  AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
-  AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
-  AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
-  AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
-  AI_REVIEW_CRITIQUE_ENABLED: ${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}
 
 jobs:
   prepare:
@@ -68,6 +52,21 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr_number) }}
       - name: Prepare input bundle
         env:
+          AI_REVIEW_POSTING_MODE: github_reviews
+          # `vars` comes from the caller repository. Caller workflow `env` is not
+          # inherited. Prepare resolves overrides once for every downstream stage.
+          AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
+          AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
+          AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
+          AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
+          # Panel roster. Every reviewer is a peer: set AI_REVIEW_REVIEWERS to a
+          # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
+          # enabled while every other configured seat sits out. Leave it unset to use the
+          # defaults in config/review.yaml.
+          AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
+          AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
+          AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
+          AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
@@ -155,7 +154,7 @@ jobs:
           AI_REVIEW_INPUT_DIR: inputs
           AI_REVIEW_OUTPUT_DIR: out
           AI_REVIEW_LOCAL_MOCK: "0"
-          OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # Cursor's backend is a deliberate second egress destination, so this
           # credential reaches exactly one matrix entry and only when Cursor is on
           # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
@@ -202,7 +201,7 @@ jobs:
         if: steps.download-critiques.outcome == 'failure'
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
-        run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --status-dir reviewer-artifacts/status --out out/consensus/consensus.json
+        run: python -m ai_review.consensus --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --status-dir reviewer-artifacts/status --out out/consensus/consensus.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-review-consensus
@@ -241,7 +240,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
-        run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+        run: python -m ai_review.post --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

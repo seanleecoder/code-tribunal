@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Set
 from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any, get_args, get_type_hints
 
 from .anchors import is_sha256
 from .canonical import stable_json_hash
-from .reviewers import REVIEWER_IDS, REVIEWERS
-from .types import AnchorSide
+from .reviewers import REVIEWER_IDS, REVIEWERS, trusted_runtime_root
 
 
 class ConfigError(ValueError):
@@ -18,137 +17,71 @@ class ConfigError(ValueError):
 
 
 class EffectiveConfigMismatch(ConfigError):
-    """This stage's effective config differs from the one prepare recorded."""
+    """Prepared configuration is missing, invalid, or bound to another config."""
 
 
-# The configuration contract this runtime accepts. v3 is v2 minus the keys that
-# only existed to tune merge behavior, which the product no longer has; see the
-# migration table in CHANGELOG.md.
-CONFIG_SCHEMA_VERSION = "review_config.v3"
-
-# Every key removed on the way to v3 (from v1 or v2), in the order the migration
-# message names them, each mapped to what the operator should do instead. SPEC-54 opens the
-# list; each later spec in the v3 series appends its own entries here, and a test
-# asserts the rejection message names every one — so an appended removal without
-# an appended message line fails rather than leaving an operator to discover the
-# deletion one unknown-key error at a time.
-#
-# The guidance is not decoration: `_reject_unknown_keys` consults this mapping
-# before it reports an anonymous unknown key, so a v3 document that still carries
-# a removed key is told the key was deleted and why, rather than being left to
-# read `unknown config keys at state: ['backend']` as a typo. One data row per
-# removal, no code per removal.
-# COMPAT-002: review_config.v1/v2-to-v3 targeted migration diagnostics.
-V3_REMOVED_CONFIG_KEYS = {
-    "severity_policy": "severity no longer affects any decision; delete the object",
-    "panel.min_successful_reviewers_for_blocking": (
-        "there is no blocking verdict to gate; delete the key"
-    ),
-    "panel.quorum": (
-        "the support threshold is a product invariant, not an operator setting; "
-        "delete the object"
-    ),
-    "panel.grouping": (
-        "semantic similarity grouping was removed; findings group by anchor, so "
-        "delete the object"
-    ),
-    "critique.rounds": "there is exactly one critique round; delete the key",
-    "critique.can_add_quorum_votes": (
-        "an agreeing independent critic is counted as support by definition; "
-        "delete the key"
-    ),
-    "critique.allow_advisory_escalation": (
-        "an agreeing independent critic is simply a second supporter and there is "
-        "no separate escalation path to enable; delete the key"
-    ),
-    "merge_gate": (
-        "there is no merge gate; publication health is the post job's exit "
-        "status, so delete the object"
-    ),
-    "posting.fallback_to_summary_comment": (
-        "summary fallback is unconditional; delete the key"
-    ),
-    "limits.max_posted_surface_findings": (
-        "every anchorable surfaced finding becomes a thread; the volume bound is "
-        "each reviewer's max_findings, so delete the key"
-    ),
-    "reviewers.<name>.adapter": (
-        "adapter paths are fixed by the first-party reviewer registry shipped in "
-        "the image; delete the key"
-    ),
-    "reviewers.<name>.credential_variable": (
-        "credential names are fixed by each seat's registry definition; delete "
-        "the key"
-    ),
-    "state.backend": (
-        "persistent state is always active and posting.mode selects the platform "
-        "adapter that stores it; delete the key"
-    ),
-}
-
-RETIRED_CONFIG_SCHEMA_VERSIONS = ("review_config.v1", "review_config.v2")
-
-# Critique budget when a reviewer does not state one. The critique CI job's outer
-# ceiling is 20 minutes and reserves 300 seconds outside the adapter process, so
-# this must stay below it. A flat default, deliberately: the previous behavior
-# reinterpreted `timeout_seconds` as the critique budget and then capped it here,
-# which made one field silently mean two different things.
+# v4 fixes pipeline/safety invariants and transports prepare's resolved settings.
+CONFIG_SCHEMA_VERSION = "review_config.v4"
 DEFAULT_CRITIQUE_TIMEOUT_SECONDS = 900
-# GitLab project/group variables outlive template revisions, so a removed name
-# must fail loudly rather than become a silent no-op.
-# Reviewer tombstones: AI_REVIEW_CLAUDE_ENABLED, AI_REVIEW_CODEX_ENABLED,
-# AI_REVIEW_OPENCODE_ENABLED, AI_REVIEW_CURSOR_ENABLED.
-RETIRED_ENV_OVERRIDES = {
-    # COMPAT-001: review_config.v2 and v3 environment tombstones.
-    "AI_REVIEW_STATE_BACKEND": (
-        "persistent state has no configurable backend; posting.mode selects the "
-        "platform adapter that stores it, so set AI_REVIEW_POSTING_MODE instead "
-        "and unset this variable"
-    ),
-    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED": (
-        "semantic grouping was removed in review_config.v2; unset this variable"
-    ),
-    "AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD": (
-        "semantic grouping was removed in review_config.v2; unset this variable"
-    ),
-    "AI_REVIEW_MERGE_GATE_ENABLED": (
-        "the merge gate was removed in review_config.v3; Code Tribunal publishes "
-        "review output and never decides whether a change may merge. Remove the "
-        "gate job and any branch-protection entry that requires it, then unset "
-        "this variable"
-    ),
-    **{
-        f"AI_REVIEW_{reviewer_id.upper()}_ENABLED": (
-            "panel selection is controlled by AI_REVIEW_REVIEWERS; move the "
-            "roster there and unset this variable"
-        )
-        for reviewer_id in REVIEWER_IDS
-    },
+
+# Only prepare interprets these policy overrides. The remaining AI_REVIEW_ names
+# are runtime/CI controls, not serialized configuration. Reject unknown names
+# generically so stale settings and typos cannot silently become no-ops.
+CONFIG_ENV_OVERRIDES = {
+    "AI_REVIEW_REVIEWERS",
+    "AI_REVIEW_POSTING_MODE",
+    *{f"AI_REVIEW_{name.upper()}_{suffix}" for name in REVIEWERS for suffix in ("MODEL", "EFFORT")},
 }
+RUNTIME_ENV_VARIABLES = {
+    "AI_REVIEW_ALLOW_LOCAL_MOCK",
+    "AI_REVIEW_BASE_IMAGE",
+    "AI_REVIEW_BASE_TAG",
+    "AI_REVIEW_CONFIG",
+    "AI_REVIEW_EFFORT",
+    "AI_REVIEW_GITHUB_BOT_LOGIN",
+    "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA",
+    "AI_REVIEW_GITHUB_PR_NUMBER",
+    "AI_REVIEW_GITHUB_RESOLVE_TOKEN",
+    "AI_REVIEW_INPUT_DIR",
+    "AI_REVIEW_LOCAL_MOCK",
+    "AI_REVIEW_MANUAL",
+    "AI_REVIEW_MOCK_SCENARIO",
+    "AI_REVIEW_MODEL",
+    "AI_REVIEW_OUTPUT_DIR",
+    "AI_REVIEW_PACKAGED_RUNTIME",
+    "AI_REVIEW_RAW_OUTPUT",
+    "AI_REVIEW_RENDERED_PROMPT",
+    "AI_REVIEW_REVIEWER",
+    "AI_REVIEW_REVIEWER_IMAGE",
+    "AI_REVIEW_REVIEWER_TAG",
+    "AI_REVIEW_ROOT",
+    "AI_REVIEW_STAGE",
+    "AI_REVIEW_STREAM_ADAPTER_LOGS",
+    "AI_REVIEW_TRUSTED_IMAGE_SHA",
+    "AI_REVIEW_IMAGE_TAG",
+    "AI_REVIEW_ROOT_DIR",
+    "AI_REVIEW_CLAUDE_NPM_PACKAGE",
+    "AI_REVIEW_CODEX_NPM_PACKAGE",
+    "AI_REVIEW_OPENCODE_NPM_PACKAGE",
+}
+_KNOWN_ENV_VARIABLES = frozenset(CONFIG_ENV_OVERRIDES | RUNTIME_ENV_VARIABLES)
+
+
+def unknown_environment_overrides(names: Iterable[str]) -> list[str]:
+    return sorted(
+        name
+        for name in names
+        if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
+    )
+
 
 # Closed set of reviewer `effort` values. Matching the claude CLI's --effort
 # levels; a closed set also means the value that reaches shell argv can never
 # carry quoting/injection payloads.
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
-# Diff sides `posting.v1_inline_sides` may name, from the anchor vocabulary.
-INLINE_SIDES: tuple[AnchorSide, ...] = get_args(AnchorSide.__value__)
-
-# Smallest panel a v3 deployment may run, on every path: the shipped YAML,
-# AI_REVIEW_REVIEWERS after all overrides are applied. Three, not two, for two
-# reasons.
-#
-# Every critique seat comes from the same enabled roster and self-critique cannot
-# corroborate a direct finding, so a one-seat panel can never reach two
-# independent supporters and would surface nothing by construction. A two-seat
-# panel can reach two, but with zero fault tolerance: one failed or silently
-# degraded seat makes it unreachable for every finding, and the run then reports
-# an empty review indistinguishable from a clean one. Silent seat loss is not
-# hypothetical: malformed fields and unresolvable anchors drop findings. Three
-# keeps a two-support path reachable after one seat is lost.
-#
-# The shipped configuration already enables exactly three seats, so this is not a
-# default change. It does reject two-seat deployments that were valid under v2.
+# Three seats leave a two-identity support path after losing one reviewer.
+# Critique uses the same roster and never corroborates its own direct findings.
 _MINIMUM_PANEL_REVIEWERS = 3
 
 
@@ -174,23 +107,18 @@ class ReviewerConfig:
 # invariant rather than an operator setting.
 @dataclass(frozen=True)
 class PanelConfig:
-    min_successful_reviewers_for_resolution: int
+    min_successful_reviewers_for_resolution: int = 2
 
 
 @dataclass(frozen=True)
 class CritiqueConfig:
-    enabled: bool = False
-    blind_reviewer_identity: bool = True
     allow_severity_downgrade: bool = False
 
 
 @dataclass(frozen=True)
 class PostingConfig:
     mode: str = "gitlab_discussions"
-    v1_inline_sides: tuple[AnchorSide, ...] = INLINE_SIDES
     inline_multiline: bool = True
-    fyi_mode: str = "summary_comment"
-    stale_head_guard: bool = True
 
 
 @dataclass(frozen=True)
@@ -212,19 +140,13 @@ class LimitsConfig:
 
 
 @dataclass(frozen=True)
-class SecurityConfig:
-    allow_external_fork_secrets: bool = False
-
-
-@dataclass(frozen=True)
 class ReviewConfig:
     reviewers: Mapping[str, ReviewerConfig]
-    panel: PanelConfig
+    panel: PanelConfig = field(default_factory=PanelConfig)
     critique: CritiqueConfig = field(default_factory=CritiqueConfig)
     posting: PostingConfig = field(default_factory=PostingConfig)
     state: StateConfig = field(default_factory=StateConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
-    security: SecurityConfig = field(default_factory=SecurityConfig)
     schema_version: str = CONFIG_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -239,19 +161,12 @@ class ReviewConfig:
             if item.name not in {"reviewers", "schema_version"}
         }
         document["schema_version"] = self.schema_version
-        document["reviewers"] = {}
-        for name, reviewer in self.reviewers.items():
-            values = asdict(reviewer)
-            if reviewer.effort is None:
-                del values["effort"]
-            document["reviewers"][name] = values
-        document["posting"]["v1_inline_sides"] = list(self.posting.v1_inline_sides)
+        document["reviewers"] = {name: asdict(values) for name, values in self.reviewers.items()}
         return document
 
 
 # The runtime types own the accepted keys, their defaults, and the type each value
-# resolves to. Validation below owns value constraints and the registered
-# migration diagnostics.
+# resolves to. Validation below owns value constraints and unknown-key errors.
 TOP_LEVEL_KEYS = {item.name for item in fields(ReviewConfig)}
 REVIEWER_ALLOWED_KEYS = {item.name for item in fields(ReviewerConfig)}
 REVIEWER_REQUIRED_KEYS = {item.name for item in fields(ReviewerConfig) if item.default is MISSING}
@@ -261,38 +176,15 @@ POSTING_KEYS = {item.name for item in fields(PostingConfig)}
 STATE_KEYS = {item.name for item in fields(StateConfig)}
 STATE_RETENTION_KEYS = {item.name for item in fields(StateRetention)}
 LIMIT_KEYS = {item.name for item in fields(LimitsConfig)}
-SECURITY_KEYS = {item.name for item in fields(SecurityConfig)}
 
 
-def _reject_unknown_keys(
-    mapping: dict[str, Any],
-    allowed: set[str],
-    path: str,
-    *,
-    removal_path: str | None = None,
-) -> None:
-    """Reject keys outside ``allowed``, naming the removal when there was one.
-
-    ``removal_path`` is the dotted prefix a key is registered under in
-    ``V3_REMOVED_CONFIG_KEYS`` when it differs from the reported ``path``:
-    ``reviewers.claude`` is registered under the ``reviewers.<name>``
-    placeholder. ``path`` is empty at the document root.
-    """
+def _reject_unknown_keys(mapping: dict[str, Any], allowed: Set[str], path: str) -> None:
     unknown = sorted(set(mapping) - allowed)
-    lookup_prefix = path if removal_path is None else removal_path
-    for key in unknown:
-        guidance = V3_REMOVED_CONFIG_KEYS.get(f"{lookup_prefix}.{key}" if lookup_prefix else key)
-        if guidance is not None:
-            # Reported under the concrete path -- `reviewers.claude.adapter`, not
-            # the `<name>` placeholder the registry keys it by -- so the operator
-            # reads back the line they wrote.
-            reported = f"{path}.{key}" if path else key
-            raise ConfigError(f"{reported} was removed in {CONFIG_SCHEMA_VERSION}: {guidance}")
     if unknown:
+        location = f" at {path}" if path else " at root"
         raise ConfigError(
-            f"unknown config keys at {path}: {unknown}"
-            if path
-            else f"unknown top-level config keys: {unknown}"
+            f"unknown config keys{location}: {unknown}; remove unsupported settings "
+            "and migrate using docs/configuration.md"
         )
 
 
@@ -303,23 +195,6 @@ def load_yaml_subset(text: str) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         raise ConfigError("config root must be a mapping")
     return loaded
-
-
-def _env_flag(name: str, value: str) -> bool:
-    """Parse a boolean env value: the **raw** string must be exactly ``true`` or
-    ``false`` (lowercase, no surrounding whitespace).
-
-    The comparison is a byte-for-byte mirror of GitLab's
-    ``$AI_REVIEW_CRITIQUE_ENABLED == "true"`` rule — deliberately NOT case-folded or
-    stripped. A value GitLab would not accept as ``"true"`` (``TRUE``, ``" true "``,
-    ``1``, a typo like ``flase``) therefore fails loudly here instead of silently
-    diverging from CI job-creation. Applied uniformly to every boolean toggle.
-    """
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise ConfigError(f"{name} must be exactly 'true' or 'false' (lowercase), got {value!r}")
 
 
 def apply_reviewer_roster(
@@ -338,9 +213,7 @@ def apply_reviewer_roster(
     a ``skipped`` batch and status without spawning its CLI, and consensus accepts
     ``skipped`` artifacts from seats outside the roster. Because this mutates
     ``enabled`` before ``validate_config``, the roster also flows into the
-    cross-stage effective-config digest, so a roster variable scoped to only some
-    CI jobs is caught as configuration drift instead of silently producing a
-    differently-sized panel per stage.
+    prepared configuration; downstream stages cannot select a different roster.
 
     """
     if raw is None or not raw.strip():
@@ -387,42 +260,13 @@ def apply_reviewer_roster(
 
 
 def apply_env_overrides(config: dict[str, Any]) -> None:
-    """Overlay runtime env vars onto the loaded config so operators can change
-    models/toggles without rebuilding the image.
-
-    Applied at load time so every stage (reviewer fan-out, panel sizing, and the
-    deterministic consensus engine) sees a consistent view. This requires the
-    override vars to be set as project-wide CI/CD variables (visible to all jobs);
-    every stage after prepare fails if its view disagrees with the prepare
-    manifest (``require_effective_config_binding``).
-
-    Recognized overrides:
-    - ``AI_REVIEW_REVIEWERS`` -> the authoritative panel roster (see
-      ``apply_reviewer_roster``). Every reviewer named is enabled and every other
-      configured reviewer is disabled, so an operator selects the panel with one
-      variable instead of keeping N booleans in sync.
-    - ``AI_REVIEW_<REVIEWER>_MODEL``   -> ``reviewers.<name>.model``
-    - ``AI_REVIEW_<REVIEWER>_EFFORT``  -> ``reviewers.<name>.effort`` for
-      Claude, Codex, and OpenCode (one of ``low|medium|high|xhigh|max``,
-      validated in ``validate_config``), or ``unset`` to remove the YAML key.
-      Missing or blank values inherit YAML, including after a model override.
-      Adapters forward effort without probing provider support. Cursor encodes
-      reasoning depth in its model variant and rejects a separate effort setting.
-    - ``AI_REVIEW_CRITIQUE_ENABLED``   -> ``critique.enabled``. The CI template sets
-      this to ``"true"`` by default and gates the critique jobs on the exact same
-      variable, so config behavior and CI job-creation stay in lock-step.
-    - ``AI_REVIEW_POSTING_MODE`` -> ``posting.mode``. The same value selects the
-      platform adapter that stores persistent state; state has no backend
-      setting and no override of its own.
-
-    Boolean overrides are strict ``true``/``false`` (see ``_env_flag``); an
-    unparseable value raises ``ConfigError``.
-
-    Retired names in ``RETIRED_ENV_OVERRIDES`` are rejected rather than ignored.
-    """
-    for name, guidance in sorted(RETIRED_ENV_OVERRIDES.items()):
-        if os.environ.get(name) is not None:
-            raise ConfigError(f"{name} is retired: {guidance}")
+    """Resolve operator overrides once, in trusted prepare only."""
+    unknown = unknown_environment_overrides(os.environ)
+    if unknown:
+        raise ConfigError(
+            f"unknown AI_REVIEW environment variables: {unknown}; unset unsupported "
+            "variables and migrate using docs/configuration.md"
+        )
 
     reviewers = config.get("reviewers")
     if isinstance(reviewers, dict):
@@ -437,17 +281,10 @@ def apply_env_overrides(config: dict[str, Any]) -> None:
             if effort_env is not None and effort_env.strip():
                 effort = effort_env.strip()
                 if effort == "unset" and name in REVIEWERS and REVIEWERS[name].supports_effort:
-                    reviewer.pop("effort", None)
+                    reviewer["effort"] = None
                 else:
                     reviewer["effort"] = effort
         apply_reviewer_roster(config, os.environ.get("AI_REVIEW_REVIEWERS"))
-
-    critique_env = os.environ.get("AI_REVIEW_CRITIQUE_ENABLED")
-    if critique_env is not None:
-        flag = _env_flag("AI_REVIEW_CRITIQUE_ENABLED", critique_env)
-        critique = config.setdefault("critique", {})
-        if isinstance(critique, dict):
-            critique["enabled"] = flag
 
     posting_mode_env = os.environ.get("AI_REVIEW_POSTING_MODE")
     if posting_mode_env is not None and posting_mode_env.strip():
@@ -467,7 +304,7 @@ def effective_config_digest(config: ReviewConfig) -> str:
 
 
 def effective_config_binding(config: ReviewConfig) -> dict[str, Any]:
-    """The manifest fields prepare records and later stages must reproduce."""
+    """The complete manifest configuration and its transport digest."""
     document = config.to_dict()
     return {
         "effective_config": document,
@@ -481,43 +318,72 @@ def recorded_effective_config_digest(manifest: Any) -> str | None:
     return str(digest) if is_sha256(digest) else None
 
 
-def require_effective_config_binding(config: ReviewConfig, manifest: Any) -> str:
-    """Return this stage's config digest once it matches the prepare manifest.
+def _recorded_effective_config(manifest: Any) -> tuple[dict[str, Any], str]:
+    """Prepare's recorded configuration document and the digest it matches."""
+    digest = recorded_effective_config_digest(manifest)
+    if digest is None:
+        raise EffectiveConfigMismatch("manifest missing effective_config_sha256; re-run prepare")
+    document = manifest.get("effective_config")
+    if not isinstance(document, dict):
+        raise EffectiveConfigMismatch("manifest missing resolved configuration; re-run prepare")
+    if stable_json_hash(document) != digest:
+        raise EffectiveConfigMismatch("manifest effective_config_sha256 mismatch; re-run prepare")
+    return document, digest
 
-    Every stage after prepare calls this before consequential work: review and
-    critique before a provider call, consensus before reading evidence, and post
-    before creating a platform client. It detects ``AI_REVIEW_*`` variables
-    scoped to only some CI jobs; it is not tamper protection, because whoever
-    writes the manifest also chooses the digest it records.
+
+def config_from_manifest(manifest: Any) -> ReviewConfig:
+    """Admit prepare's complete configuration at a CI artifact boundary.
+
+    The digest detects mixed/corrupt artifacts, not a malicious manifest writer.
+    No environment or YAML is reinterpreted. Credentials are never config fields.
     """
-    recorded_digest = recorded_effective_config_digest(manifest)
-    if recorded_digest is None:
+    document, digest = _recorded_effective_config(manifest)
+    try:
+        config = validate_config(document)
+    except ConfigError as exc:
         raise EffectiveConfigMismatch(
-            "manifest missing effective_config_sha256; re-run prepare with a "
-            "current ai-review release"
+            f"invalid manifest configuration: {exc}; re-run prepare"
+        ) from exc
+    if effective_config_digest(config) != digest:
+        raise EffectiveConfigMismatch(
+            "manifest configuration is not fully resolved; re-run prepare"
         )
-    current_digest = effective_config_digest(config)
-    if recorded_digest == current_digest:
-        return current_digest
-    divergent: list[str] = []
-    recorded = manifest.get("effective_config")
-    if isinstance(recorded, dict):
-        current = config.to_dict()
-        divergent = sorted(
-            key for key in set(recorded) | set(current) if recorded.get(key) != current.get(key)
-        )
-    raise EffectiveConfigMismatch(
-        "effective config differs from the prepare manifest — AI_REVIEW_* "
-        "override variables are not scoped identically across jobs "
-        f"(divergent={','.join(divergent) or 'effective_config_sha256'} "
-        f"manifest_digest={recorded_digest[:12]}… "
-        f"current_digest={current_digest[:12]}…)"
-    )
+    return config
+
+
+def require_effective_config_binding(config: ReviewConfig, manifest: Any) -> str:
+    """Bind direct reducer/prompt callers to the same prepare configuration."""
+    _, digest = _recorded_effective_config(manifest)
+    if effective_config_digest(config) != digest:
+        raise EffectiveConfigMismatch("config differs from the prepare manifest; re-run prepare")
+    return digest
+
+
+def _with_reviewer_defaults(config: dict[str, Any]) -> dict[str, Any]:
+    reviewers = config.get("reviewers", {})
+    if not isinstance(reviewers, dict):
+        raise ConfigError("reviewers must be a mapping")
+    _reject_unknown_keys(reviewers, REVIEWER_IDS, "reviewers")
+    if set(reviewers) == REVIEWER_IDS and all(
+        isinstance(values, dict) and set(values) >= REVIEWER_ALLOWED_KEYS
+        for values in reviewers.values()
+    ):
+        return config
+    defaults = load_yaml_subset(
+        (trusted_runtime_root() / "config" / "review.yaml").read_text(encoding="utf-8")
+    )["reviewers"]
+    resolved = {}
+    for name in REVIEWERS:
+        values = reviewers.get(name, {})
+        if not isinstance(values, dict):
+            raise ConfigError(f"reviewer {name} must be a mapping")
+        resolved[name] = {**defaults[name], **values}
+    return {**config, "reviewers": resolved}
 
 
 def load_config(path: str | Path) -> ReviewConfig:
     path = Path(path)
-    config = load_yaml_subset(path.read_text(encoding="utf-8"))
+    config = _with_reviewer_defaults(load_yaml_subset(path.read_text(encoding="utf-8")))
     apply_env_overrides(config)
     return validate_config(config)
 
@@ -532,18 +398,13 @@ def _validate_posting(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(posting, dict):
         raise ConfigError("posting must be a mapping")
     _reject_unknown_keys(posting, POSTING_KEYS, "posting")
-    if "mode" in posting and posting["mode"] not in {"gitlab_discussions", "github_reviews"}:
+    if "mode" in posting and (
+        not isinstance(posting["mode"], str)
+        or posting["mode"] not in {"gitlab_discussions", "github_reviews"}
+    ):
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
     if "inline_multiline" in posting and not isinstance(posting["inline_multiline"], bool):
         raise ConfigError("posting.inline_multiline must be a boolean")
-    inline_sides = posting.get("v1_inline_sides", [])
-    if not isinstance(inline_sides, list) or any(side not in INLINE_SIDES for side in inline_sides):
-        raise ConfigError(f"posting.v1_inline_sides must be a list of {', '.join(INLINE_SIDES)}")
-    if "fyi_mode" in posting and posting["fyi_mode"] != "summary_comment":
-        raise ConfigError(
-            "posting.fyi_mode must be summary_comment; "
-            "remove the setting or set it to summary_comment"
-        )
     return posting
 
 
@@ -584,8 +445,6 @@ def _resolve_value(hint: Any, value: Any, path: str) -> Any:
         return _resolve_integer(value, path)
     if hint is str:
         return str(value)
-    if get_origin(hint) is tuple:
-        return tuple(value)
     raise TypeError(f"no resolver for {path}: {hint!r}")
 
 
@@ -600,39 +459,20 @@ def _resolve_section[S](section: type[S], values: Mapping[str, Any], path: str) 
 def validate_config(config: dict[str, Any]) -> ReviewConfig:
     """Validate the document boundary and resolve immutable runtime settings."""
     declared_version = config.get("schema_version")
-    if declared_version in RETIRED_CONFIG_SCHEMA_VERSIONS:
-        # COMPAT-002: targeted v1/v2-to-v3 diagnostic. v1 is what every tagged 1.x
-        # release shipped; v2 existed only on main between releases. Checked
-        # before the key sets, so a retired document's removed top-level objects
-        # are reported as one migration rather than the first unknown key.
+    if declared_version != CONFIG_SCHEMA_VERSION:
         raise ConfigError(
-            f"schema_version {declared_version} is retired: delete "
-            + ", ".join(V3_REMOVED_CONFIG_KEYS)
-            + f", ensure at least {_MINIMUM_PANEL_REVIEWERS} reviewer seats are "
-            f"enabled, then set schema_version to {CONFIG_SCHEMA_VERSION}; "
-            "findings are informational in v3 and severity no longer affects any "
-            "decision. See the Migration table in CHANGELOG.md"
+            f"unsupported schema_version {declared_version!r}; use {CONFIG_SCHEMA_VERSION} "
+            "and migrate using docs/configuration.md"
         )
     _reject_unknown_keys(config, TOP_LEVEL_KEYS, "")
-    if declared_version != CONFIG_SCHEMA_VERSION:
-        raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION}")
     posting = _validate_posting(config)
     state = _validate_state(config)
     reviewers = config.get("reviewers")
     if not isinstance(reviewers, dict):
         raise ConfigError("reviewers must be a mapping")
-    reviewer_ids = set(reviewers)
-    if reviewer_ids != REVIEWER_IDS:
-        missing_reviewers = sorted(REVIEWER_IDS - reviewer_ids)
-        unknown_reviewers = sorted(reviewer_ids - REVIEWER_IDS)
-        details = []
-        if missing_reviewers:
-            details.append(f"missing {missing_reviewers}")
-        if unknown_reviewers:
-            details.append(f"unknown {unknown_reviewers}")
-        raise ConfigError(
-            "reviewer keys must equal the first-party reviewer registry: " + ", ".join(details)
-        )
+    _reject_unknown_keys(reviewers, REVIEWER_IDS, "reviewers")
+    if set(reviewers) != REVIEWER_IDS:
+        raise ConfigError("resolved reviewers must contain every first-party seat")
     resolved_reviewers: dict[str, ReviewerConfig] = {}
     for name, reviewer in reviewers.items():
         if not isinstance(reviewer, dict):
@@ -641,11 +481,14 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
             reviewer,
             REVIEWER_ALLOWED_KEYS,
             f"reviewers.{name}",
-            removal_path="reviewers.<name>",
         )
-        missing_keys = REVIEWER_REQUIRED_KEYS - set(reviewer)
-        if missing_keys:
-            raise ConfigError(f"reviewer {name} missing keys: {sorted(missing_keys)}")
+        missing = REVIEWER_REQUIRED_KEYS - set(reviewer)
+        if missing:
+            raise ConfigError(f"reviewer {name} missing keys: {sorted(missing)}")
+        if not isinstance(reviewer["enabled"], bool):
+            raise ConfigError(f"reviewer {name} enabled must be a boolean")
+        if not isinstance(reviewer["model"], str) or not reviewer["model"].strip():
+            raise ConfigError(f"reviewer {name} model must be a non-empty string")
         timeout_seconds = reviewer.get("timeout_seconds")
         if type(timeout_seconds) is not int or timeout_seconds <= 0:
             raise ConfigError(f"reviewer {name} timeout_seconds must be a positive integer")
@@ -662,7 +505,7 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
                 f"reviewer {name} does not support effort; select the desired reasoning "
                 f"variant with reviewers.{name}.model or AI_REVIEW_{name.upper()}_MODEL"
             )
-        if effort is not None and effort not in EFFORT_LEVELS:
+        if effort is not None and (not isinstance(effort, str) or effort not in EFFORT_LEVELS):
             raise ConfigError(
                 f"reviewer {name} effort must be one of {sorted(EFFORT_LEVELS)}, got {effort!r}"
             )
@@ -675,8 +518,6 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     if not isinstance(critique, dict):
         raise ConfigError("critique must be a mapping")
     _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
-    # All three, not just `enabled`: the other two were read with bool() and
-    # accepted any truthy value, so the string "false" silently enabled them.
     for flag in sorted(CRITIQUE_KEYS):
         if flag in critique and not isinstance(critique[flag], bool):
             raise ConfigError(f"critique.{flag} must be a boolean")
@@ -689,9 +530,7 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     #
     # The enabled floor is checked here rather than in apply_reviewer_roster
     # because it must hold after *every* path into the config, including a YAML
-    # document authored by hand. AI_REVIEW_REVIEWERS is now the only runtime
-    # roster override — the per-seat AI_REVIEW_<NAME>_ENABLED flags are retired
-    # and rejected via RETIRED_ENV_OVERRIDES.
+    # document authored by hand. AI_REVIEW_REVIEWERS selects the entire roster.
     configured_count = len(reviewers)
     enabled_count = sum(reviewer.enabled for reviewer in resolved_reviewers.values())
     if enabled_count < _MINIMUM_PANEL_REVIEWERS:
@@ -720,7 +559,10 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
 
     panel_config = PanelConfig(
         min_successful_reviewers_for_resolution=_resolve_threshold(
-            panel.get("min_successful_reviewers_for_resolution"),
+            panel.get(
+                "min_successful_reviewers_for_resolution",
+                PanelConfig().min_successful_reviewers_for_resolution,
+            ),
             1,
             "panel.min_successful_reviewers_for_resolution",
         )
@@ -729,10 +571,6 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     if not isinstance(limits, dict):
         raise ConfigError("limits must be a mapping")
     _reject_unknown_keys(limits, LIMIT_KEYS, "limits")
-    security = config.get("security", {})
-    if not isinstance(security, dict):
-        raise ConfigError("security must be a mapping")
-    _reject_unknown_keys(security, SECURITY_KEYS, "security")
     return ReviewConfig(
         reviewers=resolved_reviewers,
         panel=panel_config,
@@ -740,5 +578,4 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
         posting=_resolve_section(PostingConfig, posting, "posting"),
         state=_resolve_section(StateConfig, state, "state"),
         limits=_resolve_section(LimitsConfig, limits, "limits"),
-        security=_resolve_section(SecurityConfig, security, "security"),
     )

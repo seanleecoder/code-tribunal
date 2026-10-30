@@ -64,10 +64,10 @@ update-golden:
 
 review-local:
 	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.input_bundle local --config $(AI_REVIEW_ROOT)/config/review.yaml --diff $(DIFF) --repo $(REPO) --out $(LOCAL_OUT)/inputs
-	AI_REVIEW_INPUT_DIR=$(LOCAL_OUT)/inputs AI_REVIEW_OUTPUT_DIR=$(LOCAL_OUT)/out AI_REVIEW_CONFIG=$(AI_REVIEW_ROOT)/config/review.yaml AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true PYTHONPATH=$(PYTHONPATH) ./$(AI_REVIEW_ROOT)/adapters/run_reviewer.sh $(REVIEWER) review
+	AI_REVIEW_INPUT_DIR=$(LOCAL_OUT)/inputs AI_REVIEW_OUTPUT_DIR=$(LOCAL_OUT)/out AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true PYTHONPATH=$(PYTHONPATH) ./$(AI_REVIEW_ROOT)/adapters/run_reviewer.sh $(REVIEWER) review
 
 consensus-local: review-local
-	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.consensus --config $(AI_REVIEW_ROOT)/config/review.yaml --inputs $(LOCAL_OUT)/inputs --findings-dir $(LOCAL_OUT)/out/findings --out $(LOCAL_OUT)/out/consensus/consensus.json
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.consensus --inputs $(LOCAL_OUT)/inputs --findings-dir $(LOCAL_OUT)/out/findings --out $(LOCAL_OUT)/out/consensus/consensus.json
 	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ai_review.schema validate --schema consensus.schema.json --input $(LOCAL_OUT)/out/consensus/consensus.json
 
 validate-local: review-local

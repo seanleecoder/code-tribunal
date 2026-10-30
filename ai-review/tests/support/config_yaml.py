@@ -1,4 +1,4 @@
-"""Shared pieces for tests that author a ``review_config.v3`` document.
+"""Shared pieces for tests that author a ``review_config.v4`` document.
 
 ``runtime_config`` is the canonical builder for every test that drives a runtime
 entry point. Hand-built partial dictionaries are not a supported input shape:
@@ -22,37 +22,20 @@ from ai_review.reviewers import REVIEWERS
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
 
-def config_tail(
-    *,
-    critique_enabled: bool = False,
-    blind_reviewer_identity: bool = True,
-    allow_severity_downgrade: bool = False,
-) -> list[str]:
+def config_tail(*, allow_severity_downgrade: bool = False) -> list[str]:
     """Everything below `reviewers:` in a minimal valid document."""
-
-    def flag(value: bool) -> str:
-        return "true" if value else "false"
-
     return [
         "panel:",
         "  min_successful_reviewers_for_resolution: 1",
         "critique:",
-        f"  enabled: {flag(critique_enabled)}",
-        f"  blind_reviewer_identity: {flag(blind_reviewer_identity)}",
-        f"  allow_severity_downgrade: {flag(allow_severity_downgrade)}",
+        f"  allow_severity_downgrade: {'true' if allow_severity_downgrade else 'false'}",
         "posting:",
         "  mode: gitlab_discussions",
-        "  v1_inline_sides: [new]",
-        "  stale_head_guard: true",
-        # No `state.backend`: persistent state is always on and posting.mode
-        # selects the adapter that stores it. Authoring the key is now an error.
         "state:",
         "  retention:",
         "    max_records: 200",
         "limits:",
         "  max_prompt_bytes: 500000",
-        "security:",
-        "  allow_external_fork_secrets: false",
     ]
 
 
@@ -89,7 +72,7 @@ def runtime_config(
     config = load_yaml_subset(
         "\n".join(
             [
-                "schema_version: review_config.v3",
+                "schema_version: review_config.v4",
                 "reviewers:",
                 *panel_filler(),
                 *config_tail(),

@@ -143,7 +143,7 @@ released image, is refreshed in place. Use a
 ### Effort routes and the three-seat default smoke
 
 A green canary `panel` proves every seat succeeded in review and critique, and
-consensus rejects configuration drift between stages. It does not prove which model
+consensus binds evidence to prepare's resolved configuration. It does not prove which model
 the provider served: a batch's `model` is copied from the configuration. The canary
 clears effort overrides but not model overrides, so compare the models in its
 summary artifact with the [shipped defaults](../configuration.md#shipped-defaults).
