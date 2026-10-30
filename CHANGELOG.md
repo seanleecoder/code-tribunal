@@ -92,7 +92,10 @@ versioning.
   bounded, redacted parse and timeout artifacts remain available. Diagnostics
   redact complete secret spans before truncation, including multiline keys.
   Unicode secret values and control-character whitespace remain masked across
-  tail boundaries. Incomplete private-key blocks are redacted through end-of-file
+  tail boundaries. JWT scanning handles repeated malformed header prefixes
+  without quadratic rescans during timeout cleanup. Output-limit log tails
+  neutralize GitHub Actions workflow commands on every diagnostic line.
+  Incomplete private-key blocks are redacted through end-of-file
   without repeated scans, keeping timeout diagnostics responsive. Rendered findings
   preserve single-line prose after a standalone quoted PEM header while still
   masking complete and incomplete key blocks, including malformed footers.

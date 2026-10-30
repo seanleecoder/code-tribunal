@@ -28,6 +28,7 @@ from ai_review.schema import (
     finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
+    validate_instance,
     write_canonical_json,
 )
 
@@ -1224,6 +1225,50 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
             self.assertFalse(batch["usable_for_resolution"])
+
+    def test_output_limit_log_tails_neutralize_workflow_commands(self) -> None:
+        raw = json.dumps({"findings": [{
+            "location": {
+                "path": "src/reviewed.py",
+                "side": "new",
+                "start_line": 1,
+                "end_line": 1,
+                "symbol": None,
+            },
+            "severity": "major",
+            "category": "correctness",
+            "title": "Check input",
+            "body": "x" * 2048 + "##[add-mask]body-marker",
+            "evidence": [],
+            "suggestion": None,
+        }]})
+        validate_instance(json.loads(raw), "raw_finding_batch.schema.json")
+        diagnostic = (
+            "::add-mask::stderr-marker\n"
+            "  ::stop-commands::stop-marker\r"
+            "embedded ##[warning]legacy-marker\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                f"#!/bin/sh\ncat <<'EOF'\n{raw}\nEOF\n"
+                f"cat <<'EOF' >&2\n{diagnostic}\nEOF\n",
+            )
+            self._set_env(paths, config_path)
+            with (
+                mock.patch("ai_review.adapter_process._ADAPTER_OUTPUT_LIMIT_BYTES", 1024),
+                contextlib.redirect_stderr(errors := io.StringIO()),
+            ):
+                self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
+
+            log = errors.getvalue()
+            for marker in ("body-marker", "stderr-marker", "stop-marker", "legacy-marker"):
+                self.assertIn(marker, log)
+            self.assertNotIn("##[", log)
+            self.assertFalse(any(line.lstrip().startswith("::") for line in log.splitlines()))
 
     def test_status_skipped_is_config_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

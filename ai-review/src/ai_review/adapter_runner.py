@@ -300,7 +300,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
     except AdapterOutputLimitError as exc:
         for stream, tail in (("stdout", exc.stdout), ("stderr", exc.stderr)):
             if tail:
-                sys.stderr.write(f"adapter {stream} tail:\n{tail}\n")
+                sys.stderr.write(f"adapter {stream} tail:\n")
+                # Prefix every line to stop :: commands; legacy ##[ commands
+                # are recognized anywhere in a line and must also be escaped.
+                for line in tail.splitlines():
+                    sys.stderr.write(f"  | {line.replace('##[', '## [')}\n")
         return _fail(
             "model_error",
             digest=config_digest,

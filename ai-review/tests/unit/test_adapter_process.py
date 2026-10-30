@@ -164,10 +164,20 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
     assert capfd.readouterr() == ("", "")
 
 
-def test_timeout_diagnostics_finish_with_many_incomplete_pem_blocks() -> None:
+@pytest.mark.parametrize(
+    "diagnostic, expected_suffix",
+    [
+        ("b'-----BEGIN PRIVATE KEY-----\\n' * 10000", "[REDACTED]"),
+        ("b'eyJ' * 200000", "eyJ"),
+    ],
+    ids=["incomplete-pem", "repeated-jwt-prefix"],
+)
+def test_timeout_diagnostics_finish_with_malformed_secret_prefixes(
+    diagnostic: str, expected_suffix: str,
+) -> None:
     child = (
         "import os, time\n"
-        "os.write(2, b'-----BEGIN PRIVATE KEY-----\\n' * 10000)\n"
+        f"os.write(2, {diagnostic})\n"
         "time.sleep(30)\n"
     )
     # The outer deadline also bounds a regression that hangs inside redaction
@@ -178,13 +188,17 @@ def test_timeout_diagnostics_finish_with_many_incomplete_pem_blocks() -> None:
         "try:\n"
         f"    _run_adapter_process([sys.executable, '-c', {child!r}], os.environ.copy(), 1)\n"
         "except subprocess.TimeoutExpired as exc:\n"
-        "    assert exc.stderr == '...[truncated]...\\n[REDACTED]'\n"
+        "    assert len(exc.stderr) <= 4000\n"
+        "    assert exc.stderr.startswith('...[truncated]...\\n')\n"
+        f"    assert exc.stderr.endswith({expected_suffix!r})\n"
+        f"    if {expected_suffix!r} == '[REDACTED]':\n"
+        "        assert exc.stderr == '...[truncated]...\\n[REDACTED]'\n"
         "    print('timeout diagnostics completed')\n"
         "else:\n"
         "    raise AssertionError('expected TimeoutExpired')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", worker], capture_output=True, text=True, timeout=5, check=True
+        [sys.executable, "-B", "-c", worker], capture_output=True, text=True, timeout=5, check=True
     )
     assert result.stdout == "timeout diagnostics completed\n"
     assert result.stderr == ""

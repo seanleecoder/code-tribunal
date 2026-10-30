@@ -51,6 +51,19 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn(jwt, redacted)
         self.assertIn("[REDACTED]", redacted)
 
+    def test_jwt_matching_preserves_prefixes_and_finds_later_headers(self) -> None:
+        jwt = "eyJheader.payload.signature"
+        for prefix, expected in (
+            ("", "[REDACTED]"),
+            ("embedded", "embedded[REDACTED]"),
+            ("eyJ", "[REDACTED]"),
+            ("not-a-header.", "not-a-header.[REDACTED]"),
+            ("eyJ.", "eyJ.[REDACTED]"),
+        ):
+            for redact in (redact_text, _file_tail):
+                with self.subTest(prefix=prefix, redact=redact.__name__):
+                    self.assertEqual(redact(prefix + jwt), expected)
+
     def test_bearer_token_is_redacted(self) -> None:
         redacted = redact_text("Authorization: Bearer sometokenvalue123")
         self.assertNotIn("sometokenvalue123", redacted)
@@ -163,6 +176,13 @@ class RedactionTests(unittest.TestCase):
         for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):
             with self.subTest(value=value[:8]):
                 self.assertEqual(_file_tail("token=" + value + _LAST), _CLIPPED)
+
+    def test_file_tail_masks_jwts_starting_before_the_read_window(self) -> None:
+        for index in range(3):
+            parts = ["eyJheader", "payload", "signature"]
+            parts[index] += "eyJ" * 10000
+            with self.subTest(component=index):
+                self.assertEqual(_file_tail("prefix " + ".".join(parts) + _LAST), _CLIPPED)
 
     def test_file_tail_recognizes_all_unicode_whitespace_before_clipping(self) -> None:
         whitespace = (chr(value) for value in range(0x110000) if chr(value).isspace())

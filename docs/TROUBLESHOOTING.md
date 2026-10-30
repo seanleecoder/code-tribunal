@@ -54,8 +54,10 @@ Adapter stdout and stderr are captured in private temporary files, with a
 32 MiB budget per stream checked every 100 ms. Exceeding it fails the seat with
 `model_error` and `AdapterOutputLimitError`; the job log retains bounded, redacted
 stdout and stderr tails to diagnose the failure. Partial output is never treated
-as a clean review. After completion, the job log shows at most the last 4,000 redacted
-stderr characters, with a truncation notice when necessary. Capture files are
+as a clean review. Output-limit log tails neutralize GitHub Actions workflow
+commands, including commands embedded in JSON output. After completion, the job
+log shows at most the last 4,000 redacted stderr characters, with a truncation
+notice when necessary. Capture files are
 closed and removed after the adapter's process group is terminated, including
 any children remaining after a normal adapter exit.
 Incomplete private-key blocks are redacted through the end of the captured output.

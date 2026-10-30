@@ -32,8 +32,13 @@ SECRET_PATTERNS = [
     # GitHub tokens: personal (ghp_), oauth (gho_), user-to-server (ghu_),
     # server-to-server (ghs_), refresh (ghr_)
     re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}"),
-    # JSON Web Tokens (header.payload.signature)
-    re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
+    # Anchor to each base64url run and fix its first eyJ in a lookahead.
+    # Possessive components keep failures linear; the value group preserves
+    # any text before an embedded JWT.
+    re.compile(
+        r"(?<![A-Za-z0-9_-])(?=(?P<prefix>[A-Za-z0-9_-]*?)eyJ)"
+        r"(?P=prefix)(?P<value>eyJ[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]++)"
+    ),
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
     _PEM_PRIVATE_KEY,
@@ -165,8 +170,8 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
     spans: list[tuple[int, int]] = []
     with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as capture:
         for byte_pattern in _SECRET_BYTE_PATTERNS:
-            # The keyword pattern preserves its name and separator, masking only
-            # the value, just as redact_text does.
+            # Named value groups preserve the keyword/separator or JWT prefix,
+            # masking only the secret, just as redact_text does.
             group = "value" if "value" in byte_pattern.groupindex else 0
             for match in byte_pattern.finditer(capture):
                 start, end = match.span(group)
