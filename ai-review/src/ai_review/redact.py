@@ -5,7 +5,6 @@ import mmap
 import os
 import re
 from collections.abc import Callable
-from itertools import islice
 from typing import BinaryIO
 
 # Matching through EOF prevents repeated BEGIN markers from each scanning to EOF
@@ -16,14 +15,13 @@ _PEM_PRIVATE_KEY = re.compile(
     re.DOTALL,
 )
 _PEM_LINE_BREAK = re.compile(r"[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
-_PEM_BASE64_CHAR = re.compile(r"[A-Za-z0-9+/=]")
+_PEM_NON_BASE64 = re.compile(r"[^A-Za-z0-9+/=]+")
+# Traditional encrypted PEM carries explicit metadata.
+_PEM_ENCRYPTED = re.compile(r"(?:Proc-Type|DEK-Info)\s*:")
 # DER sequences start with M[A-P]; OpenSSH's magic starts with b3. Look ahead
-# so adjacent candidates cannot hide each other, and allow formatting between
-# characters. Traditional encrypted PEM also carries explicit metadata.
-_PEM_PAYLOAD_START = re.compile(
-    r"(?P<encrypted>(?:Proc-Type|DEK-Info)\s*:)"
-    r"|(?=M[^A-Za-z0-9+/=]*[A-P]|b[^A-Za-z0-9+/=]*3)"
-)
+# so adjacent candidates cannot hide each other.
+_PEM_PAYLOAD_START = re.compile(r"(?=(?P<der>M[A-P])|b3)")
+_OPENSSH_MAGIC = b"openssh-key-v1\x00"
 
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"),
@@ -57,19 +55,19 @@ _UTF8_WHITESPACE = (
 def _looks_like_pem_payload(value: str) -> bool:
     # Recognize key preambles rather than treating ordinary words, identifiers
     # or SHAs as base64. Only a bounded prefix is decoded; truncated keys must
-    # not need a valid body or footer, and separators must not reset detection.
-    for start in _PEM_PAYLOAD_START.finditer(value):
-        if start["encrypted"] is not None:
-            return True
-        characters = _PEM_BASE64_CHAR.finditer(value, start.start())
-        prefix = "".join(part[0] for part in islice(characters, 24)).split("=", 1)[0]
+    # not need a valid body or footer, and separators must not hide a payload,
+    # so they are dropped before searching.
+    if _PEM_ENCRYPTED.search(value):
+        return True
+    payload = _PEM_NON_BASE64.sub("", value)
+    for start in _PEM_PAYLOAD_START.finditer(payload):
+        prefix = payload[start.start():start.start() + 24].split("=", 1)[0]
         decoded = base64.b64decode(prefix[:len(prefix) // 4 * 4])
         if not decoded:
             continue
-        magic = b"openssh-key-v1\x00"
-        if decoded.startswith(magic) or magic.startswith(decoded):
-            return True
-        if decoded[0] != 0x30:
+        if start["der"] is None:
+            if decoded.startswith(_OPENSSH_MAGIC) or _OPENSSH_MAGIC.startswith(decoded):
+                return True
             continue
         # A DER private key starts with a version INTEGER or an encryption
         # algorithm SEQUENCE, after its outer SEQUENCE's length octets.

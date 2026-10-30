@@ -134,8 +134,8 @@ class RedactionTests(unittest.TestCase):
             header = "-----BEGIN " + (kind + " " if kind else "") + "PRIVATE KEY-----"
             material = base64.b64encode(prefix).decode()
             for width in (1, 4, 12):
+                chunks = [material[i:i + width] for i in range(0, len(material), width)]
                 for separator in (" ", ",", ".", "-", "` `", "\u200b", "\u00ad"):
-                    chunks = [material[i:i + width] for i in range(0, len(material), width)]
                     text = f"`{header}` " + separator.join(chunks)
                     with self.subTest(kind=kind, width=width, separator=separator):
                         self.assertEqual(

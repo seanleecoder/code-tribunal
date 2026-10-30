@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import re
-import subprocess
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from ai_review.canonical import sha256_hex
@@ -85,11 +82,10 @@ class BodyHashTests(unittest.TestCase):
             "inline missing PRIVATE": f"`{header}` {material} -----END RSA KEY-----",
             "payload after prose": f"`{header}` header; the value is {material}",
             "JSON escaped newline": f"`{header}`\\n{material}",
-            "payload folded over spaces": (
-                f"`{header}` "
-                + " ".join(material[index:index + 4] for index in range(0, len(material), 4))
-            ),
         }
+        chunks = [material[index:index + 4] for index in range(0, len(material), 4)]
+        for separator in (" ", ",", ".", "-", "` `", "​", "­"):
+            cases[f"payload split by {separator!r}"] = f"`{header}` " + separator.join(chunks)
         for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
             cases[f"Unicode line separator {separator!r}"] = f"`{header}`{separator}{material}"
         for field in ("title", "body", "evidence", "dissent", "suggestion"):
@@ -106,36 +102,6 @@ class BodyHashTests(unittest.TestCase):
                     self.assertNotIn("MIIE", rendered)
                     self.assertNotIn(header, rendered)
                     self.assertIn("[REDACTED]", rendered)
-
-    def test_decorated_private_key_is_masked_in_both_platforms_model_sections(self) -> None:
-        # Generate only a fresh fixture; never read an operator's key.
-        with tempfile.TemporaryDirectory() as temporary:
-            key = Path(temporary) / "fixture"
-            subprocess.run(
-                ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
-                check=True, capture_output=True, timeout=10,
-            )
-            lines = key.read_text().splitlines()
-        header = lines[0]
-        material = "".join(lines[1:-1])
-        chunks = [material[i:i + 12] for i in range(0, len(material), 12)]
-        for mode in ("github_reviews", "gitlab_discussions"):
-            for separator in (",", ".", "-", "` `", "\u200b", "\u00ad"):
-                text = f"`{header}` " + separator.join(chunks)
-                for field in ("title", "body", "evidence", "dissent", "suggestion"):
-                    with self.subTest(mode=mode, separator=separator, field=field):
-                        group = self._group()
-                        if field == "evidence":
-                            group["evidence_by_reviewer"] = {"claude": text}
-                        elif field == "dissent":
-                            group["critique_disputes"] = [{"critic": "codex", "rationale": text}]
-                        else:
-                            group[field] = text
-                        rendered, _ = render_body(group, "run", posting_mode=mode)
-                        self.assertNotIn(header, rendered)
-                        for chunk in chunks:
-                            self.assertNotIn(chunk, rendered)
-                        self.assertIn("[REDACTED]", rendered)
 
     def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()

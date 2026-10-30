@@ -65,7 +65,7 @@ masked, including blocks with malformed or clipped closing markers.
 DER and OpenSSH key preambles after the quoted header remain masked even when
 split by whitespace, punctuation, backticks or invisible separators. Ordinary
 sentences, source paths, commit SHAs and identifiers do not alone count as key
-payloads. Multiline blocks are rejected without allocating a list of their lines.
+payloads.
 
 A parse or validation failure writes two redacted artifacts:
 
