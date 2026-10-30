@@ -46,25 +46,25 @@ class BodyHashTests(unittest.TestCase):
     def test_pem_header_prose_keeps_remediation_while_complete_keys_are_masked(self) -> None:
         header = "-----BEGIN RSA PRIVATE KEY-----"
         remediation = "rotate it and purge history."
+        prose = f"key.pem commits a `{header}` header; {remediation}"
+        key_block = (
+            f"key.pem commits {header}\nsynthetic-key-material\n"
+            f"-----END RSA PRIVATE KEY-----; {remediation}"
+        )
         for posting_mode in ("github_reviews", "gitlab_discussions"):
-            for complete in (False, True):
-                with self.subTest(posting_mode=posting_mode, complete=complete):
-                    group = self._group()
-                    if complete:
-                        group["body"] = (
-                            f"key.pem commits {header}\nsynthetic-key-material\n"
-                            f"-----END RSA PRIVATE KEY-----; {remediation}"
-                        )
-                    else:
-                        group["body"] = f"key.pem commits a `{header}` header; {remediation}"
-                    rendered, _ = render_body(group, "run", posting_mode=posting_mode)
-                    self.assertIn(remediation, rendered)
-                    if complete:
-                        self.assertNotIn("synthetic-key-material", rendered)
-                        self.assertNotIn(header, rendered)
-                        self.assertIn("[REDACTED]", rendered)
-                    else:
-                        self.assertIn(header, rendered)
+            with self.subTest(posting_mode=posting_mode):
+                group = self._group()
+                group["body"] = prose
+                rendered, _ = render_body(group, "run", posting_mode=posting_mode)
+                self.assertIn(header, rendered)
+                self.assertIn(remediation, rendered)
+
+                group["body"] = key_block
+                rendered, _ = render_body(group, "run", posting_mode=posting_mode)
+                self.assertIn(remediation, rendered)
+                self.assertIn("[REDACTED]", rendered)
+                self.assertNotIn("synthetic-key-material", rendered)
+                self.assertNotIn(header, rendered)
 
     def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()

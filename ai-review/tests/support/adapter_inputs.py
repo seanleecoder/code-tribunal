@@ -2,10 +2,8 @@
 
 ``run_adapter`` renders its prompt from a real bundle -- diff, rules, prompts,
 manifest, prior decisions, and a repo snapshot as prepare leaves it, with the
-reviewer agent files already dropped. Two suites need exactly that shape: the
-registry-driven reviewer contract in ``unit/test_reviewers.py`` and the
-provider-specific adapter suite in ``unit/test_openrouter_adapters.py``. It
-lives here so neither owns it.
+reviewer agent files already dropped. Several adapter suites need exactly that
+shape, so it lives here and none of them owns it.
 
 ``run_prepared_adapter`` is shared more widely: every adapter-runner suite that
 writes its own manifest needs prepare's effective-config binding in it.

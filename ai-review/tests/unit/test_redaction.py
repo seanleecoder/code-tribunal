@@ -68,11 +68,9 @@ class RedactionTests(unittest.TestCase):
 
     def test_incomplete_pem_private_key_is_redacted_through_eof(self) -> None:
         diagnostic = "before\n-----BEGIN PRIVATE KEY-----\npartial-private-key"
-        self.assertEqual(
-            redact_text(diagnostic),
-            "before\n[REDACTED]",
-        )
-        self.assertEqual(_file_tail(diagnostic), "before\n[REDACTED]")
+        for redact in (redact_text, _file_tail):
+            with self.subTest(redact=redact.__name__):
+                self.assertEqual(redact(diagnostic), "before\n[REDACTED]")
 
     def test_file_tail_masks_non_ascii_secret_values_before_clipping(self) -> None:
         for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):

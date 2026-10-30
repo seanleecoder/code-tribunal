@@ -74,7 +74,7 @@ def _byte_pattern(pattern: re.Pattern[str]) -> re.Pattern[bytes]:
     return re.compile(source.encode(), pattern.flags & ~re.UNICODE)
 
 
-_SECRET_BYTE_PATTERNS = [(_byte_pattern(pattern), pattern.groups) for pattern in SECRET_PATTERNS]
+_SECRET_BYTE_PATTERNS = [_byte_pattern(pattern) for pattern in SECRET_PATTERNS]
 
 _TRUNCATED_PREFIX = "...[truncated]...\n"
 
@@ -93,11 +93,11 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
     offset = max(0, size - 4 * limit)
     spans: list[tuple[int, int]] = []
     with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as capture:
-        for byte_pattern, groups in _SECRET_BYTE_PATTERNS:
+        for byte_pattern in _SECRET_BYTE_PATTERNS:
             for match in byte_pattern.finditer(capture):
                 # The keyword pattern preserves its name and separator, masking
                 # only the value, just as redact_text does.
-                start, end = match.span(3 if groups >= 3 else 0)
+                start, end = match.span(3 if byte_pattern.groups >= 3 else 0)
                 if end > offset:
                     spans.append((max(offset, start), end))
         parts: list[bytes] = []
