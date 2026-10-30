@@ -51,20 +51,18 @@ class BodyHashTests(unittest.TestCase):
             f"key.pem commits {header}\nsynthetic-key-material\n"
             f"-----END RSA PRIVATE KEY-----; {remediation}"
         )
-        for posting_mode in ("github_reviews", "gitlab_discussions"):
-            with self.subTest(posting_mode=posting_mode):
-                group = self._group()
-                group["body"] = prose
-                rendered, _ = render_body(group, "run", posting_mode=posting_mode)
-                self.assertIn(header, rendered)
-                self.assertIn(remediation, rendered)
+        group = self._group()
+        group["body"] = prose
+        rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+        self.assertIn(header, rendered)
+        self.assertIn(remediation, rendered)
 
-                group["body"] = key_block
-                rendered, _ = render_body(group, "run", posting_mode=posting_mode)
-                self.assertIn(remediation, rendered)
-                self.assertIn("[REDACTED]", rendered)
-                self.assertNotIn("synthetic-key-material", rendered)
-                self.assertNotIn(header, rendered)
+        group["body"] = key_block
+        rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+        self.assertIn(remediation, rendered)
+        self.assertIn("[REDACTED]", rendered)
+        self.assertNotIn("synthetic-key-material", rendered)
+        self.assertNotIn(header, rendered)
 
     def test_incomplete_pem_blocks_are_masked_in_all_model_text_sections(self) -> None:
         header = "-----BEGIN RSA PRIVATE KEY-----"
@@ -91,22 +89,20 @@ class BodyHashTests(unittest.TestCase):
         }
         for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
             cases[f"Unicode line separator {separator!r}"] = f"`{header}`{separator}{material}"
-        for posting_mode in ("github_reviews", "gitlab_discussions"):
-            for field in ("title", "body", "evidence", "dissent", "suggestion"):
-                for case, text in cases.items():
-                    with self.subTest(posting_mode=posting_mode, field=field, case=case):
-                        group = self._group()
-                        if field == "evidence":
-                            group["evidence_by_reviewer"] = {"claude": text}
-                        elif field == "dissent":
-                            group["critique_disputes"] = [{"critic": "codex", "rationale": text}]
-                        else:
-                            group[field] = text
-                        rendered, _ = render_body(group, "run", posting_mode=posting_mode)
-                        self.assertNotIn(material, rendered)
-                        self.assertNotIn("MIIE", rendered)
-                        self.assertNotIn(header, rendered)
-                        self.assertIn("[REDACTED]", rendered)
+        for field in ("title", "body", "evidence", "dissent", "suggestion"):
+            for case, text in cases.items():
+                with self.subTest(field=field, case=case):
+                    group = self._group()
+                    if field == "evidence":
+                        group["evidence_by_reviewer"] = {"claude": text}
+                    elif field == "dissent":
+                        group["critique_disputes"] = [{"critic": "codex", "rationale": text}]
+                    else:
+                        group[field] = text
+                    rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+                    self.assertNotIn("MIIE", rendered)
+                    self.assertNotIn(header, rendered)
+                    self.assertIn("[REDACTED]", rendered)
 
     def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()

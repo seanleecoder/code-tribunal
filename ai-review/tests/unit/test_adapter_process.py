@@ -8,7 +8,11 @@ import time
 from pathlib import Path
 
 import pytest
-from ai_review.adapter_process import AdapterOutputLimitError, _run_adapter_process
+from ai_review.adapter_process import (
+    _ADAPTER_DIAGNOSTIC_TAIL_CHARS,
+    AdapterOutputLimitError,
+    _run_adapter_process,
+)
 
 
 @pytest.mark.parametrize("returncode", [0, 7])
@@ -103,7 +107,7 @@ def test_output_limit_fails_instead_of_truncating(
         _run_adapter_process([sys.executable, "-c", script], os.environ.copy(), 5)
     assert time.monotonic() - started < 3
     tails = [caught.value.stdout, caught.value.stderr]
-    assert all(len(tail) <= 4000 for tail in tails)
+    assert all(len(tail) <= _ADAPTER_DIAGNOSTIC_TAIL_CHARS for tail in tails)
     assert "last progress" in tails[stream - 1]
     assert tails[2 - stream] == "failure detail: token=[REDACTED]\n"
 
@@ -154,7 +158,7 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
     assert result.stdout == '{"findings":[]}\n'
     assert result.stderr.startswith("...[truncated]...\n")
     assert result.stderr.endswith("token=[REDACTED]\nlast progress\n")
-    assert len(result.stderr) <= 4000
+    assert len(result.stderr) <= _ADAPTER_DIAGNOSTIC_TAIL_CHARS
     assert "private-key-material" not in result.stderr
     assert "never-publish-this" not in result.stderr
     assert capfd.readouterr() == ("", "")

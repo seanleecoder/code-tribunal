@@ -13,10 +13,9 @@ _PEM_PRIVATE_KEY = re.compile(
     r".*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
     re.DOTALL,
 )
-# These classify the suffix before granting the rendered-prose exception; they
-# do not replace the original PEM match used to mask a possible key block.
-_PEM_PROSE_PART = re.compile(r"(?P<base64>[A-Za-z0-9+/=]+)|\s+|.", re.DOTALL)
-_PEM_LINE_BREAK = re.compile(r"[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+# Classifies the suffix before granting the rendered-prose exception. Whitespace
+# matches neither branch, so finditer skips it.
+_PEM_PROSE_PART = re.compile(r"(?P<base64>[A-Za-z0-9+/=]+)|[^A-Za-z0-9+/=\s]+")
 
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"),
@@ -50,7 +49,6 @@ _UTF8_WHITESPACE = (
 def _looks_like_pem_payload(value: str) -> bool:
     # Treat 16 contiguous or 32 whitespace-folded base64 characters as payload.
     # The larger folded bound allows short explanatory phrases between spaces.
-    # Count spans without materializing a compacted copy or a list of words.
     folded_length = 0
     for part in _PEM_PROSE_PART.finditer(value):
         if part.lastgroup == "base64":
@@ -58,7 +56,7 @@ def _looks_like_pem_payload(value: str) -> bool:
             folded_length += length
             if length >= 16 or folded_length >= 32:
                 return True
-        elif not value[part.start()].isspace():
+        else:
             folded_length = 0
     return False
 
@@ -68,8 +66,7 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
         return "[REDACTED]"
     # Only a header enclosed in matching inline-code delimiters may survive.
     # Additional lines, markers or payload-like suffixes still belong to the
-    # possible key block, even when its header is quoted. Inspect the EOF match
-    # once and keep its context intact until the masking decision is made.
+    # possible key block, even when its header is quoted.
     start = opening = match.start()
     while opening and match.string[opening - 1] == "`":
         opening -= 1
@@ -80,7 +77,7 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
     closing_ticks = len(suffix) - len(suffix.lstrip("`"))
     if (
         start - opening == closing_ticks
-        and _PEM_LINE_BREAK.search(value) is None
+        and len(value.splitlines()) == 1
         and "-----BEGIN" not in suffix
         and not _looks_like_pem_payload(suffix)
     ):

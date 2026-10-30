@@ -305,7 +305,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
             "model_error",
             digest=config_digest,
             model=model,
-            error_class=exc.__class__.__name__,
+            error_class="AdapterOutputLimitError",
             error_message=str(exc),
         )
     except Exception as exc:
