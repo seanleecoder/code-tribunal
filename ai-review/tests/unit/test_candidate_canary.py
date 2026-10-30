@@ -271,21 +271,24 @@ class CandidateCanaryValidationTests(unittest.TestCase):
 
     def _artifact(self, path: Path, _schema: str):
         name = path.name
-        if path.parent.name == "status":
-            return {
-                "status": "success",
-                "usable_for_resolution": not name.startswith("critique-"),
-                "run_id": "run-1",
-            }
         if path.parent.name == "findings":
             return {
+                "reviewer": path.stem,
                 "model": f"model-for-{path.stem}",
                 "adapter_status": "success",
-                "usable_for_resolution": True,
+                "findings": [],
+                "raw_finding_count": 0,
+                "dropped_finding_count": 0,
+                "effective_config_sha256": "a" * 64,
                 "run_id": "run-1",
             }
         if path.parent.name == "critiques":
-            return {"adapter_status": "success", "run_id": "run-1"}
+            return {
+                "critic": path.stem,
+                "adapter_status": "success",
+                "run_id": "run-1",
+                "effective_config_sha256": "a" * 64,
+            }
         if name == "consensus.json":
             return {
                 "panel_status": "full",
@@ -301,7 +304,11 @@ class CandidateCanaryValidationTests(unittest.TestCase):
 
     def _validate(self):
         with (
-            mock.patch.object(self.validator, "load_json_file", return_value={"run_id": "run-1"}),
+            mock.patch.object(
+                self.validator,
+                "load_json_file",
+                return_value={"run_id": "run-1", "effective_config_sha256": "a" * 64},
+            ),
             mock.patch.object(self.validator, "_load", side_effect=self._artifact),
         ):
             return self.validator.validate_run(
@@ -342,15 +349,20 @@ class CandidateCanaryValidationTests(unittest.TestCase):
     def test_failed_or_ineligible_seat_fails_closed(self) -> None:
         def failed(path: Path, schema: str):
             value = self._artifact(path, schema)
-            if path.name == "cursor.json" and path.parent.name == "status":
-                value = {"status": "success", "usable_for_resolution": False}
+            if path.name == "cursor.json" and path.parent.name == "findings":
+                value.update(raw_finding_count=1, dropped_finding_count=1)
             return value
 
         with (
-            mock.patch.object(self.validator, "load_json_file", return_value={"run_id": "run-1"}),
+            mock.patch.object(
+                self.validator,
+                "load_json_file",
+                return_value={"run_id": "run-1", "effective_config_sha256": "a" * 64},
+            ),
             mock.patch.object(self.validator, "_load", side_effect=failed),
             self.assertRaisesRegex(
-                self.validator.CanaryValidationError, "cursor review is not resolution-eligible"
+                self.validator.CanaryValidationError,
+                "cursor finding batch is not resolution-eligible",
             ),
         ):
             self.validator.validate_run(
@@ -476,13 +488,16 @@ class CandidateIdentityTests(unittest.TestCase):
                 self.identity.cli(
                     [*self._cli_args(), "--verify-images", "--candidate-out", str(out)]
                 )
-            self.assertEqual(json.loads(out.read_text(encoding="utf-8")), {
-                "schema_version": "candidate_canary_identity.v1",
-                "runtime_source": self.source,
-                "base_image": self.base,
-                "reviewer_image": self.reviewer,
-                "campaigns": ["panel", "lifecycle"],
-            })
+            self.assertEqual(
+                json.loads(out.read_text(encoding="utf-8")),
+                {
+                    "schema_version": "candidate_canary_identity.v1",
+                    "runtime_source": self.source,
+                    "base_image": self.base,
+                    "reviewer_image": self.reviewer,
+                    "campaigns": ["panel", "lifecycle"],
+                },
+            )
 
     def test_campaign_selection_rejects_unknown_empty_and_repeated_campaigns(self) -> None:
         self.assertEqual(self.identity.campaign_selection("hostile"), ["hostile"])
@@ -712,8 +727,13 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 (self.github.ROOT / caller).read_bytes(),
             )
             self.assertIn(
-                ("git", "add", self.github.GITHUB_CALLER, self.github.GITHUB_WORKFLOW,
-                 "src/access.py"),
+                (
+                    "git",
+                    "add",
+                    self.github.GITHUB_CALLER,
+                    self.github.GITHUB_WORKFLOW,
+                    "src/access.py",
+                ),
                 commands,
             )
             # The runner has no git credentials; only gh's helper can authenticate the push.
@@ -810,10 +830,14 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             {key: value for key, value in config.items() if key != "include"},
             {key: value for key, value in example.items() if key != "include"},
         )
-        self.assertEqual(self.gitlab.find_trust_issues(
-            config, expected_template_project=self.gitlab.TEMPLATE_PROJECT_PATH,
-            expected_template_sha="d" * 40,
-        ), [])
+        self.assertEqual(
+            self.gitlab.find_trust_issues(
+                config,
+                expected_template_project=self.gitlab.TEMPLATE_PROJECT_PATH,
+                expected_template_sha="d" * 40,
+            ),
+            [],
+        )
 
     def test_gitlab_cleanup_attempts_every_resource_and_aggregates_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -869,9 +893,14 @@ class GitLabCanaryTransportTests(unittest.TestCase):
 
     def test_polling_retries_transient_timeout_then_reads_the_response(self) -> None:
         with (
-            mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                TimeoutError("read timed out"), io.BytesIO(b'{"status":"running"}'),
-            ]) as request,
+            mock.patch.object(
+                self.gitlab.urllib.request,
+                "urlopen",
+                side_effect=[
+                    TimeoutError("read timed out"),
+                    io.BytesIO(b'{"status":"running"}'),
+                ],
+            ) as request,
             mock.patch.object(self.gitlab.time, "sleep") as sleep,
         ):
             self.assertEqual(self.gitlab._request("GET", "projects/1/pipelines/2"),
@@ -883,8 +912,11 @@ class GitLabCanaryTransportTests(unittest.TestCase):
         for method, count in (("GET", 3), ("POST", 1), ("PUT", 1), ("DELETE", 1)):
             with (
                 self.subTest(method=method),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen",
-                                  side_effect=urllib.error.URLError("connection reset")) as request,
+                mock.patch.object(
+                    self.gitlab.urllib.request,
+                    "urlopen",
+                    side_effect=urllib.error.URLError("connection reset"),
+                ) as request,
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError,
                                        f"after {count} attempt") as failure,
@@ -929,9 +961,14 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                 self.assertNotIn("fixture-only-token", str(failure.exception))
             with (
                 self.subTest(recovery=status),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                    error, io.BytesIO(b'{"status":"running"}'),
-                ]) as request,
+                mock.patch.object(
+                    self.gitlab.urllib.request,
+                    "urlopen",
+                    side_effect=[
+                        error,
+                        io.BytesIO(b'{"status":"running"}'),
+                    ],
+                ) as request,
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
             ):
                 self.assertEqual(self.gitlab._request("GET", "projects/1"), {"status": "running"})
@@ -949,6 +986,7 @@ class GitLabCanaryTransportTests(unittest.TestCase):
         )
         for error in errors:
             for phase in ("open", "read"):
+
                 def fail(*args, error=error, phase=phase, **kwargs):
                     if phase == "open":
                         raise error
@@ -968,16 +1006,23 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                     ):
                         self.gitlab._request(method, "projects/1?private-query")
                     self.assertEqual(request.call_count, attempts)
-                    self.assertEqual(sleep.call_args_list,
-                                     [mock.call(1), mock.call(2)] if method == "GET" else [])
+                    self.assertEqual(
+                        sleep.call_args_list,
+                        [mock.call(1), mock.call(2)] if method == "GET" else [],
+                    )
                     self.assertIn(f"after {attempts} attempt", str(failure.exception))
                     self.assertNotIn("private-query", str(failure.exception))
                     self.assertNotIn("fixture-only-token", str(failure.exception))
                 first = error if phase == "open" else fail()
                 with (
-                    mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                        first, io.BytesIO(b"trace"),
-                    ]) as request,
+                    mock.patch.object(
+                        self.gitlab.urllib.request,
+                        "urlopen",
+                        side_effect=[
+                            first,
+                            io.BytesIO(b"trace"),
+                        ],
+                    ) as request,
                     mock.patch.object(self.gitlab.time, "sleep") as sleep,
                 ):
                     self.assertEqual(self.gitlab._request("GET", "projects/1", raw=True), b"trace")
@@ -998,9 +1043,14 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             with (
                 self.subTest(header=header),
                 mock.patch.object(self.gitlab.time, "time", return_value=now),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                    error, io.BytesIO(b"{}"),
-                ]),
+                mock.patch.object(
+                    self.gitlab.urllib.request,
+                    "urlopen",
+                    side_effect=[
+                        error,
+                        io.BytesIO(b"{}"),
+                    ],
+                ),
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
             ):
                 self.assertEqual(self.gitlab._request("GET", "projects/1"), {})
@@ -1024,9 +1074,14 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             )
             with (
                 self.subTest(status=status),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                    first, io.BytesIO(b"{}"),
-                ]) as request,
+                mock.patch.object(
+                    self.gitlab.urllib.request,
+                    "urlopen",
+                    side_effect=[
+                        first,
+                        io.BytesIO(b"{}"),
+                    ],
+                ) as request,
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
             ):
                 self.assertEqual(self.gitlab._request("GET", "projects/1"), {})
@@ -1072,8 +1127,13 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                 sleep.assert_called_once_with(1)
 
     def test_idempotent_opt_in_refuses_other_mutations_and_missing_false(self) -> None:
-        for method, missing in (("GET", True), ("POST", True), ("PUT", True),
-                                ("PATCH", True), ("DELETE", False)):
+        for method, missing in (
+            ("GET", True),
+            ("POST", True),
+            ("PUT", True),
+            ("PATCH", True),
+            ("DELETE", False),
+        ):
             with (
                 self.subTest(method=method, missing=missing),
                 mock.patch.object(self.gitlab.urllib.request, "urlopen") as request,
@@ -1114,17 +1174,22 @@ class GitLabCanaryPollingTests(unittest.TestCase):
             responses = (
                 [b'{"protected":true}'] if protection else [
                     b'[{"id":11}]',
-                    b'{"id":11,"status":"success","web_url":"pipeline"}', b'[]',
+                    b'{"id":11,"status":"success","web_url":"pipeline"}',
+                    b"[]",
                 ]
             )
             with (
                 self.subTest(protection=protection),
                 tempfile.TemporaryDirectory() as tmp,
                 mock.patch.dict(os.environ, {"GITLAB_CANARY_TOKEN": "fixture-only-token"}),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=[
-                    *[ssl.SSLError("fixture-only-token") for _ in range(3)],
-                    *[io.BytesIO(body) for body in responses],
-                ]),
+                mock.patch.object(
+                    self.gitlab.urllib.request,
+                    "urlopen",
+                    side_effect=[
+                        *[ssl.SSLError("fixture-only-token") for _ in range(3)],
+                        *[io.BytesIO(body) for body in responses],
+                    ],
+                ),
             ):
                 self._poll(protection, tmp)
 
@@ -1164,11 +1229,15 @@ class GitLabCanaryPollingTests(unittest.TestCase):
     def test_pipeline_poll_outage_retains_discovery_and_settled_failure_is_immediate(self) -> None:
         with (
             tempfile.TemporaryDirectory() as tmp,
-            mock.patch.object(self.gitlab, "_request", side_effect=[
-                [{"id": 11}],
-                self.gitlab.GitLabCanaryError("outage", transient=True),
-                {"id": 11, "status": "failed"},
-            ]) as request,
+            mock.patch.object(
+                self.gitlab,
+                "_request",
+                side_effect=[
+                    [{"id": 11}],
+                    self.gitlab.GitLabCanaryError("outage", transient=True),
+                    {"id": 11, "status": "failed"},
+                ],
+            ) as request,
             self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "pipeline 11 ended failed"),
         ):
             self._poll(False, tmp)
@@ -1177,8 +1246,10 @@ class GitLabCanaryPollingTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [15])
 
     def test_artifact_collection_does_not_restart_pipeline_polling(self) -> None:
-        for final in (self.gitlab.GitLabCanaryError("job-list outage", transient=True),
-                      [{"id": 33, "status": "success", "artifacts_file": {"filename": "out.zip"}}]):
+        for final in (
+            self.gitlab.GitLabCanaryError("job-list outage", transient=True),
+            [{"id": 33, "status": "success", "artifacts_file": {"filename": "out.zip"}}],
+        ):
             responses = [
                 [{"id": 11}],
                 {"id": 11, "status": "success", "web_url": "pipeline"}, final,

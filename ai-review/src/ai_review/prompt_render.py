@@ -6,9 +6,9 @@ from typing import Any
 from .anchors import anchor_location, finding_sort_key
 from .canonical import canonical_json_text
 from .config import ReviewConfig
-from .consensus import validate_consensus_inputs
+from .outcomes import load_outcomes
 from .reviewers import trusted_runtime_root
-from .schema import load_json_file, validate_instance
+from .schema import batch_quality_fields, load_json_file, validate_instance
 
 
 class PromptRenderError(ValueError):
@@ -130,11 +130,8 @@ def build_pooled_findings(
     config: ReviewConfig,
     critic: str,
 ) -> dict[str, Any]:
-    validate_consensus_inputs(
-        config=config, manifest=manifest, finding_batches=finding_batches, critique_batches=[]
-    )
     successful_batches = [
-        batch for batch in finding_batches if batch.get("adapter_status") == "success"
+        batch for batch in finding_batches if batch_quality_fields(batch)["usable_for_resolution"]
     ]
     aliases = _reviewer_aliases([str(batch["reviewer"]) for batch in successful_batches])
     ordered = sorted(
@@ -173,13 +170,6 @@ def build_pooled_findings(
     return pool
 
 
-def load_successful_finding_batches(findings_dir: str | Path) -> list[dict[str, Any]]:
-    batches: list[dict[str, Any]] = []
-    for path in sorted(Path(findings_dir).glob("*.json")):
-        batches.append(load_json_file(path))
-    return batches
-
-
 def render_critique_prompt(
     input_dir: str | Path,
     config: ReviewConfig,
@@ -190,7 +180,7 @@ def render_critique_prompt(
     manifest = load_json_file(input_dir / "manifest.json")
     pooled_findings = build_pooled_findings(
         manifest,
-        load_successful_finding_batches(findings_dir),
+        load_outcomes(findings_dir, stage="review", config=config, manifest=manifest),
         config,
         critic,
     )

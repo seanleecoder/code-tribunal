@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from ai_review.config import PanelConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus
-from ai_review.schema import adapter_status_artifact, empty_critique_batch, empty_finding_batch
+from ai_review.schema import empty_critique_batch, empty_finding_batch
 
 
 def _config() -> ReviewConfig:
@@ -79,6 +79,9 @@ def _batch(reviewer: str, finding: dict) -> dict:
     findings = [finding]
     return {
         "schema_version": "finding_batch.v2",
+        "duration_ms": 0,
+        "error_class": None,
+        "error_message_redacted": None,
         "run_id": "run",
         "reviewer": reviewer,
         "adapter_status": "success",
@@ -86,9 +89,7 @@ def _batch(reviewer: str, finding: dict) -> dict:
         "started_at": "2026-06-29T00:00:00Z",
         "completed_at": "2026-06-29T00:00:01Z",
         "raw_finding_count": len(findings),
-        "accepted_finding_count": len(findings),
         "dropped_finding_count": 0,
-        "usable_for_resolution": True,
         "effective_config_sha256": "0" * 64,
         "findings": findings,
     }
@@ -139,22 +140,8 @@ def default_transitive_split_consensus() -> dict:
     )
 
 
-def _status(reviewer: str, stage: str, status: str, duration_ms: int, **fields: object) -> dict:
-    return adapter_status_artifact(
-        reviewer,
-        stage,
-        status,
-        "2026-06-29T00:00:00Z",
-        "2026-06-29T00:30:00Z",
-        duration_ms,
-        f"{stage}/{reviewer}.json",
-        run_id="run",
-        **fields,  # type: ignore[arg-type]
-    )
-
-
-def degraded_run_health_inputs() -> tuple[list[dict], list[dict], dict]:
-    """A degraded panel: one review timeout, one critique without a status."""
+def degraded_run_health_inputs() -> tuple[list[dict], list[dict]]:
+    """A degraded panel: one review timeout, one missing critique outcome."""
     claude = _batch(
         "claude",
         _finding(
@@ -199,21 +186,14 @@ def degraded_run_health_inputs() -> tuple[list[dict], list[dict], dict]:
         )
         for critic in ("claude", "codex")
     ]
-    statuses = {
-        ("review", "claude"): _status("claude", "review", "success", 724_000),
-        ("review", "codex"): _status("codex", "review", "success", 521_000),
-        ("review", "opencode"): _status(
-            "opencode",
-            "review",
-            "timeout",
-            1_795_012,
-            error_class="TimeoutExpired",
-            error_message_redacted="reviewer exceeded 1795s",
-        ),
-        ("critique", "claude"): _status("claude", "critique", "success", 242_000),
-        ("critique", "codex"): _status("codex", "critique", "success", 370_000),
-    }
-    return [claude, codex, opencode], critiques, statuses
+    for batch, duration in zip(
+        (claude, codex, opencode), (724_000, 521_000, 1_795_012), strict=True
+    ):
+        batch["duration_ms"] = duration
+    opencode.update(error_class="TimeoutExpired", error_message_redacted="reviewer exceeded 1795s")
+    for batch, duration in zip(critiques, (242_000, 370_000), strict=True):
+        batch["duration_ms"] = duration
+    return [claude, codex, opencode], critiques
 
 
 def degraded_run_health_config() -> ReviewConfig:
@@ -230,16 +210,15 @@ def degraded_run_health_config() -> ReviewConfig:
 
 
 def degraded_run_health_consensus(
-    inputs: tuple[list[dict], list[dict], dict] | None = None,
+    inputs: tuple[list[dict], list[dict]] | None = None,
 ) -> dict:
     """The degraded golden; ``inputs`` lets a test reorder the same artifacts."""
-    batches, critiques, statuses = inputs or degraded_run_health_inputs()
+    batches, critiques = inputs or degraded_run_health_inputs()
     return build_consensus(
         _manifest(),
         batches,
         degraded_run_health_config(),
         critique_batches=critiques,
-        statuses=statuses,
     )
 
 

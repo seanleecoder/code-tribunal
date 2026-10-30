@@ -13,7 +13,6 @@ from .config import (
     ReviewConfig,
     config_from_manifest,
     enabled_reviewers,
-    require_effective_config_binding,
 )
 from .consensus_errors import ConsensusIntegrityError as ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
@@ -24,10 +23,12 @@ from .grouping import (
     group_findings,
     issue_id_for_group,
 )
-from .run_health import build_run_health_jobs, load_status_files, run_health_grade, run_health_text
+from .outcomes import load_outcomes
+from .redact import bounded_diagnostic, escape_legacy_workflow_commands
+from .run_health import build_run_health_jobs, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
-    batch_usable_for_panel,
+    batch_quality_fields,
     load_json_file,
     validate_instance,
     write_canonical_json,
@@ -80,19 +81,14 @@ def build_consensus(
     finding_batches: list[dict[str, Any]],
     config: ReviewConfig,
     critique_batches: list[dict[str, Any]] | None = None,
-    statuses: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> Consensus:
-    """Build consensus from finding/critique batches.
-
-    Direct callers that supply untrusted artifacts should run
-    ``validate_consensus_inputs`` first; critique application may raise
-    ``ConsensusIntegrityError`` for unknown targets. ``statuses`` (from
-    ``load_status_files``) feeds only ``run_health``.
-    """
+    """Reduce admitted current-run outcomes; diagnostic metadata feeds only health."""
     enabled = sorted(enabled_reviewers(config))
     # successful_reviewers / resolution_eligible_reviewers share one predicate.
     successful = sorted(
-        str(batch["reviewer"]) for batch in finding_batches if batch_usable_for_panel(batch)
+        str(batch["reviewer"])
+        for batch in finding_batches
+        if batch_quality_fields(batch)["usable_for_resolution"]
     )
     resolution_eligible = list(successful)
     failed = sorted(set(enabled) - set(successful))
@@ -100,7 +96,7 @@ def build_consensus(
 
     all_findings = []
     for batch in finding_batches:
-        if batch_usable_for_panel(batch):
+        if batch_quality_fields(batch)["usable_for_resolution"]:
             for finding in batch["findings"]:
                 copied = dict(finding)
                 copied["reviewer"] = batch["reviewer"]
@@ -165,7 +161,7 @@ def build_consensus(
         valid_duplicate_links = set()
     _apply_critiques(groups, critique_batches, config, valid_duplicate_links)
     groups = sorted(groups, key=_group_sort_key)
-    jobs = build_run_health_jobs(config, finding_batches, critique_batches, statuses or {})
+    jobs = build_run_health_jobs(config, finding_batches, critique_batches)
     return {
         "schema_version": "consensus.v3",
         "run_id": manifest["run_id"],
@@ -189,84 +185,11 @@ def build_consensus(
     }
 
 
-def validate_consensus_inputs(
-    *,
-    config: ReviewConfig,
-    manifest: dict[str, Any],
-    finding_batches: list[dict[str, Any]],
-    critique_batches: list[tuple[str, dict[str, Any]]],
-) -> None:
-    """Validate finding/critique batches against prepare run and effective config."""
-    try:
-        config_digest = require_effective_config_binding(config, manifest)
-        run_id = str(manifest.get("run_id") or "").strip()
-        if not run_id:
-            raise ConsensusIntegrityError("manifest missing run_id")
-
-        enabled = set(enabled_reviewers(config))
-        seen_reviewers: set[str] = set()
-        seen_critics: set[str] = set()
-
-        for batch in finding_batches:
-            validate_instance(batch, "finding_batch.schema.json")
-            reviewer = str(batch.get("reviewer") or "")
-            if not reviewer:
-                raise ConsensusIntegrityError("finding batch missing reviewer")
-            if reviewer in seen_reviewers:
-                raise ConsensusIntegrityError(f"duplicate finding batch for reviewer={reviewer}")
-            seen_reviewers.add(reviewer)
-            if batch.get("run_id") != run_id:
-                raise ConsensusIntegrityError(
-                    f"finding batch run_id mismatch for reviewer={reviewer}"
-                )
-            status = batch["adapter_status"]
-            # Digest binding is required for success evidence; non-success batches
-            # degrade the panel instead of hard-failing the whole run.
-            if status == "success" and batch.get("effective_config_sha256") != config_digest:
-                raise ConsensusIntegrityError(
-                    f"finding batch effective_config_sha256 mismatch for reviewer={reviewer}"
-                )
-            if reviewer not in config.reviewers:
-                raise ConsensusIntegrityError(f"finding batch for unknown reviewer={reviewer}")
-            # Matrix jobs may still emit skipped artifacts for disabled seats.
-            if reviewer not in enabled and status != "skipped":
-                raise ConsensusIntegrityError(f"finding batch for disabled reviewer={reviewer}")
-
-        for filename_critic, batch in critique_batches:
-            validate_instance(batch, "critique_batch.schema.json")
-            critic = str(batch.get("critic") or "").strip()
-            if not critic:
-                raise ConsensusIntegrityError("critique batch missing critic")
-            if batch.get("critic") != filename_critic:
-                raise ConsensusIntegrityError(
-                    f"critique batch critic mismatches filename for critic={filename_critic}"
-                )
-            if critic in seen_critics:
-                raise ConsensusIntegrityError(f"duplicate critique batch for critic={critic}")
-            seen_critics.add(critic)
-            if batch.get("run_id") != run_id:
-                raise ConsensusIntegrityError(f"critique batch run_id mismatch for critic={critic}")
-            status = batch["adapter_status"]
-            if critic not in config.reviewers:
-                raise ConsensusIntegrityError(f"critique batch for unknown critic={critic}")
-            if critic not in enabled and status != "skipped":
-                raise ConsensusIntegrityError(f"critique batch for disabled critic={critic}")
-            if status == "success" and batch.get("effective_config_sha256") != config_digest:
-                raise ConsensusIntegrityError(
-                    f"critique batch effective_config_sha256 mismatch for critic={critic}"
-                )
-    except EffectiveConfigMismatch as exc:
-        raise ConsensusIntegrityError(str(exc)) from exc
-    except SchemaValidationError as exc:
-        raise ConsensusIntegrityError(f"malformed consensus input artifact: {exc}") from exc
-
-
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--inputs", required=True)
     parser.add_argument("--findings-dir", default="out/findings")
     parser.add_argument("--critiques-dir", default="out/critiques")
-    parser.add_argument("--status-dir", default="out/status")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     inputs = Path(args.inputs)
@@ -279,41 +202,33 @@ def cli(argv: list[str] | None = None) -> int:
             raise ConsensusIntegrityError("manifest missing run_id")
 
         config = config_from_manifest(manifest)
-        batches = []
-        for path in sorted(Path(args.findings_dir).glob("*.json")):
-            batches.append(load_json_file(path))
-        critique_inputs: list[tuple[str, dict[str, Any]]] = []
-        for path in sorted(Path(args.critiques_dir).glob("*.json")):
-            raw = load_json_file(path)
-            if not isinstance(raw, dict):
-                raise ConsensusIntegrityError(
-                    f"critique batch is not an object for critic={path.stem}"
-                )
-            critique_inputs.append((path.stem, raw))
-
-        validate_consensus_inputs(
-            config=config,
-            manifest=manifest,
-            finding_batches=batches,
-            critique_batches=critique_inputs,
+        batches = load_outcomes(args.findings_dir, stage="review", config=config, manifest=manifest)
+        critique_batches = load_outcomes(
+            args.critiques_dir, stage="critique", config=config, manifest=manifest
         )
-        critique_batches = [batch for _filename_critic, batch in critique_inputs]
-        statuses = load_status_files(Path(args.status_dir), config, run_id)
         consensus = build_consensus(
             manifest,
             batches,
             config,
             critique_batches=critique_batches,
-            statuses=statuses,
         )
         validate_instance(consensus, "consensus.schema.json")
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"ai-review consensus: cannot read artifact: {exc}", file=sys.stderr)
+        detail = escape_legacy_workflow_commands(
+            bounded_diagnostic(str(exc), 300) or "invalid input"
+        )
+        print(f"ai-review consensus: cannot read artifact: {detail}", file=sys.stderr)
         return 3
     except (
-        EffectiveConfigMismatch, ConsensusIntegrityError, SchemaValidationError, CanonicalError
+        EffectiveConfigMismatch,
+        ConsensusIntegrityError,
+        SchemaValidationError,
+        CanonicalError,
     ) as exc:
-        print(f"ai-review consensus: {exc}", file=sys.stderr)
+        detail = escape_legacy_workflow_commands(
+            bounded_diagnostic(str(exc), 300) or "invalid input"
+        )
+        print(f"ai-review consensus: {detail}", file=sys.stderr)
         return 3
 
     # run_health_text neutralizes CI workflow-command syntax in untrusted text.

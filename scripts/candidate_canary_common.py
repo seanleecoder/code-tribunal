@@ -10,11 +10,10 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ai_review.consensus import batch_usable_for_panel
 from ai_review.memory import decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
-from ai_review.schema import validate_instance, write_canonical_json
+from ai_review.schema import batch_quality_fields, validate_outcome, write_canonical_json
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
@@ -215,53 +214,38 @@ def run_lifecycle_steps(
     return 0 if passed else 1
 
 
-def lifecycle_reviewer_results(
-    findings: dict[str, Any], statuses: dict[str, Any]
-) -> dict[str, dict[str, Any]]:
-    """Check that every seat retained exactly one mock finding in both artifacts.
-
-    ``findings`` and ``statuses`` map reviewer ids to the parsed review-stage
-    finding batch and adapter status. Raises ``LifecycleFailure`` naming the first
-    violation.
-    """
+def lifecycle_reviewer_results(findings: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Check that every seat retained exactly one mock finding in its outcome."""
     reviewers = reviewer_ids()
-    for label, artifacts in (("findings", findings), ("status", statuses)):
-        missing = sorted(set(reviewers) - set(artifacts))
-        unexpected = sorted(set(artifacts) - set(reviewers))
-        if missing or unexpected:
-            raise LifecycleFailure(
-                f"expected one {label} artifact per reviewer; "
-                f"missing={missing}, unexpected={len(unexpected)}"
-            )
+    missing = sorted(set(reviewers) - set(findings))
+    unexpected = sorted(set(findings) - set(reviewers))
+    if missing or unexpected:
+        raise LifecycleFailure(
+            f"expected one findings artifact per reviewer; "
+            f"missing={missing}, unexpected={len(unexpected)}"
+        )
     results = {}
     for reviewer in reviewers:
-        batch, status = findings[reviewer], statuses[reviewer]
+        batch = findings[reviewer]
         try:
-            validate_instance(batch, "finding_batch.schema.json")
-            validate_instance(status, "adapter_status.schema.json")
+            validate_outcome(batch, "review")
         except ValueError:
-            raise LifecycleFailure(f"invalid {reviewer} review artifacts") from None
-        if batch["reviewer"] != reviewer or status["reviewer"] != reviewer:
-            raise LifecycleFailure(
-                f"{reviewer} review artifacts have a mismatched reviewer identity"
-            )
+            raise LifecycleFailure(f"invalid {reviewer} review outcome") from None
+        if batch["reviewer"] != reviewer:
+            raise LifecycleFailure(f"{reviewer} review outcome has a mismatched reviewer identity")
+        quality = batch_quality_fields(batch)
+        if not quality["usable_for_resolution"]:
+            raise LifecycleFailure(f"{reviewer} review did not succeed")
         if not (
-            status["stage"] == "review"
-            and status["status"] == "success"
-            and batch_usable_for_panel(batch)
-        ):
-            raise LifecycleFailure(f"{reviewer} review did not succeed in both artifacts")
-        if not (
-            batch["raw_finding_count"] == batch["accepted_finding_count"] == 1
-            and len(batch["findings"]) == 1
-            and batch["dropped_finding_count"] == 0
+            quality["raw_finding_count"] == quality["accepted_finding_count"] == 1
+            and quality["dropped_finding_count"] == 0
         ):
             raise LifecycleFailure(f"{reviewer} did not retain exactly one mock finding")
         results[reviewer] = {
-            "status": status["status"],
+            "status": batch["adapter_status"],
             "adapter_status": batch["adapter_status"],
-            "raw_finding_count": batch["raw_finding_count"],
-            "accepted_finding_count": batch["accepted_finding_count"],
+            "raw_finding_count": quality["raw_finding_count"],
+            "accepted_finding_count": quality["accepted_finding_count"],
         }
     return results
 

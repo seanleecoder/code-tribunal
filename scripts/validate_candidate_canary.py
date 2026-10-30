@@ -7,9 +7,14 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from ai_review.consensus import batch_usable_for_panel
 from ai_review.reviewers import REVIEWERS
-from ai_review.schema import load_json_file, validate_instance, write_canonical_json
+from ai_review.schema import (
+    batch_quality_fields,
+    load_json_file,
+    validate_instance,
+    validate_outcome,
+    write_canonical_json,
+)
 from candidate_canary_common import read_state
 
 CLEANUP_STATUSES = ("success", "failure", "cancelled", "skipped")
@@ -21,7 +26,10 @@ class CanaryValidationError(RuntimeError):
 
 def _load(path: Path, schema: str) -> dict[str, Any]:
     value = load_json_file(path)
-    validate_instance(value, schema)
+    if schema in {"finding_batch.schema.json", "critique_batch.schema.json"}:
+        validate_outcome(value, "review" if schema.startswith("finding") else "critique")
+    else:
+        validate_instance(value, schema)
     return value
 
 
@@ -88,22 +96,13 @@ def validate_run(
     manifest = load_json_file(inputs / "manifest.json")
     seats: dict[str, dict[str, Any]] = {}
     for reviewer in REVIEWERS:
-        review_status = _load(output / "status" / f"{reviewer}.json", "adapter_status.schema.json")
-        critique_status = _load(
-            output / "status" / f"critique-{reviewer}.json",
-            "adapter_status.schema.json",
-        )
         finding_batch = _load(output / "findings" / f"{reviewer}.json", "finding_batch.schema.json")
         critique_batch = _load(
             output / "critiques" / f"{reviewer}.json", "critique_batch.schema.json"
         )
-        if review_status.get("status") != "success":
-            raise CanaryValidationError(f"{platform} {reviewer} review did not succeed")
-        if review_status.get("usable_for_resolution") is not True:
-            raise CanaryValidationError(f"{platform} {reviewer} review is not resolution-eligible")
-        if critique_status.get("status") != "success":
-            raise CanaryValidationError(f"{platform} {reviewer} critique did not succeed")
-        if not batch_usable_for_panel(finding_batch):
+        if finding_batch["reviewer"] != reviewer or critique_batch["critic"] != reviewer:
+            raise CanaryValidationError(f"{platform} {reviewer} outcome filename identity mismatch")
+        if not batch_quality_fields(finding_batch)["usable_for_resolution"]:
             raise CanaryValidationError(
                 f"{platform} {reviewer} finding batch is not resolution-eligible"
             )
@@ -111,8 +110,11 @@ def validate_run(
             raise CanaryValidationError(
                 f"{platform} {reviewer} critique batch did not record success"
             )
-        for artifact in (review_status, critique_status, finding_batch, critique_batch):
-            if artifact.get("run_id") != manifest["run_id"]:
+        for artifact in (finding_batch, critique_batch):
+            if (
+                artifact.get("run_id") != manifest["run_id"]
+                or artifact.get("effective_config_sha256") != manifest["effective_config_sha256"]
+            ):
                 raise CanaryValidationError(
                     f"{platform} {reviewer} artifact run identity does not match"
                 )

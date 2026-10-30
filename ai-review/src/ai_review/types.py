@@ -122,7 +122,6 @@ type JobOutcome = Literal[
     "schema_error",
     "config_error",
     "internal_error",
-    "batch_missing",
     "missing",
 ]
 

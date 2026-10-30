@@ -54,13 +54,14 @@ from the package at all.
 | `consensus.py` | `python -m ai_review.consensus`; the deterministic reducer API | no |
 | `grouping.py` | Path/category buckets and complete-link grouping by anchor/fingerprint identity | **never** |
 | `critique.py` | Critique application and group re-decision | **never** |
-| `run_health.py` | Observational run health: status-file loading, job rows, grade, and the job-log rendering; feeds no decision | **never** |
+| `run_health.py` | Observational run health: job rows, grade, and the job-log rendering; feeds no decision | **never** |
 | `consensus_errors.py` | `ConsensusIntegrityError`, nothing else | **never** |
 | `adapter_runner.py` | `python -m ai_review.adapter_runner`; `run_adapter` | no |
 | `adapter_output.py` | Reviewer output parsing and root normalization | no |
 | `adapter_process.py` | Adapter subprocess lifecycle and environment | no |
 | `reviewer_setup.py` | Registry-declared CLI arguments, isolated state, snapshot workspaces, schema transport, and Claude's build-time acceptance probe | no |
-| `adapter_artifacts.py` | Status and debug artifact writing | no |
+| `adapter_artifacts.py` | Redacted parse/timeout diagnostic writing | no |
+| `outcomes.py` | Shared stage outcome loading and run/config/filename admission | no |
 | `opencode_client.py` | The OpenCode seat, launched by the runner as a module: generated config, server environment and the loopback server client | no |
 
 These rules are worth stating because breaking them is silent:
@@ -112,6 +113,14 @@ These rules are worth stating because breaking them is silent:
   bounds used by preflight. Change binding lives in `memory.load_state_from_notes`:
   GitLab project IDs remain strict, while GitHub's authenticated PR comment binds
   the repository and its mutable owner/name slug is refreshed on load.
+- S06 makes each finding/critique batch the complete execution outcome. `schema`
+  constructs and validates outcomes, with count arithmetic in `validate_outcome`;
+  `outcomes` admits transported files for both critique pooling and consensus.
+  One pure quality helper derives eligibility and accepted/omitted counts from
+  the payload. Health reads no files and remains observational. Schemas, runner,
+  consumers, canonical invocations and canaries change together because staging
+  them would require an old/new reader or dual writer. Unreleased v2 batches
+  evolve in place; generate fresh artifacts with one image pair.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

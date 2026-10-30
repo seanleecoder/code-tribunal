@@ -736,7 +736,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("out/pooled_findings/", text)
         self.assertIn("--critiques-dir out/critiques", text)
         # SPEC-66: the review and critique jobs' needs deliver out/status/.
-        self.assertIn("--status-dir out/status", text)
+        self.assertNotIn("--status-dir", text)
 
 
 class GitHubActionsTemplateTests(unittest.TestCase):
@@ -770,8 +770,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         self.assertIn("/opt/ai-review/adapters/run_reviewer.sh", text)
         self.assertIn("python -m ai_review.consensus", text)
         # SPEC-66: the review and critique artifacts land status/ there.
-        self.assertIn("--status-dir reviewer-artifacts/status", text)
-        self.assertIn("out/status/critique-${{ matrix.reviewer }}.json", text)
+        self.assertNotIn("--status-dir", text)
+        self.assertIn("out/status/critique-${{ matrix.reviewer }}-*.txt", text)
         self.assertIn("python -m ai_review.post", text)
         # Inverted rather than deleted: `post` is the terminal product job and
         # Code Tribunal makes no merge decision, so a reintroduced gate job must
@@ -885,8 +885,19 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             for command in (
                 ["git", "init", "-q"],
                 ["git", "add", "."],
-                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
-                 "-c", "maintenance.auto=false", "commit", "-q", "-m", "initial"],
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "-c",
+                    "maintenance.auto=false",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "initial",
+                ],
             ):
                 subprocess.run(command, cwd=checkout, check=True, capture_output=True)
             head = subprocess.run(
@@ -1007,7 +1018,7 @@ class GitHubActionsTemplateTests(unittest.TestCase):
 
         self.assertEqual(len(upload_paths), 3)
         self.assertEqual(posixpath.commonpath(upload_paths), "out")
-        self.assertIn("out/status/critique-${{ matrix.reviewer }}.json", upload_paths)
+        self.assertIn("out/status/critique-${{ matrix.reviewer }}-*.txt", upload_paths)
         extracted_paths = {path.removeprefix("out/").split("/", 1)[0] for path in upload_paths}
         self.assertEqual(extracted_paths, {"critiques", "pooled_findings", "status"})
 

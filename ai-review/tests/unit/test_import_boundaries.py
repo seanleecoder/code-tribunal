@@ -14,6 +14,7 @@ from pathlib import Path
 # `commands` is deliberately absent: it takes a ReviewPlatform to resolve author
 # access, so it is an authorization layer rather than a pure module.
 PURE_MODULES = (
+    "outcomes",
     "notes",
     "state_plan",
     "summary_render",
