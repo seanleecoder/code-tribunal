@@ -72,6 +72,33 @@ class RedactionTests(unittest.TestCase):
             with self.subTest(redact=redact.__name__):
                 self.assertEqual(redact(diagnostic), "before\n[REDACTED]")
 
+    def test_only_standalone_quoted_pem_header_prose_is_preserved(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        for delimiter in ("`", "``"):
+            for ending in ("", "\n", "\r\n"):
+                prose = (
+                    f"key.pem commits a {delimiter}{header}{delimiter} header; rotate it.{ending}"
+                )
+                with self.subTest(delimiter=delimiter, ending=ending):
+                    self.assertEqual(redact_text(prose, preserve_pem_header_prose=True), prose)
+                    # The prose exception is limited to rendering, not diagnostics.
+                    self.assertNotIn(header, redact_text(prose))
+                    self.assertNotIn(header, _file_tail(prose))
+
+        for text in (
+            f"{header} header; rotate it.",
+            f"`{header}`` header; rotate it.",
+            f"``{header}` header; rotate it.",
+            f"`{header} key-material`",
+            f"`{header}`\nkey-material",
+            f"`{header}` header; example: {header} key-material",
+        ):
+            with self.subTest(text=text):
+                redacted = redact_text(text, preserve_pem_header_prose=True)
+                self.assertNotIn(header, redacted)
+                self.assertNotIn("key-material", redacted)
+                self.assertIn("[REDACTED]", redacted)
+
     def test_file_tail_masks_non_ascii_secret_values_before_clipping(self) -> None:
         for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):
             with self.subTest(value=value[:8]):

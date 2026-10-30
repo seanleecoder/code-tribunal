@@ -94,7 +94,8 @@ versioning.
   Unicode secret values and control-character whitespace remain masked across
   tail boundaries. Incomplete private-key blocks are redacted through end-of-file
   without repeated scans, keeping timeout diagnostics responsive. Rendered findings
-  preserve prose after a quoted PEM header while still masking complete keys.
+  preserve single-line prose after a standalone quoted PEM header while still
+  masking complete and incomplete key blocks, including malformed footers.
   The CLI restores normal child reaping when `SIGCHLD` was inherited as ignored;
   process-group cleanup retains the leader PID until signalling, preventing ID
   reuse races.

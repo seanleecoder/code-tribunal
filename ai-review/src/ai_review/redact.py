@@ -19,10 +19,11 @@ SECRET_PATTERNS = [
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
     # Matching through EOF prevents repeated BEGIN markers from each scanning
-    # to EOF for an END. Capture the closing marker so rendered prose can keep
-    # a quoted opening marker while diagnostics still mask incomplete blocks.
+    # to EOF for an END. Capture the markers so rendered prose can distinguish
+    # a standalone quoted header from an incomplete key block.
     re.compile(
-        r"-----BEGIN[^-]*PRIVATE KEY-----.*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
+        r"(?P<pem_header>-----BEGIN[^-]*PRIVATE KEY-----)"
+        r".*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
         re.DOTALL,
     ),
     # keyword=value / keyword: value. The value is \S+ so the entire secret token
@@ -39,7 +40,29 @@ _UTF8_WHITESPACE = (
 )
 
 
-def redact_text(text: str, *, preserve_incomplete_pem: bool = False) -> str:
+def _redact_pem_prose(match: re.Match[str]) -> str:
+    if match["pem_end"] is not None:
+        return "[REDACTED]"
+    # Only a header enclosed in matching inline-code delimiters may survive.
+    # Additional lines or markers could contain key material, so mask them even
+    # when the first header is quoted. The EOF match is inspected only once.
+    value = match[0].rstrip()
+    suffix = value[len(match["pem_header"]):]
+    prefix = match.string[:match.start()]
+    opening_ticks = len(prefix) - len(prefix.rstrip("`"))
+    closing_ticks = len(suffix) - len(suffix.lstrip("`"))
+    if (
+        opening_ticks
+        and opening_ticks == closing_ticks
+        and "\n" not in value
+        and "\r" not in value
+        and "-----BEGIN" not in suffix
+    ):
+        return match[0]
+    return "[REDACTED]"
+
+
+def redact_text(text: str, *, preserve_pem_header_prose: bool = False) -> str:
     """Mask secrets, allowing finding prose to quote a standalone PEM header."""
     redacted = text
     for pattern in SECRET_PATTERNS:
@@ -47,11 +70,8 @@ def redact_text(text: str, *, preserve_incomplete_pem: bool = False) -> str:
             redacted = pattern.sub(
                 lambda match: match.group(1) + match.group(2) + "[REDACTED]", redacted
             )
-        elif preserve_incomplete_pem and "pem_end" in pattern.groupindex:
-            redacted = pattern.sub(
-                lambda match: "[REDACTED]" if match["pem_end"] is not None else match[0],
-                redacted,
-            )
+        elif preserve_pem_header_prose and "pem_header" in pattern.groupindex:
+            redacted = pattern.sub(_redact_pem_prose, redacted)
         else:
             redacted = pattern.sub("[REDACTED]", redacted)
     return redacted

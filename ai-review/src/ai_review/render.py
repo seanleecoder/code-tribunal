@@ -35,8 +35,8 @@ def platform_comment_limit(posting_mode: str) -> int:
 
 def sanitize_model_text(text: str, *, max_length: int | None = None) -> str:
     # Findings may quote a PEM header in prose without including a key block.
-    # Keep that explanation; complete keys are still masked as in diagnostics.
-    sanitized = redact_text(text, preserve_incomplete_pem=True)
+    # Keep that explanation; complete and incomplete key blocks stay masked.
+    sanitized = redact_text(text, preserve_pem_header_prose=True)
     sanitized = sanitized.replace("<!--", "< !--").replace("-->", "-- >")
     sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n").strip()
     return sanitized if max_length is None else sanitized[:max_length]

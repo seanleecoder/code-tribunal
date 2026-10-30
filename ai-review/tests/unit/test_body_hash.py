@@ -66,6 +66,35 @@ class BodyHashTests(unittest.TestCase):
                 self.assertNotIn("synthetic-key-material", rendered)
                 self.assertNotIn(header, rendered)
 
+    def test_incomplete_pem_blocks_are_masked_in_all_model_text_sections(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        material = "MIIEpAIBAAKCAQEAU3ludGhldGljS2V5TWF0ZXJpYWw="
+        incomplete = f"{header}\n{material}"
+        cases = {
+            "missing footer": incomplete,
+            "four-dash footer": incomplete + "\n----END RSA PRIVATE KEY----",
+            "missing PRIVATE in footer": incomplete + "\n-----END RSA KEY-----",
+            "escaped footer": incomplete + "\n" + r"\-\-\-\-\-END RSA PRIVATE KEY\-\-\-\-\-",
+            "quoted block": f"`{incomplete}`",
+            "quoted header before material": f"`{header}`\n{material}",
+            "quoted header before another block": f"`{header}` header; rotate it.\n{incomplete}",
+        }
+        for posting_mode in ("github_reviews", "gitlab_discussions"):
+            for field in ("title", "body", "evidence", "dissent", "suggestion"):
+                for case, text in cases.items():
+                    with self.subTest(posting_mode=posting_mode, field=field, case=case):
+                        group = self._group()
+                        if field == "evidence":
+                            group["evidence_by_reviewer"] = {"claude": text}
+                        elif field == "dissent":
+                            group["critique_disputes"] = [{"critic": "codex", "rationale": text}]
+                        else:
+                            group[field] = text
+                        rendered, _ = render_body(group, "run", posting_mode=posting_mode)
+                        self.assertNotIn(material, rendered)
+                        self.assertNotIn(header, rendered)
+                        self.assertIn("[REDACTED]", rendered)
+
     def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()
         second_group = self._group()
