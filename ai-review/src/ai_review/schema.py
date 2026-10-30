@@ -18,7 +18,7 @@ from .anchors import (
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
-from .redact import redact_text
+from .redact import bounded_diagnostic, redact_text
 
 
 class SchemaValidationError(ValueError):
@@ -38,54 +38,50 @@ class AdapterModelError(RuntimeError):
     pass
 
 
-ADAPTER_STATUSES = {
-    "success",
-    "skipped",
-    "timeout",
-    "model_error",
-    "schema_error",
-    "config_error",
-    "internal_error",
-}
-
-
-def batch_quality_fields(
-    *,
-    adapter_status: str,
-    raw_finding_count: int,
-    accepted_finding_count: int,
-    dropped_finding_count: int,
-) -> dict[str, Any]:
-    """Return schema-backed batch quality accounting.
-
-    A valid empty success batch (raw=0, accepted=0, dropped=0) is usable for
-    resolution. A non-empty success batch with every finding dropped is not.
-    Non-success adapter statuses are never usable for resolution.
-
-    Count invariants, which the runner's accounting guarantees:
-    ``accepted_finding_count == len(findings)`` and
-    ``accepted_finding_count + dropped_finding_count <= raw_finding_count``.
-    Equality holds when no ``max_findings`` cap eviction occurred; under a cap,
-    raw exceeds accepted+dropped by the number of valid candidates omitted by the cap.
-    """
-    usable = adapter_status == "success" and (raw_finding_count == 0 or accepted_finding_count > 0)
+def batch_quality_fields(batch: dict[str, Any]) -> dict[str, Any]:
+    """Derive review quality and eligibility from an admitted outcome's payload."""
+    raw = batch["raw_finding_count"]
+    accepted = len(batch["findings"])
+    dropped = batch["dropped_finding_count"]
     return {
-        "raw_finding_count": raw_finding_count,
-        "accepted_finding_count": accepted_finding_count,
-        "dropped_finding_count": dropped_finding_count,
-        "usable_for_resolution": usable,
+        "raw_finding_count": raw,
+        "accepted_finding_count": accepted,
+        "dropped_finding_count": dropped,
+        "cap_omitted_finding_count": raw - accepted - dropped,
+        "usable_for_resolution": batch["adapter_status"] == "success"
+        and (raw == 0 or accepted > 0),
     }
 
 
+def validate_outcome(outcome: Any, stage: str) -> None:
+    """Validate the stage schema and the review count arithmetic."""
+    if stage not in {"review", "critique"}:
+        raise SchemaValidationError(f"unknown outcome stage: {stage}")
+    validate_instance(
+        outcome, f"{'finding' if stage == 'review' else 'critique'}_batch.schema.json"
+    )
+    if stage == "review" and (
+        len(outcome["findings"]) + outcome["dropped_finding_count"] > outcome["raw_finding_count"]
+    ):
+        raise SchemaValidationError("accepted plus dropped findings exceed raw_finding_count")
+    canonical_json_text(outcome).encode("utf-8")
 
-def batch_usable_for_panel(batch: dict[str, Any]) -> bool:
-    """Operational panel seat and resolution eligibility predicate.
 
-    Requires ``adapter_status == "success"`` and ``usable_for_resolution``. The
-    adapter runner is the flag's only writer and computes it with
-    ``batch_quality_fields``; consensus does not re-derive it.
-    """
-    return batch.get("adapter_status") == "success" and batch.get("usable_for_resolution") is True
+def _execution_fields(
+    started_at: str,
+    duration_ms: int,
+    completed_at: str | None = None,
+    error_class: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "started_at": started_at,
+        "completed_at": completed_at or now_iso(),
+        "duration_ms": duration_ms,
+        "error_class": bounded_diagnostic(error_class, 120),
+        "error_message_redacted": bounded_diagnostic(error_message, 300),
+    }
+
 
 def schema_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "schemas"
@@ -158,32 +154,26 @@ def empty_finding_batch(
     run_id: str,
     model: str,
     started_at: str,
-    completed_at: str | None = None,
     effective_config_sha256: str,
-    raw_finding_count: int = 0,
-    accepted_finding_count: int = 0,
-    dropped_finding_count: int = 0,
+    completed_at: str | None = None,
+    duration_ms: int = 0,
+    error_class: str | None = None,
+    error_message: str | None = None,
 ) -> dict[str, Any]:
-    if adapter_status not in ADAPTER_STATUSES:
-        raise ValueError(f"unknown adapter status: {adapter_status}")
-    quality = batch_quality_fields(
-        adapter_status=adapter_status,
-        raw_finding_count=raw_finding_count,
-        accepted_finding_count=accepted_finding_count,
-        dropped_finding_count=dropped_finding_count,
-    )
-    return {
+    outcome = {
         "schema_version": "finding_batch.v2",
         "run_id": run_id,
         "reviewer": reviewer,
         "adapter_status": adapter_status,
         "model": model,
-        "started_at": started_at,
-        "completed_at": completed_at or now_iso(),
-        **quality,
+        **_execution_fields(started_at, duration_ms, completed_at, error_class, error_message),
+        "raw_finding_count": 0,
+        "dropped_finding_count": 0,
         "effective_config_sha256": effective_config_sha256,
         "findings": [],
     }
+    validate_outcome(outcome, "review")
+    return outcome
 
 
 def empty_critique_batch(
@@ -193,15 +183,22 @@ def empty_critique_batch(
     run_id: str,
     started_at: str,
     effective_config_sha256: str,
+    completed_at: str | None = None,
+    duration_ms: int = 0,
+    error_class: str | None = None,
+    error_message: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    outcome = {
         "schema_version": "critique_batch.v2",
         "run_id": run_id,
         "critic": critic,
         "adapter_status": adapter_status,
+        **_execution_fields(started_at, duration_ms, completed_at, error_class, error_message),
         "effective_config_sha256": effective_config_sha256,
         "critiques": [],
     }
+    validate_outcome(outcome, "critique")
+    return outcome
 
 
 def finalize_critique_batch(
@@ -211,6 +208,8 @@ def finalize_critique_batch(
     run_id: str,
     effective_config_sha256: str,
     pooled_findings: dict[str, Any],
+    started_at: str | None = None,
+    duration_ms: int = 0,
 ) -> dict[str, Any]:
     """Resolve short references against the exact pool held in trusted runner memory."""
     if any(
@@ -247,61 +246,10 @@ def finalize_critique_batch(
         "adapter_status": "success",
         "effective_config_sha256": effective_config_sha256,
         "critiques": critiques,
+        **_execution_fields(started_at or now_iso(), duration_ms),
     }
-    validate_instance(finalized, "critique_batch.schema.json")
+    validate_outcome(finalized, "critique")
     return finalized
-
-
-def status_file_stem(stage: str, reviewer: str) -> str:
-    """The ``out/status/`` file stem the runner writes and consensus reads."""
-    if stage == "critique":
-        return f"critique-{reviewer}"
-    return reviewer
-
-
-def adapter_status_artifact(
-    reviewer: str,
-    stage: str,
-    status: str,
-    started_at: str,
-    completed_at: str,
-    duration_ms: int,
-    output_file: str,
-    *,
-    error_class: str | None = None,
-    error_message_redacted: str | None = None,
-    run_id: str | None = None,
-    raw_finding_count: int | None = None,
-    accepted_finding_count: int | None = None,
-    dropped_finding_count: int | None = None,
-    usable_for_resolution: bool | None = None,
-    effective_config_sha256: str | None = None,
-) -> dict[str, Any]:
-    artifact: dict[str, Any] = {
-        "schema_version": "adapter_status.v1",
-        "reviewer": reviewer,
-        "stage": stage,
-        "status": status,
-        "started_at": started_at,
-        "completed_at": completed_at,
-        "duration_ms": duration_ms,
-        "error_class": error_class,
-        "error_message_redacted": error_message_redacted,
-        "output_file": output_file,
-    }
-    if run_id is not None:
-        artifact["run_id"] = run_id
-    if raw_finding_count is not None:
-        artifact["raw_finding_count"] = raw_finding_count
-    if accepted_finding_count is not None:
-        artifact["accepted_finding_count"] = accepted_finding_count
-    if dropped_finding_count is not None:
-        artifact["dropped_finding_count"] = dropped_finding_count
-    if usable_for_resolution is not None:
-        artifact["usable_for_resolution"] = usable_for_resolution
-    if effective_config_sha256 is not None:
-        artifact["effective_config_sha256"] = effective_config_sha256
-    return artifact
 
 
 def finalize_finding_batch(
@@ -314,6 +262,7 @@ def finalize_finding_batch(
     effective_config_sha256: str,
     input_dir: str | Path,
     max_findings: int | None = None,
+    duration_ms: int = 0,
 ) -> dict[str, Any]:
     import jsonschema
 
@@ -368,18 +317,13 @@ def finalize_finding_batch(
         "reviewer": reviewer,
         "adapter_status": "success",
         "model": model,
-        "started_at": started_at,
-        "completed_at": now_iso(),
-        **batch_quality_fields(
-            adapter_status="success",
-            raw_finding_count=len(raw_findings),
-            accepted_finding_count=len(findings),
-            dropped_finding_count=dropped,
-        ),
+        **_execution_fields(started_at, duration_ms),
+        "raw_finding_count": len(raw_findings),
+        "dropped_finding_count": dropped,
         "effective_config_sha256": effective_config_sha256,
         "findings": findings,
     }
-    validate_instance(finalized, "finding_batch.schema.json")
+    validate_outcome(finalized, "review")
     return finalized
 
 
@@ -393,7 +337,12 @@ def cli(argv: list[str] | None = None) -> int:
 
     if args.command == "validate":
         instance = load_json_file(args.input)
-        validate_instance(instance, args.schema)
+        if args.schema in {"finding_batch.schema.json", "critique_batch.schema.json"}:
+            validate_outcome(
+                instance, "review" if args.schema.startswith("finding") else "critique"
+            )
+        else:
+            validate_instance(instance, args.schema)
         return 0
     raise AssertionError(args.command)
 

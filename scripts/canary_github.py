@@ -257,8 +257,13 @@ def await_new_run(
                 return int(run["databaseId"])
         return None
 
-    return poll(step, deadline=deadline, interval=5, error=GitHubCanaryError,
-                timeout_message=f"no new {event} run appeared on the canary branch")
+    return poll(
+        step,
+        deadline=deadline,
+        interval=5,
+        error=GitHubCanaryError,
+        timeout_message=f"no new {event} run appeared on the canary branch",
+    )
 
 
 def await_success(run_id: int | str, deadline: float) -> dict[str, Any]:
@@ -266,8 +271,13 @@ def await_success(run_id: int | str, deadline: float) -> dict[str, Any]:
         run = _view(run_id, "url,status,conclusion")
         return run if run.get("status") == "completed" else None
 
-    run = poll(step, deadline=deadline, interval=15, error=GitHubCanaryError,
-               timeout_message=f"timed out waiting for GitHub run {run_id}")
+    run = poll(
+        step,
+        deadline=deadline,
+        interval=15,
+        error=GitHubCanaryError,
+        timeout_message=f"timed out waiting for GitHub run {run_id}",
+    )
     if run.get("conclusion") != "success":
         raise GitHubCanaryError(f"GitHub run {run_id} ended with {run.get('conclusion')}")
     return run
@@ -444,7 +454,7 @@ class GitHubLifecycle(Lifecycle):
         reviews = download_run(
             run, self.downloads / str(run) / "reviews", "--pattern", "ai-review-review-*"
         )
-        loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
+        loaded: dict[str, dict[str, Any]] = {"findings": {}}
         for directory in loaded:
             for path in sorted(reviews.glob(f"*/{directory}/*.json")):
                 try:
@@ -456,7 +466,7 @@ class GitHubLifecycle(Lifecycle):
                 if path.stem in loaded[directory]:
                     raise LifecycleFailure(f"duplicate {directory} artifact for {path.stem}")
                 loaded[directory][path.stem] = artifact
-        return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
+        return lifecycle_reviewer_results(loaded["findings"])
 
     def threads(self) -> list[dict[str, Any]]:
         comments = _json(
@@ -542,10 +552,14 @@ class GitHubLifecycle(Lifecycle):
     def step_stale_head(self) -> dict[str, Any]:
         run_id = self.rerun("blocking")
         poll(
-            lambda: any(
-                job["name"].startswith(f"{CALLER_JOB} / review") and job.get("status") != "queued"
-                for job in _view(run_id, "jobs").get("jobs") or []
-            ) or None,
+            lambda: (
+                any(
+                    job["name"].startswith(f"{CALLER_JOB} / review")
+                    and job.get("status") != "queued"
+                    for job in _view(run_id, "jobs").get("jobs") or []
+                )
+                or None
+            ),
             deadline=self.deadline,
             interval=5,
             timeout_message="the stale-head run's review job never started",

@@ -78,7 +78,7 @@ def _looks_like_pem_payload(value: str) -> bool:
             continue
         # A DER private key starts with a version INTEGER or an encryption
         # algorithm SEQUENCE, after its outer SEQUENCE's length octets.
-        length_octets = decoded[1] & 0x7f if decoded[1] & 0x80 else 0
+        length_octets = decoded[1] & 0x7F if decoded[1] & 0x80 else 0
         # More than four length octets cannot describe a key within the adapter
         # capture budget; ordinary uppercase words can decode to such bytes.
         if length_octets > 4:
@@ -205,3 +205,16 @@ def escape_legacy_workflow_commands(text: str) -> str:
     Callers still keep untrusted text from starting a ``::`` command line.
     """
     return text.replace("##[", "## [")
+
+
+def bounded_diagnostic(value: object, limit: int) -> str | None:
+    """Redact a complete diagnostic before bounding and rendering its text."""
+    if not isinstance(value, str):
+        return None
+    if len(value) > 8192:
+        return "[omitted: too long to redact]"
+    text = " ".join(redact_text(value).split())
+    text = text.encode("utf-8", errors="replace").decode("utf-8")
+    if not text:
+        return None
+    return text if len(text) <= limit else text[: limit - 1] + "…"

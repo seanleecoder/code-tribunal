@@ -10,7 +10,7 @@ from typing import Any
 
 from ai_review.config import PanelConfig
 from ai_review.consensus import build_consensus
-from ai_review.schema import finalize_finding_batch, validate_instance
+from ai_review.schema import batch_quality_fields, finalize_finding_batch, validate_instance
 from ai_review.state_plan import _has_resolution_quorum
 from ai_review.types import Consensus
 
@@ -77,9 +77,9 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
     def test_valid_empty_batch_is_usable_for_resolution(self) -> None:
         finalized, _ = _finalize([])
         self.assertEqual(finalized["raw_finding_count"], 0)
-        self.assertEqual(finalized["accepted_finding_count"], 0)
+        self.assertEqual(len(finalized["findings"]), 0)
         self.assertEqual(finalized["dropped_finding_count"], 0)
-        self.assertTrue(finalized["usable_for_resolution"])
+        self.assertTrue(batch_quality_fields(finalized)["usable_for_resolution"])
 
         consensus = build_consensus(_manifest(), [finalized], _config())
         self.assertEqual(consensus["successful_reviewers"], ["claude"])
@@ -94,15 +94,15 @@ class ReviewerQualityResolutionTests(unittest.TestCase):
     def test_mixed_valid_and_malformed_remains_usable_with_counts(self) -> None:
         finalized, _ = _finalize([_raw_valid(), _raw_malformed()])
         self.assertEqual(finalized["raw_finding_count"], 2)
-        self.assertEqual(finalized["accepted_finding_count"], 1)
+        self.assertEqual(len(finalized["findings"]), 1)
         self.assertEqual(finalized["dropped_finding_count"], 1)
-        self.assertTrue(finalized["usable_for_resolution"])
+        self.assertTrue(batch_quality_fields(finalized)["usable_for_resolution"])
 
     def test_all_dropped_batch_cannot_resolve(self) -> None:
         finalized, _ = _finalize([_raw_malformed(), _raw_malformed()])
-        self.assertEqual(finalized["accepted_finding_count"], 0)
+        self.assertEqual(len(finalized["findings"]), 0)
         self.assertEqual(finalized["dropped_finding_count"], 2)
-        self.assertFalse(finalized["usable_for_resolution"])
+        self.assertFalse(batch_quality_fields(finalized)["usable_for_resolution"])
 
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "mr.diff").write_text(_DIFF)

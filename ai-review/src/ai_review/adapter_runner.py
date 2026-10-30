@@ -13,9 +13,7 @@ from typing import Any
 from .adapter_artifacts import (
     _load_manifest,
     _output_file,
-    _write_empty,
     _write_parse_debug,
-    _write_status,
 )
 from .adapter_output import (
     _load_adapter_json,
@@ -30,11 +28,10 @@ from .adapter_process import (
 from .config import (
     ConfigError,
     config_from_manifest,
-    effective_config_digest,
-    recorded_effective_config_digest,
+    require_effective_config_binding,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
-from .redact import escape_legacy_workflow_commands
+from .redact import bounded_diagnostic, escape_legacy_workflow_commands
 from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
@@ -44,6 +41,8 @@ from .reviewers import (
 )
 from .schema import (
     AdapterModelError,
+    empty_critique_batch,
+    empty_finding_batch,
     finalize_critique_batch,
     finalize_finding_batch,
     now_iso,
@@ -59,11 +58,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
     output_file = _output_file(stage, reviewer)
     started_at = now_iso()
     started_monotonic = time.monotonic()
-    manifest = _load_manifest(input_dir)
-    run_id = str(manifest.get("run_id") or "unknown-run")
-    # Prepare's digest stamps every artifact; its configuration is admitted
-    # before any skip decision, prompt rendering, or provider call.
-    config_digest = recorded_effective_config_digest(manifest)
+    run_id = ""
+    config_digest: str | None = None
     model = "unknown-model"
 
     def _fail(
@@ -75,56 +71,43 @@ def run_adapter(reviewer: str, stage: str) -> int:
         error_message: str | None = None,
         exit_code: int = _EXIT_ERROR,
     ) -> int:
-        """Write a digest-bound empty batch and matching failure status.
-
-        Without a digest only the status is written, so consensus does not
-        consume a placeholder batch.
-        """
+        """Publish one complete failure outcome only with a valid binding."""
         if digest is None:
-            _write_status(
-                output_dir,
-                reviewer,
-                stage,
-                status,
-                started_at,
-                started_monotonic,
-                output_file,
-                error_class=error_class,
-                error_message=error_message,
-                run_id=run_id,
-            )
+            diagnostic = bounded_diagnostic(error_message, 300) or status
+            sys.stderr.write(f"ai-review adapter: {escape_legacy_workflow_commands(diagnostic)}\n")
             return exit_code
-        _write_empty(
-            output_dir,
-            output_file,
-            reviewer,
-            stage,
-            status,
-            run_id,
-            model,
-            started_at,
-            effective_config_sha256=digest,
-        )
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            status,
-            started_at,
-            started_monotonic,
-            output_file,
-            error_class=error_class,
-            error_message=error_message,
-            run_id=run_id,
-            effective_config_sha256=digest,
-            raw_finding_count=0,
-            accepted_finding_count=0,
-            dropped_finding_count=0,
-            usable_for_resolution=False,
-        )
+        fields: dict[str, Any] = {
+            "run_id": run_id,
+            "started_at": started_at,
+            "duration_ms": max(0, int((time.monotonic() - started_monotonic) * 1000)),
+            "effective_config_sha256": digest,
+            "error_class": error_class,
+            "error_message": error_message,
+        }
+        if stage == "review":
+            outcome = empty_finding_batch(reviewer, status, model=model, **fields)
+        else:
+            outcome = empty_critique_batch(reviewer, status, **fields)
+        write_canonical_json(output_dir / output_file, outcome)
         return exit_code
 
     try:
+        manifest = _load_manifest(input_dir)
+        config = config_from_manifest(manifest)
+        manifest_run_id = manifest.get("run_id")
+        if not isinstance(manifest_run_id, str) or not manifest_run_id.strip():
+            raise ConfigError("manifest missing run_id")
+        run_id = manifest_run_id
+        admitted_digest = require_effective_config_binding(config, manifest)
+        try:
+            reviewer_definition = get_reviewer_definition(reviewer)
+        except ReviewerRegistryError as exc:
+            raise ConfigError(str(exc)) from exc
+        config_digest = admitted_digest
+        reviewer_config = config.reviewers[reviewer]
+        model = reviewer_config.model
+        if stage not in reviewer_definition.supported_stages:
+            raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         mock_requested = os.environ.get("AI_REVIEW_LOCAL_MOCK") == "1"
         # GitLab project/pipeline variables can override the template's mock=0
         # default. Keep the explicit companion guard in this single selection
@@ -134,16 +117,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 "AI_REVIEW_LOCAL_MOCK=1 requires AI_REVIEW_ALLOW_LOCAL_MOCK=true "
                 "(for image preflight and mock lifecycle runs only)"
             )
-        try:
-            reviewer_definition = get_reviewer_definition(reviewer)
-        except ReviewerRegistryError as exc:
-            raise ConfigError(str(exc)) from exc
-        if stage not in reviewer_definition.supported_stages:
-            raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
-        config = config_from_manifest(manifest)
-        config_digest = effective_config_digest(config)
-        reviewer_config = config.reviewers[reviewer]
-        model = reviewer_config.model
         if not reviewer_config.enabled:
             return _fail("skipped", digest=config_digest, model=model, exit_code=0)
 
@@ -235,6 +208,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     effective_config_sha256=config_digest,
                     input_dir=input_dir,
                     max_findings=reviewer_config.max_findings,
+                    duration_ms=max(0, int((time.monotonic() - started_monotonic) * 1000)),
                 )
             elif stage == "critique":
                 assert pooled is not None
@@ -244,6 +218,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     run_id=run_id,
                     effective_config_sha256=config_digest,
                     pooled_findings=pooled,
+                    started_at=started_at,
+                    duration_ms=max(0, int((time.monotonic() - started_monotonic) * 1000)),
                 )
             else:
                 finalized = raw
@@ -259,27 +235,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
 
         write_canonical_json(output_dir / output_file, finalized)
-        _write_status(
-            output_dir,
-            reviewer,
-            stage,
-            "success",
-            started_at,
-            started_monotonic,
-            output_file,
-            run_id=run_id,
-            effective_config_sha256=config_digest,
-            raw_finding_count=finalized.get("raw_finding_count") if stage == "review" else None,
-            accepted_finding_count=(
-                finalized.get("accepted_finding_count") if stage == "review" else None
-            ),
-            dropped_finding_count=(
-                finalized.get("dropped_finding_count") if stage == "review" else None
-            ),
-            usable_for_resolution=(
-                finalized.get("usable_for_resolution") if stage == "review" else None
-            ),
-        )
         return 0
     except subprocess.TimeoutExpired as exc:
         # Preserve bounded, redacted diagnostics for a stuck reviewer.
@@ -317,7 +272,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         return _fail(
             "config_error" if isinstance(exc, ConfigError) else "internal_error",
             digest=config_digest,
-            model="unknown-model",
+            model=model,
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )

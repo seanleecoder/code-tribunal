@@ -5,13 +5,13 @@ credentials or sensitive model content into issues.
 
 | Symptom | Likely cause | Evidence | Action |
 |---|---|---|---|
-| Reviewer job failed | Provider/CLI/model/config/timeout error | `out/status/<reviewer>.json` and redacted job log | Fix credential scope/model/config or retry transient failure |
-| Reviewer succeeded but does not count | All findings dropped or batch not resolution-eligible | Finding batch quality counts and `usable_for_resolution` | Use a stronger/compatible model; do not lower safety thresholds blindly |
+| Reviewer job failed | Provider/CLI/model/config/timeout error | `out/findings/<reviewer>.json` (or `out/critiques/<reviewer>.json`) and redacted job log | Fix credential scope/model/config or retry transient failure |
+| Reviewer succeeded but does not count | All findings dropped or batch not resolution-eligible | Outcome raw/dropped counts and `findings` payload; accepted count and eligibility are derived | Use a stronger/compatible model; do not lower safety thresholds blindly |
 | Consensus exits 3 | No usable panel, corrupt manifest config, wrong run, malformed or spoofed artifact | Consensus log: a failed panel prints the review health with each failed seat; otherwise the integrity error. Manifest run/config digests, finding/critique identities | Rerun from prepare with the intended prepare-time variables; do not mix artifacts |
 | `post` refuses a consensus artifact with no `run_health` | The consensus artifact came from an earlier release than the post image | `post` job log | Re-run from prepare with both images from one release |
 | `post` exits nonzero | Publication or state persistence failed (`failed`, `partial_failed`, `state_overflow`) — findings never affect the exit status | `out/post/post_result.json` `status` and `warnings` | Repair platform API/state capacity and rerun post |
 | Pipeline is green but no comments appear | Stale head: a newer revision superseded the run, so post made no mutation | `post_result.json` `status: stale_head` | Let the newer revision's run publish |
-| Summary says `re-run recommended` or `degraded` | A seat or critic failed, or findings were dropped or capped | The summary's problem list and run details; `out/status/` and the consensus job log | Follow the action line; re-run from prepare, never individual jobs |
+| Summary says `re-run recommended` or `degraded` | A seat or critic failed, or findings were dropped or capped | The summary's problem list and run details; review/critique outcomes and the consensus job log | Follow the action line; re-run from prepare, never individual jobs |
 | Pipeline is green, a summary comment exists, but no threads were posted | No finding had two independent supporters: either nothing was found, or every finding is FYI. This is expected, not a fault | The summary's review health headline and FYI list; consensus `summary.surface_count` is 0 | Investigate only if the health grade is not `full`: a lost seat lowers what can reach two supporters |
 | A finding you expected is only FYI | Only one reviewer identity supported it; severity does not promote it | Group `support_count`, `contributing_reviewers`, `agreeing_critics` | Expected: two independent identities are required to surface. Check for a failed or silently empty seat |
 | Duplicate-looking discussion | Lost/untrusted state, changed bot identity, conservative rematch, or different category | Issue markers, state author, `issue_id`, record status | Restore bot/state ownership; distinguish a true duplicate from a new identity |
@@ -69,11 +69,12 @@ split by whitespace, punctuation, backticks or invisible separators. Ordinary
 sentences, source paths, commit SHAs and identifiers do not alone count as key
 payloads.
 
-A parse or validation failure writes two redacted artifacts:
+A parse or validation failure writes two redacted artifacts. `<stem>` is the
+reviewer ID for review and `critique-<reviewer>` for critique:
 
-- `out/status/<stage>-<reviewer>-parse-debug.txt` — bounded head/tail preview of
+- `out/status/<stem>-parse-debug.txt` — bounded head/tail preview of
   stdout and stderr, useful for a first look.
-- `out/status/<stage>-<reviewer>-parse-raw-stdout.txt` — the complete adapter
+- `out/status/<stem>-parse-raw-stdout.txt` — the complete adapter
   stdout, bounded at 2 MiB. Read this one when the preview's elided middle is
   where the answer should have been; its newline structure is intact, so a
   stream can be replayed or reused as a test fixture directly.

@@ -14,7 +14,7 @@ import yaml
 from ai_review.memory import empty_state, encode_state_note, normalize_state_record
 from ai_review.mock_reviewer import review_batch
 from ai_review.reviewers import REVIEWERS
-from ai_review.schema import adapter_status_artifact, finalize_finding_batch
+from ai_review.schema import finalize_finding_batch
 
 from tests.support.repository_script import load_repository_script
 
@@ -80,13 +80,9 @@ def _review_artifacts(root: Path) -> None:
                 effective_config_sha256="a" * 64,
                 input_dir=root,
             )
-            status = adapter_status_artifact(
-                reviewer, "review", "success", "start", "end", 1, f"findings/{reviewer}.json"
-            )
-            for directory, artifact in (("findings", batch), ("status", status)):
-                path = root / f"ai-review-review-{reviewer}" / directory / f"{reviewer}.json"
-                path.parent.mkdir(parents=True)
-                path.write_text(json.dumps(artifact), encoding="utf-8")
+            path = root / f"ai-review-review-{reviewer}" / "findings" / f"{reviewer}.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(batch), encoding="utf-8")
 
 
 class CreateStepTests(unittest.TestCase):
@@ -138,9 +134,7 @@ class CreateStepTests(unittest.TestCase):
                     "findings",
                     adapter_status=status,
                     raw_finding_count=0,
-                    accepted_finding_count=0,
                     findings=[],
-                    usable_for_resolution=False,
                 )
                 with self.assertRaises(lifecycle.LifecycleFailure):
                     self.driver.step_create()
@@ -161,7 +155,7 @@ class CreateStepTests(unittest.TestCase):
                     self.driver.step_create()
 
     def test_missing_or_extra_artifacts_fail(self) -> None:
-        for directory in ("findings", "status"):
+        for directory in ("findings",):
             path = self._path(directory)
             original = path.read_text(encoding="utf-8")
             with self.subTest(directory=directory, fault="missing"):
@@ -180,10 +174,6 @@ class CreateStepTests(unittest.TestCase):
         for directory, changes in (
             ("findings", {"reviewer": "claude"}),
             ("findings", {"reviewer": "unknown"}),
-            ("status", {"reviewer": "claude"}),
-            ("status", {"stage": "critique"}),
-            ("status", {"status": "model_error"}),
-            ("status", {"status": "skipped"}),
         ):
             path = self._path(directory)
             original = path.read_text(encoding="utf-8")
@@ -396,15 +386,22 @@ class MockWorkflowTests(unittest.TestCase):
             self.assertIn("mock_scenario", workflow["on"]["workflow_call"]["inputs"])
             self.assertEqual(
                 caller["jobs"]["ai-review"]["with"],
-                {"pr_number": "${{ inputs.pr_number || '' }}",
-                 "mock_scenario": "${{ inputs.mock_scenario || 'blocking' }}"},
+                {
+                    "pr_number": "${{ inputs.pr_number || '' }}",
+                    "mock_scenario": "${{ inputs.mock_scenario || 'blocking' }}",
+                },
             )
             self.assertEqual(caller["jobs"]["ai-review"]["secrets"], "inherit")
             self.assertIn(BASE, workflow_text)
             self.assertIn(REVIEWER, workflow_text)
             self.assertIn(
-                ("git", "add", canary.GITHUB_CALLER, canary.GITHUB_WORKFLOW,
-                 canary.LIFECYCLE_FIXTURE_PATH),
+                (
+                    "git",
+                    "add",
+                    canary.GITHUB_CALLER,
+                    canary.GITHUB_WORKFLOW,
+                    canary.LIFECYCLE_FIXTURE_PATH,
+                ),
                 commands,
             )
 
@@ -450,10 +447,18 @@ class LifecycleStepTests(unittest.TestCase):
                 mock.patch.object(driver, "rerun", return_value=5),
                 mock.patch.object(driver, "_known", return_value=frozenset()),
                 mock.patch.object(lifecycle, "poll", side_effect=poll),
-                mock.patch.object(lifecycle, "_view", side_effect=[
-                    {"jobs": [{"name": "ai-review / prepare", "status": "in_progress"}]},
-                    {"jobs": [{"name": "ai-review / review (claude)", "status": "in_progress"}]},
-                ]),
+                mock.patch.object(
+                    lifecycle,
+                    "_view",
+                    side_effect=[
+                        {"jobs": [{"name": "ai-review / prepare", "status": "in_progress"}]},
+                        {
+                            "jobs": [
+                                {"name": "ai-review / review (claude)", "status": "in_progress"}
+                            ]
+                        },
+                    ],
+                ),
                 mock.patch.object(lifecycle, "commit_and_push"),
                 mock.patch.object(lifecycle, "_run", return_value="head"),
                 mock.patch.object(driver, "review", return_value=(5, {})),

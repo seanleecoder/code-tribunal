@@ -339,6 +339,9 @@ class PublishEndToEndTests(unittest.TestCase):
         findings = [copy.deepcopy(finding)]
         return {
             "schema_version": "finding_batch.v2",
+            "duration_ms": 0,
+            "error_class": None,
+            "error_message_redacted": None,
             "run_id": "integration-run",
             "reviewer": reviewer,
             "adapter_status": "success",
@@ -346,9 +349,7 @@ class PublishEndToEndTests(unittest.TestCase):
             "started_at": "2026-07-11T00:00:00Z",
             "completed_at": "2026-07-11T00:00:01Z",
             "raw_finding_count": len(findings),
-            "accepted_finding_count": len(findings),
             "dropped_finding_count": 0,
-            "usable_for_resolution": True,
             "effective_config_sha256": "0" * 64,
             "findings": findings,
         }

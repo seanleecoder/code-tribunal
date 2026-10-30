@@ -11,7 +11,7 @@ from typing import Any
 from unittest import mock
 
 from ai_review.anchors import _line_belongs_to_side
-from ai_review.schema import finalize_finding_batch
+from ai_review.schema import batch_quality_fields, finalize_finding_batch
 
 DIFF = "\n".join(
     [
@@ -80,7 +80,7 @@ class FindingCapTests(unittest.TestCase):
         self.assertEqual(
             (
                 batch["raw_finding_count"],
-                batch["accepted_finding_count"],
+                len(batch["findings"]),
                 batch["dropped_finding_count"],
             ),
             (6, 2, 2),
@@ -107,7 +107,7 @@ class FindingCapTests(unittest.TestCase):
         self.assertEqual(
             (
                 batch["raw_finding_count"],
-                batch["accepted_finding_count"],
+                len(batch["findings"]),
                 batch["dropped_finding_count"],
             ),
             (1220, 50, 20),
@@ -138,7 +138,7 @@ class FindingCapTests(unittest.TestCase):
         self.assertEqual(
             (
                 batch["raw_finding_count"],
-                batch["accepted_finding_count"],
+                len(batch["findings"]),
                 batch["dropped_finding_count"],
             ),
             (240, 10, 40),
@@ -153,7 +153,7 @@ class FindingCapTests(unittest.TestCase):
         ]:
             with self.subTest(raw=raw, cap=cap):
                 batch = self._finalize(findings, cap)
-                self.assertEqual(batch["usable_for_resolution"], usable)
+                self.assertEqual(batch_quality_fields(batch)["usable_for_resolution"], usable)
                 self.assertEqual(batch["raw_finding_count"], raw)
                 self.assertEqual(batch["dropped_finding_count"], dropped)
         self.assertEqual(

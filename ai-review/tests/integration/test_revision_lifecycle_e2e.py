@@ -10,7 +10,7 @@ from unittest import mock
 
 from ai_review import mock_reviewer
 from ai_review.config import ReviewConfig, load_config
-from ai_review.consensus import build_consensus, validate_consensus_inputs
+from ai_review.consensus import build_consensus
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.memory import decode_state_note_body
 from ai_review.notes import parse_marker
@@ -22,6 +22,8 @@ from ai_review.schema import (
     load_json_file,
     validate_instance,
 )
+
+from tests.support.outcomes import admit_batches
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 if str(TESTS_ROOT) not in sys.path:
@@ -45,7 +47,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
     # Posting/state/critique are driven through the documented AI_REVIEW_* env
     # overrides so `prepare` stamps them into the manifest's effective_config. That
     # keeps the manifest and the consensus-time config in agreement, so
-    # `validate_consensus_inputs` passes on inputs that could actually come from a
+    # `admit_batches` passes on inputs that could actually come from a
     # real prepare→consensus pipeline — rather than mutating the config after prepare
     # (which diverges the effective_config digest and only survives because
     # build_consensus is called directly).
@@ -82,7 +84,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
                         raw,
                         reviewer=reviewer,
                         # Stamp the seat's configured model so the batch matches the
-                        # effective config validate_consensus_inputs checks against.
+                        # effective config admit_batches checks against.
                         model=str(reviewers_cfg[reviewer].model),
                         run_id=manifest["run_id"],
                         started_at="2026-07-23T00:00:00Z",
@@ -180,7 +182,7 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             effective_config_sha256=manifest["effective_config_sha256"],
             pooled_findings=pooled,
         )
-        validate_consensus_inputs(
+        admit_batches(
             config=config,
             manifest=manifest,
             finding_batches=batches,
@@ -203,10 +205,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
             self.assertEqual(self._source_ids(blocking[0]), self._source_ids(blocking_alt[0]))
 
             # Inputs satisfy the real prepare→consensus integrity contract.
-            validate_consensus_inputs(
+            admit_batches(
                 config=config, manifest=manifest, finding_batches=blocking, critique_batches=[]
             )
-            validate_consensus_inputs(
+            admit_batches(
                 config=config, manifest=manifest, finding_batches=blocking_alt, critique_batches=[]
             )
 
@@ -289,10 +291,10 @@ class MockScenarioLifecycleTests(unittest.TestCase):
 
             # Both revisions satisfy the real prepare→consensus integrity contract
             # (effective_config, run_id) before we build consensus.
-            validate_consensus_inputs(
+            admit_batches(
                 config=config, manifest=manifest1, finding_batches=b1, critique_batches=[]
             )
-            validate_consensus_inputs(
+            admit_batches(
                 config=config, manifest=manifest2, finding_batches=b2, critique_batches=[]
             )
 

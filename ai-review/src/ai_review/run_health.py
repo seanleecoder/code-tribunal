@@ -8,101 +8,37 @@ same record as the summary comment's first section.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
-from .canonical import CanonicalError, canonical_json
 from .config import ReviewConfig, enabled_reviewers
 from .critique import critique_batch_succeeded
-from .redact import escape_legacy_workflow_commands, redact_text
-from .schema import (
-    SchemaValidationError,
-    batch_usable_for_panel,
-    load_json_file,
-    status_file_stem,
-    validate_instance,
-)
+from .redact import bounded_diagnostic, escape_legacy_workflow_commands
+from .schema import batch_quality_fields
 from .types import JobOutcome, JobStage, RunHealth, RunHealthGrade, RunHealthJob
 
 ERROR_MESSAGE_LIMIT = 300
 ERROR_CLASS_LIMIT = 120
-# Redaction input bound. Status text is untrusted: a model CLI in the same job
-# can rewrite the status file with arbitrarily long text.
-REDACTION_INPUT_LIMIT = 8192
-# Longer text is omitted, not cut: a cut can split a secret so redaction no
-# longer recognizes it, and redacting earlier secrets pulls the fragment into
-# the displayed prefix. Short enough for both display limits.
-_OMITTED_STATUS_TEXT = "[omitted: too long to redact]"
-
-
-def _one_line(value: object, limit: int) -> str | None:
-    """Redact untrusted status text, then collapse it to one bounded line.
-
-    The status file's field name does not prove redaction: a model CLI in the
-    same job can rewrite the file. ``None`` means empty.
-    """
-    if not isinstance(value, str):
-        return None
-    text = " ".join(value.split())
-    if len(text) > REDACTION_INPUT_LIMIT:
-        return _OMITTED_STATUS_TEXT
-    text = redact_text(text)
-    if not text:
-        return None
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
 _JOB_STAGES: tuple[JobStage, ...] = ("review", "critique")
 
 
-def load_status_files(
-    status_dir: Path, config: ReviewConfig, run_id: str
-) -> dict[tuple[str, str], dict[str, Any]]:
-    """Usable ``adapter_status.v1`` files keyed by ``(stage, reviewer)``.
-
-    Status files are untrusted health input: they are written in jobs that also
-    run model CLIs. A file that is unreadable, fails the schema, or names another
-    seat, stage, or run is treated as absent. Nothing here can fail consensus.
-    """
-    statuses: dict[tuple[str, str], dict[str, Any]] = {}
-    for reviewer in sorted(enabled_reviewers(config)):
-        for stage in _JOB_STAGES:
-            try:
-                status = load_json_file(status_dir / f"{status_file_stem(stage, reviewer)}.json")
-                validate_instance(status, "adapter_status.schema.json")
-                # A lone surrogate escape passes the schema but cannot be written
-                # as UTF-8; it would abort the artifact write, not just health.
-                canonical_json(status)
-            except (OSError, ValueError, RecursionError, SchemaValidationError, CanonicalError):
-                continue
-            if (
-                status.get("reviewer") == reviewer
-                and status.get("stage") == stage
-                and status.get("run_id") == run_id
-            ):
-                statuses[(stage, reviewer)] = status
-    return statuses
-
-
-def _job_outcome(
-    stage: JobStage, batch: dict[str, Any] | None, status: dict[str, Any] | None
-) -> JobOutcome:
-    """One job's outcome. Only a usable batch yields ``success``; the batch wins."""
+def _job_outcome(stage: JobStage, batch: dict[str, Any] | None) -> JobOutcome:
+    """One job's outcome, derived solely from its admitted artifact."""
     if batch is not None:
-        if batch_usable_for_panel(batch) if stage == "review" else critique_batch_succeeded(batch):
+        if (
+            batch_quality_fields(batch)["usable_for_resolution"]
+            if stage == "review"
+            else critique_batch_succeeded(batch)
+        ):
             return "success"
         adapter_status = str(batch.get("adapter_status") or "")
         return "unusable" if adapter_status == "success" else cast(JobOutcome, adapter_status)
-    if status is None:
-        return "missing"
-    return "batch_missing" if status["status"] == "success" else cast(JobOutcome, status["status"])
+    return "missing"
 
 
 def build_run_health_jobs(
     config: ReviewConfig,
     finding_batches: list[dict[str, Any]],
     critique_batches: list[dict[str, Any]] | None,
-    statuses: dict[tuple[str, str], dict[str, Any]],
 ) -> list[RunHealthJob]:
     """Per-job health rows: review before critique, then by reviewer ID."""
     batches = {
@@ -114,11 +50,10 @@ def build_run_health_jobs(
         for reviewer in sorted(enabled_reviewers(config)):
             reviewer_cfg = config.reviewers[reviewer]
             batch = batches[stage].get(reviewer)
-            status = statuses.get((stage, reviewer))
             job: RunHealthJob = {
                 "stage": stage,
                 "reviewer": reviewer,
-                "outcome": _job_outcome(stage, batch, status),
+                "outcome": _job_outcome(stage, batch),
                 "model": reviewer_cfg.model,
                 "effort": reviewer_cfg.effort,
                 "timeout_seconds": reviewer_cfg.timeout_for(stage),
@@ -132,20 +67,21 @@ def build_run_health_jobs(
                 "error_message": None,
             }
             if stage == "review" and batch is not None:
-                raw = int(batch["raw_finding_count"])
-                accepted = int(batch["accepted_finding_count"])
-                dropped = int(batch["dropped_finding_count"])
-                job["raw_finding_count"] = raw
-                job["accepted_finding_count"] = accepted
-                job["dropped_finding_count"] = dropped
-                job["cap_omitted_finding_count"] = raw - accepted - dropped
+                quality = batch_quality_fields(batch)
+                for key in (
+                    "raw_finding_count",
+                    "accepted_finding_count",
+                    "dropped_finding_count",
+                    "cap_omitted_finding_count",
+                ):
+                    job[key] = quality[key]
             if stage == "critique" and batch is not None and job["outcome"] == "success":
                 job["critique_count"] = len(batch["critiques"])
-            if status is not None:
-                job["duration_ms"] = int(status["duration_ms"])
-                job["error_class"] = _one_line(status.get("error_class"), ERROR_CLASS_LIMIT)
-                job["error_message"] = _one_line(
-                    status.get("error_message_redacted"), ERROR_MESSAGE_LIMIT
+            if batch is not None:
+                job["duration_ms"] = int(batch["duration_ms"])
+                job["error_class"] = bounded_diagnostic(batch.get("error_class"), ERROR_CLASS_LIMIT)
+                job["error_message"] = bounded_diagnostic(
+                    batch.get("error_message_redacted"), ERROR_MESSAGE_LIMIT
                 )
             jobs.append(job)
     return jobs
@@ -183,11 +119,10 @@ _OUTCOME_TEXT = {
     "model_error": "provider or model error",
     "schema_error": "output could not be parsed",
     "unusable": "every reported finding was rejected during normalization",
-    "batch_missing": "the job reported success but its batch was not delivered to consensus",
     "config_error": "configuration error",
     "internal_error": "internal error",
     "skipped": "skipped by the runner",
-    "missing": "no status recorded; the job was likely cancelled or killed by the CI job ceiling",
+    "missing": "no outcome delivered; the job was likely cancelled or killed by the CI job ceiling",
 }
 # A duration at or above this share of the stage timeout is marked at render
 # time. It never changes the grade.
@@ -201,8 +136,7 @@ def duration_text(ms: int) -> str:
 
 def _is_config_failure(job: RunHealthJob) -> bool:
     # The runner reports an invalid model ID as model_error with this class;
-    # re-running unchanged fails the same way. A successful job's status text
-    # never makes it one: the batch wins.
+    # re-running unchanged fails the same way. Diagnostics never override success.
     return job["outcome"] != "success" and (
         job["outcome"] == "config_error" or job["error_class"] == "ReviewerConfigValidation"
     )

@@ -7,7 +7,6 @@ from ai_review.config import PanelConfig, ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus
 from ai_review.schema import (
     SchemaValidationError,
-    adapter_status_artifact,
     empty_finding_batch,
     validate_instance,
 )
@@ -95,6 +94,9 @@ def _batch(reviewer: str, finding: dict) -> dict:
     findings = [finding]
     return {
         "schema_version": "finding_batch.v2",
+        "duration_ms": 0,
+        "error_class": None,
+        "error_message_redacted": None,
         "run_id": "run",
         "reviewer": reviewer,
         "adapter_status": "success",
@@ -102,9 +104,7 @@ def _batch(reviewer: str, finding: dict) -> dict:
         "started_at": "2026-06-29T00:00:00Z",
         "completed_at": "2026-06-29T00:00:01Z",
         "raw_finding_count": len(findings),
-        "accepted_finding_count": len(findings),
         "dropped_finding_count": 0,
-        "usable_for_resolution": True,
         "effective_config_sha256": "0" * 64,
         "findings": findings,
     }
@@ -112,7 +112,7 @@ def _batch(reviewer: str, finding: dict) -> dict:
 
 def _empty_batch(reviewer: str, status: str, **counts: int) -> dict:
     """A findings-free batch whose usability follows the production quality rule."""
-    return empty_finding_batch(
+    batch = empty_finding_batch(
         reviewer,
         status,
         run_id="run",
@@ -120,30 +120,9 @@ def _empty_batch(reviewer: str, status: str, **counts: int) -> dict:
         started_at="2026-06-29T00:00:00Z",
         completed_at="2026-06-29T00:00:01Z",
         effective_config_sha256="0" * 64,
-        **counts,
     )
-
-
-def _status(
-    reviewer: str,
-    stage: str,
-    status: str,
-    *,
-    run_id: str = "run",
-    duration_ms: int = 60_000,
-    **fields: str,
-) -> dict:
-    return adapter_status_artifact(
-        reviewer,
-        stage,
-        status,
-        "2026-06-29T00:00:00Z",
-        "2026-06-29T00:30:00Z",
-        duration_ms,
-        f"{stage}/{reviewer}.json",
-        run_id=run_id,
-        **fields,  # type: ignore[arg-type]
-    )
+    batch.update(counts)
+    return batch
 
 
 # Shared evidence fixtures for reducer, runner, and CLI tests.
@@ -171,6 +150,11 @@ def _critique(
 def _critique_batch(critic: str, critiques: list[dict], status: str = "success") -> dict:
     return {
         "schema_version": "critique_batch.v2",
+        "started_at": "2026-06-29T00:00:00Z",
+        "completed_at": "2026-06-29T00:00:01Z",
+        "duration_ms": 0,
+        "error_class": None,
+        "error_message_redacted": None,
         "run_id": "run",
         "critic": critic,
         "adapter_status": status,

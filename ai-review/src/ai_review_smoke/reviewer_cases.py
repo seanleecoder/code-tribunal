@@ -139,11 +139,16 @@ class PackagedReviewerImageTests(unittest.TestCase):
         )
 
     def _validate(self, path: Path, schema_name: str) -> dict[str, Any]:
-        from ai_review.schema import load_json_file, validate_instance
+        from ai_review.schema import load_json_file, validate_instance, validate_outcome
 
         self.assertTrue(path.is_file(), f"{path} was not written")
         instance = load_json_file(path)
-        validate_instance(instance, schema_name)
+        if schema_name in {"finding_batch.schema.json", "critique_batch.schema.json"}:
+            validate_outcome(
+                instance, "review" if schema_name.startswith("finding") else "critique"
+            )
+        else:
+            validate_instance(instance, schema_name)
         self.assertIsInstance(instance, dict)
         return dict(instance)
 
@@ -208,6 +213,18 @@ class PackagedReviewerImageTests(unittest.TestCase):
                 # A critique batch names its author `critic`, not `reviewer`.
                 self.assertEqual(batch["critic"], seat)
                 self.assertEqual(batch["adapter_status"], "success")
+
+    def test_outcomes_are_complete_without_status_json_mirrors(self) -> None:
+        from ai_review.schema import load_json_file
+
+        self.assertFalse(list((self.output_dir / "status").glob("*.json")))
+        for directory in ("findings", "critiques"):
+            for seat in self.seats:
+                outcome = load_json_file(self.output_dir / directory / f"{seat}.json")
+                self.assertGreaterEqual(outcome["duration_ms"], 0)
+                self.assertIsNone(outcome["error_message_redacted"])
+                self.assertNotIn("accepted_finding_count", outcome)
+                self.assertNotIn("usable_for_resolution", outcome)
 
     def test_local_consensus_validates_against_its_schema(self) -> None:
         assert self.consensus_run is not None

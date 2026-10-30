@@ -9,6 +9,7 @@ from unittest import mock
 from ai_review.config import effective_config_binding, effective_config_digest, load_config
 from ai_review.consensus import cli
 from ai_review.schema import (
+    batch_quality_fields,
     empty_critique_batch,
     empty_finding_batch,
     finalize_finding_batch,
@@ -130,8 +131,6 @@ class PanelDegradationTests(unittest.TestCase):
                 str(findings_dir),
                 "--critiques-dir",
                 str(critiques_dir),
-                "--status-dir",
-                str(root / "status"),
                 "--out",
                 str(out_path),
             ]
@@ -193,6 +192,9 @@ class PanelDegradationTests(unittest.TestCase):
                     model = str(config.reviewers[reviewer].model)
                     raw = {
                         "schema_version": "finding_batch.v2",
+                        "duration_ms": 0,
+                        "error_class": None,
+                        "error_message_redacted": None,
                         "run_id": "local-test",
                         "reviewer": reviewer,
                         "adapter_status": "success",
@@ -344,7 +346,7 @@ class PanelDegradationTests(unittest.TestCase):
                 effective_config_sha256=_CONFIG_DIGEST,
                 input_dir=input_dir,
             )
-            self.assertFalse(all_dropped["usable_for_resolution"])
+            self.assertFalse(batch_quality_fields(all_dropped)["usable_for_resolution"])
             self.assertEqual(all_dropped["dropped_finding_count"], 1)
             batches = {
                 "claude": all_dropped,

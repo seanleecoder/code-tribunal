@@ -25,6 +25,7 @@ from ai_review.reviewers import ReviewerRegistryError
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
+    batch_quality_fields,
     finalize_critique_batch,
     finalize_finding_batch,
     load_json_file,
@@ -72,8 +73,8 @@ class AdapterCliSignalTests(unittest.TestCase):
                 },
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            status = load_json_file(output / "status" / "claude.json")
-            self.assertEqual(status["status"], "success")
+            status = load_json_file(output / "findings" / "claude.json")
+            self.assertEqual(status["adapter_status"], "success")
             self.assertIsNone(status["error_class"])
             batch = load_json_file(output / "findings" / "claude.json")
             self.assertEqual(batch["adapter_status"], "success")
@@ -473,7 +474,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                 effective_config_sha256="0" * 64,
                 input_dir=tmp,
             )
-        self.assertEqual(finalized_finding["accepted_finding_count"], 1)
+        self.assertEqual(len(finalized_finding["findings"]), 1)
 
     def test_whole_arrays_items_and_logging_follow_one_pass_contract(self) -> None:
         finding = {"title": "Recovered"}
@@ -816,8 +817,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
 
     def test_invalid_integer_setting_reports_config_error_before_adapter_work(self) -> None:
@@ -837,10 +838,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
             self.assertFalse(sentinel.exists())
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
-            self.assertIn("limits.max_fyi_findings", status["error_message_redacted"])
+            self.assertFalse(list(paths["output_dir"].rglob("*.json")))
 
     def test_trailing_newline_model_is_rejected_before_adapter_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -863,8 +861,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
             self.assertEqual(batch["model"], "openai/gpt-5.6-luna\n")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "model_error")
             self.assertEqual(status["error_class"], "ReviewerConfigValidation")
 
     def test_local_mock_without_allow_flag_is_config_error(self) -> None:
@@ -878,8 +876,6 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
             manifest = load_json_file(paths["input_dir"] / "manifest.json")
-            manifest["effective_config_sha256"] = "2" * 64
-            write_canonical_json(paths["input_dir"] / "manifest.json", manifest)
             for allow in (None, "false", "TRUE", "1"):
                 with (
                     self.subTest(allow=allow),
@@ -894,9 +890,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                     else:
                         os.environ["AI_REVIEW_ALLOW_LOCAL_MOCK"] = allow
                     self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
-                    status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-                    self.assertEqual(status["status"], "config_error")
-                    self.assertEqual(status["effective_config_sha256"], "2" * 64)
+                    status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+                    self.assertEqual(status["adapter_status"], "config_error")
+                    self.assertEqual(
+                        status["effective_config_sha256"], manifest["effective_config_sha256"]
+                    )
                     self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK", status["error_message_redacted"])
 
     def test_failure_after_config_resolution_stamps_the_bound_digest(self) -> None:
@@ -914,15 +912,11 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
 
             manifest = load_json_file(paths["input_dir"] / "manifest.json")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(
-                status["effective_config_sha256"], manifest["effective_config_sha256"]
-            )
-            self.assertEqual(
-                status["effective_config_sha256"], batch["effective_config_sha256"]
-            )
+            self.assertEqual(status["adapter_status"], "config_error")
+            self.assertEqual(status["effective_config_sha256"], manifest["effective_config_sha256"])
+            self.assertEqual(status["effective_config_sha256"], batch["effective_config_sha256"])
 
     def test_downstream_environment_and_config_file_cannot_change_prepared_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -933,17 +927,55 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self._set_env(paths, config_path)
             manifest = load_json_file(paths["input_dir"] / "manifest.json")
             config_path.unlink()
-            with mock.patch.dict(os.environ, {
-                "AI_REVIEW_REVIEWERS": "claude,opencode,cursor",
-                "AI_REVIEW_CODEX_MODEL": "openai/drifted",
-                "AI_REVIEW_CODEX_EFFORT": "invalid",
-                "AI_REVIEW_CRITIQUE_ENABLED": "false",
-            }):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "AI_REVIEW_REVIEWERS": "claude,opencode,cursor",
+                    "AI_REVIEW_CODEX_MODEL": "openai/drifted",
+                    "AI_REVIEW_CODEX_EFFORT": "invalid",
+                    "AI_REVIEW_CRITIQUE_ENABLED": "false",
+                },
+            ):
                 self.assertEqual(run_adapter("codex", "review"), 0)
             self.assertTrue(sentinel.exists())
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["model"], "codex-model")
             self.assertEqual(batch["effective_config_sha256"], manifest["effective_config_sha256"])
+
+    def test_invalid_manifest_binding_never_writes_an_outcome_or_invokes_a_cli(self) -> None:
+        for run_id in (None, "", " ", 123):
+            with self.subTest(run_id=run_id), tempfile.TemporaryDirectory() as tmp:
+                paths = _scaffold_project(Path(tmp))
+                config_path = _write_reviewer_config(paths["config_dir"], "codex")
+                self._set_env(paths, config_path)
+                manifest_path = paths["input_dir"] / "manifest.json"
+                manifest = load_json_file(manifest_path)
+                manifest["run_id"] = run_id
+                write_canonical_json(manifest_path, manifest)
+                with mock.patch("ai_review.adapter_runner._run_adapter_process") as process:
+                    self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+                process.assert_not_called()
+                self.assertFalse(list(paths["output_dir"].rglob("*.json")))
+                self._adapter_command_patch.stop()
+                del self._adapter_command_patch
+
+    def test_unbound_failure_log_is_bounded_redacted_and_escapes_workflow_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "out"
+            diagnostic = "token=example_secret\n##[error] " + "x" * 400
+            errors = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"AI_REVIEW_OUTPUT_DIR": str(output)}),
+                mock.patch(
+                    "ai_review.adapter_runner._load_manifest", side_effect=ValueError(diagnostic)
+                ),
+                contextlib.redirect_stderr(errors),
+            ):
+                self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
+            self.assertFalse(list(output.rglob("*.json")))
+            self.assertNotIn("example_secret", errors.getvalue())
+            self.assertNotIn("##[", errors.getvalue())
+            self.assertLess(len(errors.getvalue()), 350)
 
     def test_manifest_without_effective_config_digest_fails_before_adapter_work(
         self,
@@ -962,12 +994,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(run_adapter("codex", "review"), _EXIT_ERROR)
 
             self.assertFalse(sentinel.exists())
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "config_error")
-            self.assertEqual(status["error_class"], "EffectiveConfigMismatch")
-            self.assertIn("re-run prepare", status["error_message_redacted"])
-            # No digest to stamp, so no batch for consensus to read as a result.
-            self.assertFalse((paths["output_dir"] / "findings" / "codex.json").exists())
+            self.assertFalse(list(paths["output_dir"].rglob("*.json")))
 
     def test_opencode_client_failure_is_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -979,8 +1006,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
             self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
-            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
-            self.assertEqual(status["status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
+            self.assertEqual(status["adapter_status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
             self.assertIn("rate_limit_exceeded", status["error_message_redacted"])
 
@@ -994,8 +1021,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             )
             self._set_env(paths, config_path)
             self.assertEqual(run_prepared_adapter("opencode", "review"), _EXIT_ERROR)
-            status = load_json_file(paths["output_dir"] / "status" / "opencode.json")
-            self.assertEqual(status["status"], "schema_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "opencode.json")
+            self.assertEqual(status["adapter_status"], "schema_error")
 
     def test_status_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1008,8 +1035,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "schema_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "schema_error")
             self.assertTrue((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
     def test_review_requires_findings_array_in_status_and_debug_artifacts(self) -> None:
@@ -1025,8 +1052,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
             status_dir = paths["output_dir"] / "status"
-            status = load_json_file(status_dir / "codex.json")
-            self.assertEqual(status["status"], "schema_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "schema_error")
             self.assertEqual(status["error_class"], "SchemaValidationError")
             self.assertEqual(
                 status["error_message_redacted"], "adapter output findings must be an array"
@@ -1155,8 +1182,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(
                 [finding["title"] for finding in batch["findings"]], ["Validate before indexing"]
             )
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "success")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "success")
             self.assertFalse((paths["output_dir"] / "status" / "codex-parse-debug.txt").exists())
 
     def test_status_timeout(self) -> None:
@@ -1174,8 +1201,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "timeout")
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "timeout")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "timeout")
 
     def test_timeout_archives_partial_output_for_debugging(self) -> None:
         # A timeout preserves the reviewer's partial output for diagnosis.
@@ -1203,7 +1230,9 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
                 paths["adapter_dir"],
                 "codex",
                 "#!/bin/sh\nprintf 'provider failure: token=never-publish-this\\n' >&2\n"
-                + 'cat <<\'EOF\'\n{"findings":[]}' + " " * 2048 + "\nEOF\n",
+                + "cat <<'EOF'\n{\"findings\":[]}"
+                + " " * 2048
+                + "\nEOF\n",
             )
             self._set_env(paths, config_path)
             with (
@@ -1217,13 +1246,13 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertIn("provider failure: token=[REDACTED]", errors.getvalue())
             self.assertNotIn("never-publish-this", errors.getvalue())
 
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "model_error")
+            status = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(status["adapter_status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterOutputLimitError")
             self.assertIn("exceeded 1024 bytes", status["error_message_redacted"])
             batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
             self.assertEqual(batch["adapter_status"], "model_error")
-            self.assertFalse(batch["usable_for_resolution"])
+            self.assertFalse(batch_quality_fields(batch)["usable_for_resolution"])
 
     def test_output_limit_log_tails_neutralize_workflow_commands(self) -> None:
         # The limit fails the run before parsing, so stdout needs no schema.
@@ -1239,8 +1268,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(
                 paths["adapter_dir"],
                 "codex",
-                f"#!/bin/sh\ncat <<'EOF'\n{raw}\nEOF\n"
-                f"cat <<'EOF' >&2\n{diagnostic}\nEOF\n",
+                f"#!/bin/sh\ncat <<'EOF'\n{raw}\nEOF\ncat <<'EOF' >&2\n{diagnostic}\nEOF\n",
             )
             self._set_env(paths, config_path)
             with (
@@ -1291,8 +1319,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
 
             batch = load_json_file(paths["output_dir"] / "findings" / "cursor.json")
             self.assertEqual(batch["adapter_status"], "skipped")
-            status = load_json_file(paths["output_dir"] / "status" / "cursor.json")
-            self.assertEqual(status["status"], "skipped")
+            status = load_json_file(paths["output_dir"] / "findings" / "cursor.json")
+            self.assertEqual(status["adapter_status"], "skipped")
             self.assertFalse(sentinel.exists())
 
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
@@ -1319,8 +1347,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(batch["critic"], "codex")
             pooled = load_json_file(paths["output_dir"] / "pooled_findings" / "codex.json")
             self.assertEqual(pooled["source_finding_ids"]["F001"], "1" * 64)
-            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
-            self.assertEqual(status["status"], "success")
+            status = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
+            self.assertEqual(status["adapter_status"], "success")
 
     def test_pool_audit_copy_cannot_change_trusted_short_id_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1399,10 +1427,10 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertEqual(run_prepared_adapter("codex", "critique"), _EXIT_ERROR)
 
             batch = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
-            status = load_json_file(paths["output_dir"] / "status" / "critique-codex.json")
+            status = load_json_file(paths["output_dir"] / "critiques" / "codex.json")
             self.assertEqual(batch["adapter_status"], "schema_error")
             self.assertEqual(batch["critiques"], [])
-            self.assertEqual(status["status"], "schema_error")
+            self.assertEqual(status["adapter_status"], "schema_error")
             self.assertEqual(status["error_class"], "SchemaValidationError")
 
 

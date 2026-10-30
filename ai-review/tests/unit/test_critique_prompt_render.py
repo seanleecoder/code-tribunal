@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ai_review.config import effective_config_binding
 from ai_review.consensus_errors import ConsensusIntegrityError
+from ai_review.outcomes import admit_outcomes
 from ai_review.prompt_render import build_pooled_findings, render_critique_prompt
 from ai_review.reviewers import trusted_runtime_root
 from ai_review.schema import write_canonical_json
@@ -126,7 +127,12 @@ class CritiquePromptRenderTests(unittest.TestCase):
             [valid, valid],
         ):
             with self.subTest(batches=batches), self.assertRaises(ConsensusIntegrityError):
-                build_pooled_findings(_manifest(), batches, _config(), "opencode")
+                admit_outcomes(
+                    ((b["reviewer"], b) for b in batches),
+                    stage="review",
+                    config=_config(),
+                    manifest=_manifest(),
+                )
 
     def test_repository_critique_prompt_requires_verdict_per_finding(self) -> None:
         prompt = _SHIPPED_CRITIQUE_PROMPT
