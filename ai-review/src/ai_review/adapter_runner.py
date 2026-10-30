@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ from .adapter_output import (
     _load_adapter_json,
 )
 from .adapter_process import (
+    AdapterOutputLimitError,
     _build_adapter_env,
     _effective_adapter_timeout_seconds,
     _model_id_validation_error,
@@ -32,7 +34,7 @@ from .config import (
     recorded_effective_config_digest,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
-from .redact import redact_text
+from .redact import escape_legacy_workflow_commands
 from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
@@ -50,9 +52,7 @@ from .schema import (
 
 _EXIT_ERROR = 1
 
-# Upper bound for the full-stdout parse-failure artifact. Large enough to hold a
-# complete reviewer stream, small enough that a runaway adapter cannot fill the
-# job's artifact quota. A hit is marked in the file rather than silently trimmed.
+
 def run_adapter(reviewer: str, stage: str) -> int:
     input_dir = Path(os.environ.get("AI_REVIEW_INPUT_DIR", "inputs"))
     output_dir = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
@@ -200,23 +200,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
             command.extend(arguments)
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
-        # Opt-in live mirroring of the adapter's output to the job log; off by
-        # default to avoid large stream-json/--verbose dumps and log truncation.
-        mirror_logs = os.environ.get("AI_REVIEW_STREAM_ADAPTER_LOGS", "0") == "1"
         try:
-            result = _run_adapter_process(
-                command, env, timeout_seconds, mirror_logs=mirror_logs, cwd=workspace
-            )
+            result = _run_adapter_process(command, env, timeout_seconds, cwd=workspace)
         finally:
             # The runner created the workspace, so it removes it, even after a
             # timeout kill that no shell trap would survive.
             if workspace is not None:
                 shutil.rmtree(workspace, ignore_errors=True)
-        # When not mirroring live, still surface the adapter's stderr after it
-        # exits (adapters like codex narrate progress there) — matching the
-        # pre-streaming behavior. When mirroring, it was already echoed live.
-        if not mirror_logs and result.stderr:
-            sys.stderr.write(redact_text(result.stderr))
+        if result.stderr:
+            sys.stderr.write(result.stderr)
         if prompt_tmp is not None:
             prompt_tmp.unlink(missing_ok=True)
         if result.returncode != 0 and not result.stdout.strip():
@@ -290,9 +282,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return 0
     except subprocess.TimeoutExpired as exc:
-        # Archive whatever the reviewer emitted before the kill so a timeout is
-        # debuggable even when live mirroring was off (the default) — otherwise a
-        # stuck reviewer leaves no trace of what it was doing.
+        # Preserve bounded, redacted diagnostics for a stuck reviewer.
         _write_parse_debug(
             output_dir,
             reviewer,
@@ -306,6 +296,21 @@ def run_adapter(reviewer: str, stage: str) -> int:
             digest=config_digest,
             model=model,
             error_class="TimeoutExpired",
+            error_message=str(exc),
+        )
+    except AdapterOutputLimitError as exc:
+        for stream, tail in (("stdout", exc.stdout), ("stderr", exc.stderr)):
+            if tail:
+                # Prefixing every line stops :: workflow commands.
+                lines = escape_legacy_workflow_commands(tail).splitlines()
+                sys.stderr.write(
+                    f"adapter {stream} tail:\n" + "".join(f"  | {line}\n" for line in lines)
+                )
+        return _fail(
+            "model_error",
+            digest=config_digest,
+            model=model,
+            error_class="AdapterOutputLimitError",
             error_message=str(exc),
         )
     except Exception as exc:
@@ -323,6 +328,10 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("reviewer")
     parser.add_argument("stage", choices=["review", "critique"])
     args = parser.parse_args(argv)
+    # Ignored signals survive exec. The runner must own child reaping so waitid
+    # can reserve the leader PID until process-group cleanup has signalled it.
+    if signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     return run_adapter(args.reviewer, args.stage)
 
 

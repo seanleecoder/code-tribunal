@@ -691,15 +691,15 @@ class RunHealthTests(unittest.TestCase):
         self.assertEqual(claude["error_message"], "boom second line")
 
     def test_oversized_status_text_is_omitted_before_redaction(self) -> None:
-        # Unterminated PEM headers make the redaction regex quadratic, and the
-        # runner stores whole adapter stderr. Cutting instead of omitting would
+        # Status text is untrusted: a model CLI in the same job can rewrite it
+        # with arbitrarily long text. Cutting instead of omitting would
         # split a secret past recognition and, once earlier secrets are masked,
         # pull the fragment into the displayed prefix.
         key = "-----BEGIN PRIVATE KEY----- {} -----END PRIVATE KEY-----".format(
             " ".join(f"KEYBYTES{index:05d}" for index in range(240))
         )
         cases = {
-            "quadratic headers": "-----BEGIN PRIVATE KEY-----" * 8000,
+            "repeated headers": "-----BEGIN PRIVATE KEY-----" * 8000,
             "key block across the bound": " ".join([key] * 3),
             "whitespace-free JWT across the bound": "eyJ" + "a" * 20 + "." + "b" * 9000 + ".sig",
         }

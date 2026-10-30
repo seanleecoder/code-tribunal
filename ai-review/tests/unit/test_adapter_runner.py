@@ -4,10 +4,11 @@ import contextlib
 import io
 import json
 import os
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -34,10 +35,48 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.adapter_inputs import (  # noqa: E402
     bind_manifest_to_config,
     run_prepared_adapter,
+    write_adapter_input_bundle,
 )
-from support.config_yaml import CONFIG_TAIL, config_tail, panel_filler  # noqa: E402
+from support.config_yaml import (  # noqa: E402
+    CONFIG_TAIL,
+    SHIPPED_CONFIG_PATH,
+    config_tail,
+    panel_filler,
+)
 
 _CONFIG_TAIL = CONFIG_TAIL
+
+
+class AdapterCliSignalTests(unittest.TestCase):
+    def test_cli_reaps_children_after_inheriting_ignored_sigchld(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = Path(tmp) / "inputs"
+            output = Path(tmp) / "output"
+            write_adapter_input_bundle(inputs)
+            bind_manifest_to_config(inputs, SHIPPED_CONFIG_PATH)
+            # An ignored disposition survives exec, so the public entry point
+            # inherits it exactly as it would from an external launcher.
+            result = subprocess.run(
+                [sys.executable, "-B", "-m", "ai_review.adapter_runner", "claude", "review"],
+                preexec_fn=lambda: signal.signal(signal.SIGCHLD, signal.SIG_IGN),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    "PYTHONPATH": str(SHIPPED_CONFIG_PATH.parents[1] / "src"),
+                    "AI_REVIEW_INPUT_DIR": str(inputs),
+                    "AI_REVIEW_OUTPUT_DIR": str(output),
+                    "AI_REVIEW_LOCAL_MOCK": "1",
+                    "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            status = load_json_file(output / "status" / "claude.json")
+            self.assertEqual(status["status"], "success")
+            self.assertIsNone(status["error_class"])
+            batch = load_json_file(output / "findings" / "claude.json")
+            self.assertEqual(batch["adapter_status"], "success")
 
 
 class AdapterModelIdValidationTests(unittest.TestCase):
@@ -1030,6 +1069,30 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertIn("...[truncated]...", preview)
             self.assertIn("\n", preview.split("stdout_preview:")[1].strip())
 
+    def test_parse_failure_redacts_secrets_before_building_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            diagnostic = (
+                "old progress\n" * 500
+                + "-----BEGIN PRIVATE KEY-----\n"
+                + "private-key-material\n" * 500
+                + "-----END PRIVATE KEY-----\nlast progress\n"
+            )
+            _write_adapter(
+                paths["adapter_dir"], "codex", f"#!/bin/sh\ncat <<'EOF'\n{diagnostic}EOF\n"
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
+
+            for suffix in ("debug", "raw-stdout"):
+                artifact = paths["output_dir"] / "status" / f"codex-parse-{suffix}.txt"
+                text = artifact.read_text(encoding="utf-8")
+                self.assertNotIn("private-key-material", text)
+                self.assertIn("[REDACTED]", text)
+                self.assertIn("last progress", text)
+
     def test_successful_run_writes_no_parse_debug_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
@@ -1114,38 +1177,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             status = load_json_file(paths["output_dir"] / "status" / "codex.json")
             self.assertEqual(status["status"], "timeout")
 
-    def test_timeout_kills_child_holding_pipe_open(self) -> None:
-        # Adapters don't exec their final CLI, so the reviewer runs as a child of
-        # the shell and inherits the stdout/stderr pipes. On timeout we must kill
-        # the whole process group: killing only the shell orphans the child, which
-        # keeps the pipes open and would hang the pump threads (and the timeout)
-        # until the child exits on its own. The long-lived grandchild here makes
-        # that hang observable — the call must still return promptly.
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(paths["config_dir"], "codex", timeout_seconds=6)
-            _write_adapter(
-                paths["adapter_dir"],
-                "codex",
-                "#!/bin/sh\nsleep 30\n",
-            )
-            self._set_env(paths, config_path)
-
-            started = time.monotonic()
-            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
-            elapsed = time.monotonic() - started
-
-            # Effective timeout is ~1s (config 6 minus the runner's 5s margin); a
-            # correct group-kill returns in a couple of seconds. If it regressed to
-            # killing only the shell, this would block ~30s until `sleep` exits.
-            self.assertLess(elapsed, 15)
-            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
-            self.assertEqual(status["status"], "timeout")
-
     def test_timeout_archives_partial_output_for_debugging(self) -> None:
-        # A timeout must leave a post-mortem even when live mirroring is off (the
-        # default): whatever the reviewer emitted before the kill is archived to a
-        # timeout-debug artifact so a stuck reviewer isn't a black box.
+        # A timeout preserves the reviewer's partial output for diagnosis.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "codex", timeout_seconds=6)
@@ -1161,6 +1194,66 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             debug = paths["output_dir"] / "status" / "codex-timeout-debug.txt"
             self.assertTrue(debug.exists())
             self.assertIn("progress-marker", debug.read_text(encoding="utf-8"))
+
+    def test_oversized_output_is_a_model_error_even_with_a_valid_json_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                "#!/bin/sh\nprintf 'provider failure: token=never-publish-this\\n' >&2\n"
+                + 'cat <<\'EOF\'\n{"findings":[]}' + " " * 2048 + "\nEOF\n",
+            )
+            self._set_env(paths, config_path)
+            with (
+                mock.patch("ai_review.adapter_process._ADAPTER_OUTPUT_LIMIT_BYTES", 1024),
+                contextlib.redirect_stderr(errors := io.StringIO()),
+            ):
+                self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
+
+            self.assertIn("adapter stdout tail:", errors.getvalue())
+            self.assertIn("adapter stderr tail:", errors.getvalue())
+            self.assertIn("provider failure: token=[REDACTED]", errors.getvalue())
+            self.assertNotIn("never-publish-this", errors.getvalue())
+
+            status = load_json_file(paths["output_dir"] / "status" / "codex.json")
+            self.assertEqual(status["status"], "model_error")
+            self.assertEqual(status["error_class"], "AdapterOutputLimitError")
+            self.assertIn("exceeded 1024 bytes", status["error_message_redacted"])
+            batch = load_json_file(paths["output_dir"] / "findings" / "codex.json")
+            self.assertEqual(batch["adapter_status"], "model_error")
+            self.assertFalse(batch["usable_for_resolution"])
+
+    def test_output_limit_log_tails_neutralize_workflow_commands(self) -> None:
+        # The limit fails the run before parsing, so stdout needs no schema.
+        raw = '{"findings":[]}' + " " * 2048 + '"##[add-mask]body-marker"'
+        diagnostic = (
+            "::add-mask::stderr-marker\n"
+            "  ::stop-commands::stop-marker\r"
+            "embedded ##[warning]legacy-marker\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            _write_adapter(
+                paths["adapter_dir"],
+                "codex",
+                f"#!/bin/sh\ncat <<'EOF'\n{raw}\nEOF\n"
+                f"cat <<'EOF' >&2\n{diagnostic}\nEOF\n",
+            )
+            self._set_env(paths, config_path)
+            with (
+                mock.patch("ai_review.adapter_process._ADAPTER_OUTPUT_LIMIT_BYTES", 1024),
+                contextlib.redirect_stderr(errors := io.StringIO()),
+            ):
+                self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
+
+            log = errors.getvalue()
+            for marker in ("body-marker", "stderr-marker", "stop-marker", "legacy-marker"):
+                self.assertIn(marker, log)
+            self.assertNotIn("##[", log)
+            self.assertFalse(any(line.lstrip().startswith("::") for line in log.splitlines()))
 
     def test_status_skipped_is_config_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,9 +1,9 @@
 # Code Tribunal: aggressive simplification review
 
 > Historical audit at the reviewed snapshot. Current dispositions are in the
-> [audit README](README.md). Completed S02, S10 and S17 sections are evidence
-> only, not implementation instructions; each open item still needs its own
-> decision before implementation.
+> [audit README](README.md). Completed sections are evidence only, not
+> implementation instructions; each open item still needs its own decision
+> before implementation.
 
 **Repository:** [seanleecoder/code-tribunal](https://github.com/seanleecoder/code-tribunal)
 

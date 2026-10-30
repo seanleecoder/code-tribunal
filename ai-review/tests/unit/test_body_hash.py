@@ -43,6 +43,66 @@ class BodyHashTests(unittest.TestCase):
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
 
+    def test_pem_header_prose_keeps_remediation_while_complete_keys_are_masked(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        remediation = "rotate it and purge history."
+        prose = f"key.pem commits a `{header}` header; {remediation}"
+        key_block = (
+            f"key.pem commits {header}\nsynthetic-key-material\n"
+            f"-----END RSA PRIVATE KEY-----; {remediation}"
+        )
+        group = self._group()
+        group["body"] = prose
+        rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+        self.assertIn(header, rendered)
+        self.assertIn(remediation, rendered)
+
+        group["body"] = key_block
+        rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+        self.assertIn(remediation, rendered)
+        self.assertIn("[REDACTED]", rendered)
+        self.assertNotIn("synthetic-key-material", rendered)
+        self.assertNotIn(header, rendered)
+
+    def test_incomplete_pem_blocks_are_masked_in_all_model_text_sections(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        material = "MIIEpAIBAAKCAQEAU3ludGhldGljS2V5TWF0ZXJpYWw="
+        incomplete = f"{header}\n{material}"
+        cases = {
+            "missing footer": incomplete,
+            "four-dash footer": incomplete + "\n----END RSA PRIVATE KEY----",
+            "missing PRIVATE in footer": incomplete + "\n-----END RSA KEY-----",
+            "escaped footer": incomplete + "\n" + r"\-\-\-\-\-END RSA PRIVATE KEY\-\-\-\-\-",
+            "quoted block": f"`{incomplete}`",
+            "quoted header before material": f"`{header}`\n{material}",
+            "quoted header before another block": f"`{header}` header; rotate it.\n{incomplete}",
+            "inline quoted header before material": f"`{header}` {material}",
+            "inline material without a separator": f"`{header}`{material}",
+            "inline four-dash footer": f"`{header}` {material} ----END RSA PRIVATE KEY----",
+            "inline missing PRIVATE": f"`{header}` {material} -----END RSA KEY-----",
+            "payload after prose": f"`{header}` header; the value is {material}",
+            "JSON escaped newline": f"`{header}`\\n{material}",
+        }
+        chunks = [material[index:index + 4] for index in range(0, len(material), 4)]
+        for separator in (" ", ",", ".", "-", "` `", "\u200b", "\u00ad"):
+            cases[f"payload split by {separator!r}"] = f"`{header}` " + separator.join(chunks)
+        for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            cases[f"Unicode line separator {separator!r}"] = f"`{header}`{separator}{material}"
+        for field in ("title", "body", "evidence", "dissent", "suggestion"):
+            for case, text in cases.items():
+                with self.subTest(field=field, case=case):
+                    group = self._group()
+                    if field == "evidence":
+                        group["evidence_by_reviewer"] = {"claude": text}
+                    elif field == "dissent":
+                        group["critique_disputes"] = [{"critic": "codex", "rationale": text}]
+                    else:
+                        group[field] = text
+                    rendered, _ = render_body(group, "run", posting_mode="github_reviews")
+                    self.assertNotIn("MIIE", rendered)
+                    self.assertNotIn(header, rendered)
+                    self.assertIn("[REDACTED]", rendered)
+
     def test_body_hash_ignores_source_identity(self) -> None:
         first_group = self._group()
         second_group = self._group()

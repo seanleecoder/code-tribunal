@@ -132,6 +132,9 @@ def _write_parse_debug(
         stdout = stdout.decode("utf-8", errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
+    # Redact complete spans before a preview or artifact limit can split them.
+    stdout = redact_text(stdout)
+    stderr = redact_text(stderr)
     stem = status_file_stem(stage, reviewer)
     debug_path = output_dir / "status" / f"{stem}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,10 +142,10 @@ def _write_parse_debug(
         "\n".join(
             [
                 "stdout_preview:",
-                redact_text(_head_tail_preview(stdout, limit=4000)),
+                _head_tail_preview(stdout, limit=4000),
                 "",
                 "stderr_preview:",
-                redact_text(_head_tail_preview(stderr, limit=4000)),
+                _head_tail_preview(stderr, limit=4000),
                 "",
             ]
         ),
@@ -153,10 +156,9 @@ def _write_parse_debug(
     # at the elided region. Keep the whole thing next to the preview, bounded and
     # redacted, so the next parse failure is readable instead of inferred.
     raw_path = output_dir / "status" / f"{stem}-{kind}-raw-stdout.txt"
-    raw_text = redact_text(stdout)
-    if len(raw_text) > _RAW_STDOUT_ARTIFACT_LIMIT:
-        raw_text = (
-            raw_text[:_RAW_STDOUT_ARTIFACT_LIMIT]
+    if len(stdout) > _RAW_STDOUT_ARTIFACT_LIMIT:
+        stdout = (
+            stdout[:_RAW_STDOUT_ARTIFACT_LIMIT]
             + f"\n...[truncated at {_RAW_STDOUT_ARTIFACT_LIMIT} characters]...\n"
         )
-    raw_path.write_text(raw_text, encoding="utf-8")
+    raw_path.write_text(stdout, encoding="utf-8")
