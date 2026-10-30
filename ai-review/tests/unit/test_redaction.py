@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import tempfile
+import tracemalloc
 import unittest
 
 from ai_review.redact import redact_file_tail, redact_text
@@ -102,6 +104,60 @@ class RedactionTests(unittest.TestCase):
                 self.assertNotIn(header, redacted)
                 self.assertNotIn("key-material", redacted)
                 self.assertIn("[REDACTED]", redacted)
+
+    def test_quoted_pem_header_keeps_ordinary_prose_and_references(self) -> None:
+        header = "-----BEGIN RSA PRIVATE KEY-----"
+        for explanation in (
+            "header committed in config/production/deploy.pem; rotate it.",
+            "header in commit " + "a3ae3330" * 5 + "; rotate it.",
+            "header consumed by loadPrivateKeyFromEnvironment; rotate it.",
+            "header is committed so you should rotate the key.",
+            "header documented in README.md; rotate it.",
+            "header described by MOCK_PRIVATE_KEY in MACHINE.md; rotate it.",
+        ):
+            with self.subTest(explanation=explanation):
+                prose = f"`{header}` {explanation}"
+                self.assertEqual(redact_text(prose, preserve_pem_header_prose=True), prose)
+                self.assertNotIn(header, redact_text(prose))
+
+    def test_quoted_pem_header_masks_decorated_key_prefixes(self) -> None:
+        # Only public format prefixes are needed: incomplete blocks must not need
+        # a complete, parseable private key before they are masked.
+        prefixes = {
+            "RSA": b"\x30\x82\x04\xa4\x02\x01\x00\x02\x82\x01\x01",
+            "EC": b"\x30\x77\x02\x01\x01\x04\x20",
+            "": b"\x30\x2e\x02\x01\x00\x30\x05\x06\x03",
+            "ENCRYPTED": b"\x30\x82\x02\xdd\x30\x57\x06\x09",
+            "OPENSSH": b"openssh-key-v1\x00\x00\x00\x00\x04none",
+        }
+        for kind, prefix in prefixes.items():
+            header = "-----BEGIN " + (kind + " " if kind else "") + "PRIVATE KEY-----"
+            material = base64.b64encode(prefix).decode()
+            for width in (1, 4, 12):
+                for separator in (" ", ",", ".", "-", "` `", "\u200b", "\u00ad"):
+                    chunks = [material[i:i + width] for i in range(0, len(material), width)]
+                    text = f"`{header}` " + separator.join(chunks)
+                    with self.subTest(kind=kind, width=width, separator=separator):
+                        self.assertEqual(
+                            redact_text(text, preserve_pem_header_prose=True), "`[REDACTED]"
+                        )
+
+        for metadata in ("Proc-Type: 4,ENCRYPTED", "DEK-Info: AES-128-CBC,0123456789ABCDEF"):
+            text = f"`-----BEGIN RSA PRIVATE KEY-----` {metadata} a,b,c,d"
+            with self.subTest(metadata=metadata):
+                self.assertEqual(redact_text(text, preserve_pem_header_prose=True), "`[REDACTED]")
+
+    def test_multiline_quoted_pem_rejection_has_bounded_peak_allocation(self) -> None:
+        text = "`-----BEGIN RSA PRIVATE KEY-----` header.\n" + "ab\n" * 100_000
+        tracemalloc.start()
+        try:
+            redacted = redact_text(text, preserve_pem_header_prose=True)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(redacted, "`[REDACTED]")
+        # Includes input-sized regex/suffix copies, but not one object per line.
+        self.assertLess(peak, 8 * len(text))
 
     def test_file_tail_masks_non_ascii_secret_values_before_clipping(self) -> None:
         for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):

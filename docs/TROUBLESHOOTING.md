@@ -62,7 +62,10 @@ Incomplete private-key blocks are redacted through the end of the captured outpu
 Rendered findings preserve single-line explanatory prose that quotes only a PEM
 header in matching backticks. Complete and incomplete private-key blocks remain
 masked, including blocks with malformed or clipped closing markers.
-Anything after the quoted header that may be key material stays masked.
+DER and OpenSSH key preambles after the quoted header remain masked even when
+split by whitespace, punctuation, backticks or invisible separators. Ordinary
+sentences, source paths, commit SHAs and identifiers do not alone count as key
+payloads. Multiline blocks are rejected without allocating a list of their lines.
 
 A parse or validation failure writes two redacted artifacts:
 

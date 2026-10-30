@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import mmap
 import os
 import re
 from collections.abc import Callable
+from itertools import islice
 from typing import BinaryIO
 
 # Matching through EOF prevents repeated BEGIN markers from each scanning to EOF
@@ -13,9 +15,15 @@ _PEM_PRIVATE_KEY = re.compile(
     r".*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
     re.DOTALL,
 )
-# Classifies the suffix before granting the rendered-prose exception. Whitespace
-# matches neither branch, so finditer skips it.
-_PEM_PROSE_PART = re.compile(r"(?P<base64>[A-Za-z0-9+/=]+)|[^A-Za-z0-9+/=\s]+")
+_PEM_LINE_BREAK = re.compile(r"[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
+_PEM_BASE64_CHAR = re.compile(r"[A-Za-z0-9+/=]")
+# DER sequences start with M[A-P]; OpenSSH's magic starts with b3. Look ahead
+# so adjacent candidates cannot hide each other, and allow formatting between
+# characters. Traditional encrypted PEM also carries explicit metadata.
+_PEM_PAYLOAD_START = re.compile(
+    r"(?P<encrypted>(?:Proc-Type|DEK-Info)\s*:)"
+    r"|(?=M[^A-Za-z0-9+/=]*[A-P]|b[^A-Za-z0-9+/=]*3)"
+)
 
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"),
@@ -47,17 +55,35 @@ _UTF8_WHITESPACE = (
 
 
 def _looks_like_pem_payload(value: str) -> bool:
-    # Treat 16 contiguous or 32 whitespace-folded base64 characters as payload.
-    # The larger folded bound allows short explanatory phrases between spaces.
-    folded_length = 0
-    for part in _PEM_PROSE_PART.finditer(value):
-        if part.lastgroup == "base64":
-            length = part.end() - part.start()
-            folded_length += length
-            if length >= 16 or folded_length >= 32:
-                return True
-        else:
-            folded_length = 0
+    # Recognize key preambles rather than treating ordinary words, identifiers
+    # or SHAs as base64. Only a bounded prefix is decoded; truncated keys must
+    # not need a valid body or footer, and separators must not reset detection.
+    for start in _PEM_PAYLOAD_START.finditer(value):
+        if start["encrypted"] is not None:
+            return True
+        characters = _PEM_BASE64_CHAR.finditer(value, start.start())
+        prefix = "".join(part[0] for part in islice(characters, 24)).split("=", 1)[0]
+        decoded = base64.b64decode(prefix[:len(prefix) // 4 * 4])
+        if not decoded:
+            continue
+        magic = b"openssh-key-v1\x00"
+        if decoded.startswith(magic) or magic.startswith(decoded):
+            return True
+        if decoded[0] != 0x30:
+            continue
+        # A DER private key starts with a version INTEGER or an encryption
+        # algorithm SEQUENCE, after its outer SEQUENCE's length octets.
+        length_octets = decoded[1] & 0x7f if decoded[1] & 0x80 else 0
+        # More than four length octets cannot describe a key within the adapter
+        # capture budget; ordinary uppercase words can decode to such bytes.
+        if length_octets > 4:
+            continue
+        offset = 2 + length_octets
+        if len(decoded) <= offset or decoded[offset] == 0x30:
+            return True
+        version = decoded[offset:offset + 3]
+        if any(marker.startswith(version) for marker in (b"\x02\x01\x00", b"\x02\x01\x01")):
+            return True
     return False
 
 
@@ -77,7 +103,7 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
     closing_ticks = len(suffix) - len(suffix.lstrip("`"))
     if (
         start - opening == closing_ticks
-        and len(value.splitlines()) == 1
+        and _PEM_LINE_BREAK.search(value) is None
         and "-----BEGIN" not in suffix
         and not _looks_like_pem_payload(suffix)
     ):
