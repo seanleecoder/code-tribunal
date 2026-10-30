@@ -28,6 +28,7 @@ from .adapter_process import (
 from .config import (
     ConfigError,
     config_from_manifest,
+    effective_config_digest,
     recorded_effective_config_digest,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
@@ -140,8 +141,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if stage not in reviewer_definition.supported_stages:
             raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         config = config_from_manifest(manifest)
-        config_digest = recorded_effective_config_digest(manifest)
-        assert config_digest is not None
+        config_digest = effective_config_digest(config)
         reviewer_config = config.reviewers[reviewer]
         model = reviewer_config.model
         if not reviewer_config.enabled:

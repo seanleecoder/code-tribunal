@@ -60,16 +60,18 @@ RUNTIME_ENV_VARIABLES = {
     "AI_REVIEW_TRUSTED_IMAGE_SHA",
     "AI_REVIEW_IMAGE_TAG",
     "AI_REVIEW_ROOT_DIR",
-    *{f"AI_REVIEW_{name.upper()}_NPM_PACKAGE" for name in REVIEWERS if name != "cursor"},
+    "AI_REVIEW_CLAUDE_NPM_PACKAGE",
+    "AI_REVIEW_CODEX_NPM_PACKAGE",
+    "AI_REVIEW_OPENCODE_NPM_PACKAGE",
 }
+_KNOWN_ENV_VARIABLES = frozenset(CONFIG_ENV_OVERRIDES | RUNTIME_ENV_VARIABLES)
 
 
 def unknown_environment_overrides(names: Iterable[str]) -> list[str]:
     return sorted(
         name
         for name in names
-        if name.startswith("AI_REVIEW_")
-        and name not in CONFIG_ENV_OVERRIDES | RUNTIME_ENV_VARIABLES
+        if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
     )
 
 
@@ -159,10 +161,7 @@ class ReviewConfig:
             if item.name not in {"reviewers", "schema_version"}
         }
         document["schema_version"] = self.schema_version
-        document["reviewers"] = {}
-        for name, reviewer in self.reviewers.items():
-            values = asdict(reviewer)
-            document["reviewers"][name] = values
+        document["reviewers"] = {name: asdict(values) for name, values in self.reviewers.items()}
         return document
 
 
@@ -319,18 +318,26 @@ def recorded_effective_config_digest(manifest: Any) -> str | None:
     return str(digest) if is_sha256(digest) else None
 
 
+def _recorded_effective_config(manifest: Any) -> tuple[dict[str, Any], str]:
+    """Prepare's recorded configuration document and the digest it matches."""
+    digest = recorded_effective_config_digest(manifest)
+    if digest is None:
+        raise EffectiveConfigMismatch("manifest missing effective_config_sha256; re-run prepare")
+    document = manifest.get("effective_config")
+    if not isinstance(document, dict):
+        raise EffectiveConfigMismatch("manifest missing resolved configuration; re-run prepare")
+    if stable_json_hash(document) != digest:
+        raise EffectiveConfigMismatch("manifest effective_config_sha256 mismatch; re-run prepare")
+    return document, digest
+
+
 def config_from_manifest(manifest: Any) -> ReviewConfig:
     """Admit prepare's complete configuration at a CI artifact boundary.
 
     The digest detects mixed/corrupt artifacts, not a malicious manifest writer.
     No environment or YAML is reinterpreted. Credentials are never config fields.
     """
-    digest = recorded_effective_config_digest(manifest)
-    document = manifest.get("effective_config") if isinstance(manifest, dict) else None
-    if digest is None or not isinstance(document, dict):
-        raise EffectiveConfigMismatch("manifest missing resolved configuration; re-run prepare")
-    if stable_json_hash(document) != digest:
-        raise EffectiveConfigMismatch("manifest effective_config_sha256 mismatch; re-run prepare")
+    document, digest = _recorded_effective_config(manifest)
     try:
         config = validate_config(document)
     except ConfigError as exc:
@@ -346,12 +353,7 @@ def config_from_manifest(manifest: Any) -> ReviewConfig:
 
 def require_effective_config_binding(config: ReviewConfig, manifest: Any) -> str:
     """Bind direct reducer/prompt callers to the same prepare configuration."""
-    digest = recorded_effective_config_digest(manifest)
-    if digest is None:
-        raise EffectiveConfigMismatch("manifest missing effective_config_sha256; re-run prepare")
-    document = manifest.get("effective_config")
-    if not isinstance(document, dict) or stable_json_hash(document) != digest:
-        raise EffectiveConfigMismatch("manifest effective_config_sha256 mismatch; re-run prepare")
+    _, digest = _recorded_effective_config(manifest)
     if effective_config_digest(config) != digest:
         raise EffectiveConfigMismatch("config differs from the prepare manifest; re-run prepare")
     return digest

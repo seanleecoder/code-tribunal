@@ -81,21 +81,17 @@ def _age_days(timestamp: str, now: datetime) -> int:
 def _variable_checks(platform: str, names: set[str]) -> list[Check]:
     # GitHub exports a fixed set of known vars into prepare; GitLab project
     # variables become environment variables and can fail configuration loading.
-    unsupported_level, unsupported_consequence = (
+    level, consequence = (
         ("WARN", "it is not passed to prepare; delete it")
         if platform == "github"
         else ("FAIL", "it fails config load")
     )
     return [
-        Check(level, f"{platform}: {kind} variable {name} is set; {consequence}")
-        for level, kind, known, consequence in (
-            ("FAIL", "mock", names & MOCK_VARIABLES, "delete it before a run"),
-            (
-                unsupported_level, "unsupported", unknown_environment_overrides(names),
-                unsupported_consequence,
-            ),
-        )
-        for name in sorted(known)
+        Check("FAIL", f"{platform}: mock variable {name} is set; delete it before a run")
+        for name in sorted(names & MOCK_VARIABLES)
+    ] + [
+        Check(level, f"{platform}: unsupported variable {name} is set; {consequence}")
+        for name in unknown_environment_overrides(names)
     ]
 
 
