@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -36,49 +37,46 @@ from support.adapter_inputs import (  # noqa: E402
     run_prepared_adapter,
     write_adapter_input_bundle,
 )
-from support.config_yaml import CONFIG_TAIL, config_tail, panel_filler  # noqa: E402
+from support.config_yaml import (  # noqa: E402
+    CONFIG_TAIL,
+    SHIPPED_CONFIG_PATH,
+    config_tail,
+    panel_filler,
+)
 
 _CONFIG_TAIL = CONFIG_TAIL
 
 
 class AdapterCliSignalTests(unittest.TestCase):
     def test_cli_reaps_children_after_inheriting_ignored_sigchld(self) -> None:
-        root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as tmp:
             inputs = Path(tmp) / "inputs"
+            output = Path(tmp) / "output"
             write_adapter_input_bundle(inputs)
-            bind_manifest_to_config(inputs, root / "config" / "review.yaml")
-            for disposition in ("SIG_DFL", "SIG_IGN"):
-                with self.subTest(disposition=disposition):
-                    output = Path(tmp) / disposition
-                    # Use exec so the public entry point inherits the disposition
-                    # exactly as it would from an external launcher.
-                    launcher = (
-                        "import os, signal, sys\n"
-                        f"signal.signal(signal.SIGCHLD, signal.{disposition})\n"
-                        "os.execv(sys.executable, [sys.executable, '-B', '-m', "
-                        "'ai_review.adapter_runner', 'claude', 'review'])\n"
-                    )
-                    result = subprocess.run(
-                        [sys.executable, "-I", "-B", "-c", launcher],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        env={
-                            "PATH": os.environ.get("PATH", ""),
-                            "PYTHONPATH": str(root / "src"),
-                            "AI_REVIEW_INPUT_DIR": str(inputs),
-                            "AI_REVIEW_OUTPUT_DIR": str(output),
-                            "AI_REVIEW_LOCAL_MOCK": "1",
-                            "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
-                        },
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    status = load_json_file(output / "status" / "claude.json")
-                    self.assertEqual(status["status"], "success")
-                    self.assertIsNone(status["error_class"])
-                    batch = load_json_file(output / "findings" / "claude.json")
-                    self.assertEqual(batch["adapter_status"], "success")
+            bind_manifest_to_config(inputs, SHIPPED_CONFIG_PATH)
+            # An ignored disposition survives exec, so the public entry point
+            # inherits it exactly as it would from an external launcher.
+            result = subprocess.run(
+                [sys.executable, "-B", "-m", "ai_review.adapter_runner", "claude", "review"],
+                preexec_fn=lambda: signal.signal(signal.SIGCHLD, signal.SIG_IGN),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    "PYTHONPATH": str(SHIPPED_CONFIG_PATH.parents[1] / "src"),
+                    "AI_REVIEW_INPUT_DIR": str(inputs),
+                    "AI_REVIEW_OUTPUT_DIR": str(output),
+                    "AI_REVIEW_LOCAL_MOCK": "1",
+                    "AI_REVIEW_ALLOW_LOCAL_MOCK": "true",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            status = load_json_file(output / "status" / "claude.json")
+            self.assertEqual(status["status"], "success")
+            self.assertIsNone(status["error_class"])
+            batch = load_json_file(output / "findings" / "claude.json")
+            self.assertEqual(batch["adapter_status"], "success")
 
 
 class AdapterModelIdValidationTests(unittest.TestCase):

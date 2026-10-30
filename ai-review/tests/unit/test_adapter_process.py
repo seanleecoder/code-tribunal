@@ -103,7 +103,7 @@ def test_output_limit_fails_instead_of_truncating(
         _run_adapter_process([sys.executable, "-c", script], os.environ.copy(), 5)
     assert time.monotonic() - started < 3
     tails = [caught.value.stdout, caught.value.stderr]
-    assert all(len(tail) <= 4020 for tail in tails)
+    assert all(len(tail) <= 4000 for tail in tails)
     assert "last progress" in tails[stream - 1]
     assert tails[2 - stream] == "failure detail: token=[REDACTED]\n"
 

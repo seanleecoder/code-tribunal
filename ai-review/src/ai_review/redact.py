@@ -3,7 +3,16 @@ from __future__ import annotations
 import mmap
 import os
 import re
+from collections.abc import Callable
 from typing import BinaryIO
+
+# Matching through EOF prevents repeated BEGIN markers from each scanning to EOF
+# for an END. The named markers let rendered prose keep a standalone header.
+_PEM_PRIVATE_KEY = re.compile(
+    r"(?P<pem_header>-----BEGIN[^-]*PRIVATE KEY-----)"
+    r".*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
+    re.DOTALL,
+)
 
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}"),
@@ -18,17 +27,11 @@ SECRET_PATTERNS = [
     re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
     # Bearer authorization headers
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
-    # Matching through EOF prevents repeated BEGIN markers from each scanning
-    # to EOF for an END. Capture the markers so rendered prose can distinguish
-    # a standalone quoted header from an incomplete key block.
-    re.compile(
-        r"(?P<pem_header>-----BEGIN[^-]*PRIVATE KEY-----)"
-        r".*?(?:(?P<pem_end>-----END[^-]*PRIVATE KEY-----)|\Z)",
-        re.DOTALL,
-    ),
+    _PEM_PRIVATE_KEY,
     # keyword=value / keyword: value. The value is \S+ so the entire secret token
-    # is masked even when it contains characters like ! # $ % &.
-    re.compile(r"(?i)(api[_-]?key|token|secret|password)(\s*[=:]\s*)(\S+)"),
+    # is masked even when it contains characters like ! # $ % &. Only the named
+    # value group is masked; the keyword and separator are kept.
+    re.compile(r"(?i)(?:api[_-]?key|token|secret|password)\s*[=:]\s*(?P<value>\S+)"),
 ]
 
 # UTF-8 encodings of Python's Unicode whitespace, including the ASCII separators
@@ -46,14 +49,16 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
     # Only a header enclosed in matching inline-code delimiters may survive.
     # Additional lines or markers could contain key material, so mask them even
     # when the first header is quoted. The EOF match is inspected only once.
+    start = opening = match.start()
+    while opening and match.string[opening - 1] == "`":
+        opening -= 1
+    if opening == start:
+        return "[REDACTED]"
     value = match[0].rstrip()
     suffix = value[len(match["pem_header"]):]
-    prefix = match.string[:match.start()]
-    opening_ticks = len(prefix) - len(prefix.rstrip("`"))
     closing_ticks = len(suffix) - len(suffix.lstrip("`"))
     if (
-        opening_ticks
-        and opening_ticks == closing_ticks
+        start - opening == closing_ticks
         and "\n" not in value
         and "\r" not in value
         and "-----BEGIN" not in suffix
@@ -62,18 +67,22 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
     return "[REDACTED]"
 
 
+def _mask_value(match: re.Match[str]) -> str:
+    return match.string[match.start():match.start("value")] + "[REDACTED]"
+
+
 def redact_text(text: str, *, preserve_pem_header_prose: bool = False) -> str:
-    """Mask secrets, allowing finding prose to quote a standalone PEM header."""
+    """Mask secrets. Rendered findings may opt in to a standalone PEM header."""
     redacted = text
     for pattern in SECRET_PATTERNS:
-        if pattern.groups >= 3:
-            redacted = pattern.sub(
-                lambda match: match.group(1) + match.group(2) + "[REDACTED]", redacted
-            )
-        elif preserve_pem_header_prose and "pem_header" in pattern.groupindex:
-            redacted = pattern.sub(_redact_pem_prose, redacted)
+        replacement: str | Callable[[re.Match[str]], str]
+        if preserve_pem_header_prose and pattern is _PEM_PRIVATE_KEY:
+            replacement = _redact_pem_prose
+        elif "value" in pattern.groupindex:
+            replacement = _mask_value
         else:
-            redacted = pattern.sub("[REDACTED]", redacted)
+            replacement = "[REDACTED]"
+        redacted = pattern.sub(replacement, redacted)
     return redacted
 
 
@@ -114,10 +123,11 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
     spans: list[tuple[int, int]] = []
     with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as capture:
         for byte_pattern in _SECRET_BYTE_PATTERNS:
+            # The keyword pattern preserves its name and separator, masking only
+            # the value, just as redact_text does.
+            group = "value" if "value" in byte_pattern.groupindex else 0
             for match in byte_pattern.finditer(capture):
-                # The keyword pattern preserves its name and separator, masking
-                # only the value, just as redact_text does.
-                start, end = match.span(3 if byte_pattern.groups >= 3 else 0)
+                start, end = match.span(group)
                 if end > offset:
                     spans.append((max(offset, start), end))
         parts: list[bytes] = []

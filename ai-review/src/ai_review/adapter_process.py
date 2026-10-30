@@ -203,9 +203,10 @@ def _run_adapter_process(
         try:
             # Observe exit without reaping: cleanup must signal the group
             # while its leader's PID is still reserved, even with no children.
-            while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-                if _oversized_stream(stdout, stderr):
-                    break
+            while (
+                os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+                and not _oversized_stream(stdout, stderr)
+            ):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
