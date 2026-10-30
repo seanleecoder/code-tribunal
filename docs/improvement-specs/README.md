@@ -11,12 +11,16 @@ deleted rather than archived. `git log` holds them, and a completed spec
 describes work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-Last reviewed against main at `da35afa` (2.0.2 released, 2.0.3 draft open) on
-2026-10-13; simplification decisions added on 2026-10-14 and 2026-10-16.
+Last reviewed against main at `82ef7c9` on 2026-10-30. Historical maintainer
+decisions are recorded below.
 
 ## Open specifications
 
-None. SPEC-66 (run health in the summary comment) shipped in 2.1.0; see
+| ID | Specification | Status | Target |
+|---|---|---|---|
+| S06 | [One outcome artifact per reviewer and stage](s06-result-envelope.md) | Proposed; implementation has not started | Next major release after 2.1.x |
+
+SPEC-66 (run health in the summary comment) shipped in 2.1.0; see
 [`CHANGELOG.md`](../../CHANGELOG.md).
 
 Retired on 2026-10-16:
@@ -51,6 +55,7 @@ recommendation's disposition.
 - **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
 - **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
   SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
+- **Proposed:** S06 ([spec](s06-result-envelope.md)).
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
     canaries every release and the hostile canary when the trust boundary changes
@@ -174,6 +179,7 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
       Critique enablement/blinding, inline sides, stale-head and fork-secret
       switches are deleted. COMPAT-001/002 are removed. Severity downgrading is
       retained pending S11's separate policy decision; S13 is unchanged.
+15. Proposed next: [S06's outcome consolidation](s06-result-envelope.md).
 
 **Rejected:** structured-output-only seats, thread-only state, merged prompts,
 dropping effort settings, and a single cross-platform canary.
