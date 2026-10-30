@@ -96,6 +96,8 @@ versioning.
   without repeated scans, keeping timeout diagnostics responsive. Rendered findings
   preserve single-line prose after a standalone quoted PEM header while still
   masking complete and incomplete key blocks, including malformed footers.
+  Quoting a header does not exempt following inline or whitespace-folded key
+  payloads, and Unicode line separators cannot bypass incomplete-block masking.
   The CLI restores normal child reaping when `SIGCHLD` was inherited as ignored;
   process-group cleanup retains the leader PID until signalling, preventing ID
   reuse races.

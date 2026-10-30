@@ -78,7 +78,19 @@ class BodyHashTests(unittest.TestCase):
             "quoted block": f"`{incomplete}`",
             "quoted header before material": f"`{header}`\n{material}",
             "quoted header before another block": f"`{header}` header; rotate it.\n{incomplete}",
+            "inline quoted header before material": f"`{header}` {material}",
+            "inline material without a separator": f"`{header}`{material}",
+            "inline four-dash footer": f"`{header}` {material} ----END RSA PRIVATE KEY----",
+            "inline missing PRIVATE": f"`{header}` {material} -----END RSA KEY-----",
+            "payload after prose": f"`{header}` header; the value is {material}",
+            "JSON escaped newline": f"`{header}`\\n{material}",
+            "payload folded over spaces": (
+                f"`{header}` "
+                + " ".join(material[index:index + 4] for index in range(0, len(material), 4))
+            ),
         }
+        for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            cases[f"Unicode line separator {separator!r}"] = f"`{header}`{separator}{material}"
         for posting_mode in ("github_reviews", "gitlab_discussions"):
             for field in ("title", "body", "evidence", "dissent", "suggestion"):
                 for case, text in cases.items():
@@ -92,6 +104,7 @@ class BodyHashTests(unittest.TestCase):
                             group[field] = text
                         rendered, _ = render_body(group, "run", posting_mode=posting_mode)
                         self.assertNotIn(material, rendered)
+                        self.assertNotIn("MIIE", rendered)
                         self.assertNotIn(header, rendered)
                         self.assertIn("[REDACTED]", rendered)
 

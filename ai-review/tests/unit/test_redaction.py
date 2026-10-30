@@ -92,6 +92,10 @@ class RedactionTests(unittest.TestCase):
             f"`{header} key-material`",
             f"`{header}`\nkey-material",
             f"`{header}` header; example: {header} key-material",
+            f"`{header}` MIIEpAIBAAKCAQEA",
+            f"`{header}` MIIEpAIBAAKCAQEA ----END RSA PRIVATE KEY----",
+            f"`{header}`\u2028key-material",
+            f"`{header}`\x85key-material",
         ):
             with self.subTest(text=text):
                 redacted = redact_text(text, preserve_pem_header_prose=True)

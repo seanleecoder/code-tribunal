@@ -62,6 +62,9 @@ Incomplete private-key blocks are redacted through the end of the captured outpu
 Rendered findings preserve single-line explanatory prose that quotes only a PEM
 header in matching backticks. Complete and incomplete private-key blocks remain
 masked, including blocks with malformed or clipped closing markers.
+The prose exception conservatively rejects long base64-like runs, including runs
+folded over spaces, and all Unicode line separators. A quoted header does not
+remove the context used to mask a following payload.
 
 A parse or validation failure writes two redacted artifacts:
 
