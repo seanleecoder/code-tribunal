@@ -88,6 +88,21 @@ class DemoPreflightTests(unittest.TestCase):
     def test_unprotected_branch_is_not_an_error(self) -> None:
         self.assertEqual(_failures(_state(protection=None)), [])
 
+    def test_unknown_variables_follow_platform_transport(self) -> None:
+        for name in ("AI_REVIEW_CUSTOM_LABEL", "AI_REVIEW_CRITIQUE_ENABLED"):
+            for platform, level in (("github", "WARN"), ("gitlab", "FAIL")):
+                with self.subTest(name=name, platform=platform):
+                    state = _state()
+                    if platform == "github":
+                        state["github_variables"][name] = "configured"
+                    else:
+                        state["gitlab_variables"].append(_gitlab_variable(name))
+                    checks = preflight.run(_runner(state), NOW)
+                    self.assertEqual([check.level for check in checks], [level])
+                    self.assertIn(name, checks[0].message)
+                    if platform == "github":
+                        self.assertNotIn("fails config load", checks[0].message)
+
     def test_each_2_0_0_drift_is_reported(self) -> None:
         cases = {
             "requires status checks": _state(
@@ -186,8 +201,8 @@ class DemoPreflightTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertTrue(any(expected in c.message for c in checks), checks)
-        self.assertEqual([c.level for c in checks].count("WARN"), 1)
-        self.assertEqual([c.level for c in checks].count("FAIL"), 3)
+        self.assertEqual([c.level for c in checks].count("WARN"), 2)
+        self.assertEqual([c.level for c in checks].count("FAIL"), 2)
 
     def test_gitlab_inspects_more_than_100_variables(self) -> None:
         variables = [

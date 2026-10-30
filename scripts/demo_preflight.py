@@ -2,13 +2,13 @@
 """Read-only preflight of the demo consumers before a live evidence campaign.
 
 Checks the drift that surfaced mid-campaign during 2.0.0. It fails on a
-required status check nothing reports any more, a sticky mock variable, a
-retired variable that fails config load, ``AI_REVIEW_MANUAL=true`` on either
-consumer, a GitHub roster without ``cursor``, and a missing credential. GitLab
+required status check nothing reports any more, a sticky mock variable, an
+unsupported GitLab variable that fails config load, ``AI_REVIEW_MANUAL=true`` on
+either consumer, a GitHub roster without ``cursor``, and a missing credential. GitLab
 credentials and the GitLab manual flag are read at ``environment_scope="*"``,
-and those credentials must be protected and masked. It warns when the GitHub
-resolve token is more than 60 days old. It changes nothing. It needs an
-authenticated ``gh`` and ``glab``.
+and those credentials must be protected and masked. It warns about unsupported
+GitHub variables and when the resolve token is more than 60 days old. It changes
+nothing. It needs an authenticated ``gh`` and ``glab``.
 """
 
 from __future__ import annotations
@@ -79,13 +79,23 @@ def _age_days(timestamp: str, now: datetime) -> int:
 
 
 def _variable_checks(platform: str, names: set[str]) -> list[Check]:
+    # GitHub exports a fixed set of known vars into prepare; GitLab project
+    # variables become environment variables and can fail configuration loading.
+    unsupported_level, unsupported_consequence = (
+        ("WARN", "it is not passed to prepare; delete it")
+        if platform == "github"
+        else ("FAIL", "it fails config load")
+    )
     return [
-        Check("FAIL", f"{platform}: {kind} variable {name} is set; {consequence}")
-        for kind, known, consequence in (
-            ("mock", MOCK_VARIABLES, "delete it before a run"),
-            ("unsupported", unknown_environment_overrides(names), "it fails config load"),
+        Check(level, f"{platform}: {kind} variable {name} is set; {consequence}")
+        for level, kind, known, consequence in (
+            ("FAIL", "mock", names & MOCK_VARIABLES, "delete it before a run"),
+            (
+                unsupported_level, "unsupported", unknown_environment_overrides(names),
+                unsupported_consequence,
+            ),
         )
-        for name in sorted(names & set(known))
+        for name in sorted(known)
     ]
 
 
