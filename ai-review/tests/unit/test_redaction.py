@@ -5,6 +5,16 @@ import unittest
 
 from ai_review.redact import redact_file_tail, redact_text
 
+_LAST = "\nlast progress\n"
+_CLIPPED = "...[truncated]...\n[REDACTED]" + _LAST
+
+
+def _file_tail(diagnostic: str) -> str:
+    with tempfile.TemporaryFile() as capture:
+        capture.write(diagnostic.encode())
+        capture.flush()
+        return redact_file_tail(capture, limit=4000)
+
 
 class RedactionTests(unittest.TestCase):
     def test_secret_patterns_are_redacted(self) -> None:
@@ -64,41 +74,22 @@ class RedactionTests(unittest.TestCase):
 
     def test_file_tail_masks_non_ascii_secret_values_before_clipping(self) -> None:
         for value in ("é" * 10000, "中" * 10000, "pässwörd" * 3000):
-            with self.subTest(value=value[:8]), tempfile.TemporaryFile() as capture:
-                capture.write(("token=" + value + "\nlast progress\n").encode())
-                capture.flush()
-                self.assertEqual(
-                    redact_file_tail(capture),
-                    "...[truncated]...\n[REDACTED]\nlast progress\n",
-                )
+            with self.subTest(value=value[:8]):
+                self.assertEqual(_file_tail("token=" + value + _LAST), _CLIPPED)
 
     def test_file_tail_recognizes_all_unicode_whitespace_before_clipping(self) -> None:
         whitespace = (chr(value) for value in range(0x110000) if chr(value).isspace())
         for character in whitespace:
             for prefix in (f"token{character}={character}", f"Bearer{character}"):
-                with self.subTest(prefix=prefix), tempfile.TemporaryFile() as capture:
-                    capture.write(
-                        (prefix + "never-publish-this" * 2000 + "\nlast progress\n").encode()
-                    )
-                    capture.flush()
-                    self.assertEqual(
-                        redact_file_tail(capture),
-                        "...[truncated]...\n[REDACTED]\nlast progress\n",
-                    )
+                with self.subTest(prefix=prefix):
+                    diagnostic = prefix + "never-publish-this" * 2000 + _LAST
+                    self.assertEqual(_file_tail(diagnostic), _CLIPPED)
 
     def test_file_tail_masks_bearer_values_with_unicode_case_folds_before_clipping(self) -> None:
-        for character in ("İ", "ı", "ſ", "K"):
-            with self.subTest(character=character), tempfile.TemporaryFile() as capture:
-                diagnostic = (
-                    "Bearer prefix" + character + "never-publish-this" * 2000
-                    + "\nlast progress\n"
-                )
-                capture.write(diagnostic.encode())
-                capture.flush()
-                self.assertEqual(
-                    redact_file_tail(capture),
-                    "...[truncated]...\n[REDACTED]\nlast progress\n",
-                )
+        for character in ("İ", "ı", "ſ", "K"):
+            with self.subTest(character=character):
+                diagnostic = "Bearer prefix" + character + "never-publish-this" * 2000 + _LAST
+                self.assertEqual(_file_tail(diagnostic), _CLIPPED)
 
 
 if __name__ == "__main__":

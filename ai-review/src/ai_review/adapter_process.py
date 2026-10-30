@@ -156,21 +156,20 @@ _ADAPTER_DIAGNOSTIC_TAIL_CHARS = 4000
 class AdapterOutputLimitError(RuntimeError):
     """A reviewer exceeded the per-stream capture budget."""
 
-    def __init__(self, message: str, *, stdout: str = "", stderr: str = "") -> None:
+    def __init__(self, message: str, *, stdout: str, stderr: str) -> None:
         super().__init__(message)
         self.stdout = stdout
         self.stderr = stderr
 
 
-def _check_output_size(stdout: BinaryIO, stderr: BinaryIO) -> None:
+def _oversized_stream(stdout: BinaryIO, stderr: BinaryIO) -> str | None:
     for name, stream in (("stdout", stdout), ("stderr", stderr)):
         if os.fstat(stream.fileno()).st_size > _ADAPTER_OUTPUT_LIMIT_BYTES:
-            raise AdapterOutputLimitError(
-                f"adapter {name} exceeded {_ADAPTER_OUTPUT_LIMIT_BYTES} bytes"
-            )
+            return name
+    return None
 
 
-def _kill_process_group(proc: subprocess.Popen[str]) -> None:
+def _kill_process_group(proc: subprocess.Popen[bytes]) -> None:
     # start_new_session makes the adapter PID its process-group ID. Use it even
     # after the adapter exits: a remaining CLI child still belongs to that group.
     # The caller keeps the leader unreaped until this signal, reserving its PID
@@ -195,7 +194,6 @@ def _run_adapter_process(
             command,
             stdout=stdout,
             stderr=stderr,
-            text=True,
             env=env,
             cwd=cwd,
             start_new_session=True,
@@ -203,27 +201,28 @@ def _run_adapter_process(
         deadline = time.monotonic() + timeout_seconds
         timed_out = False
         try:
-            try:
-                # Observe exit without reaping: cleanup must signal the group
-                # while its leader's PID is still reserved, even with no children.
-                while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-                    _check_output_size(stdout, stderr)
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        timed_out = True
-                        break
-                    time.sleep(min(remaining, 0.1))
-            finally:
-                # Also clean up descendants after a normal exit or an output-limit
-                # failure, before reading and closing the capture files.
-                _kill_process_group(proc)
-            _check_output_size(stdout, stderr)
-        except AdapterOutputLimitError as exc:
+            # Observe exit without reaping: cleanup must signal the group
+            # while its leader's PID is still reserved, even with no children.
+            while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                if _oversized_stream(stdout, stderr):
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                time.sleep(min(remaining, 0.1))
+        finally:
+            # Also clean up descendants after a normal exit or an output-limit
+            # failure, before reading and closing the capture files.
+            _kill_process_group(proc)
+        # Sizes only grow, so this also reports a limit hit inside the loop.
+        oversized = _oversized_stream(stdout, stderr)
+        if oversized:
             raise AdapterOutputLimitError(
-                str(exc),
+                f"adapter {oversized} exceeded {_ADAPTER_OUTPUT_LIMIT_BYTES} bytes",
                 stdout=redact_file_tail(stdout, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS),
                 stderr=redact_file_tail(stderr, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS),
-            ) from None
+            )
         stdout.seek(0)
         captured_stdout = stdout.read(_ADAPTER_OUTPUT_LIMIT_BYTES).decode("utf-8", errors="replace")
         captured_stderr = redact_file_tail(stderr, limit=_ADAPTER_DIAGNOSTIC_TAIL_CHARS)

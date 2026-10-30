@@ -20,7 +20,7 @@ def test_group_cleanup_keeps_exited_leader_unreaped(
     cleanup = adapter_process._kill_process_group
     observed = []
 
-    def observe(proc: subprocess.Popen[str]) -> None:
+    def observe(proc: subprocess.Popen[bytes]) -> None:
         try:
             observed.append(os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
         except ChildProcessError:
@@ -154,7 +154,7 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
     assert result.stdout == '{"findings":[]}\n'
     assert result.stderr.startswith("...[truncated]...\n")
     assert result.stderr.endswith("token=[REDACTED]\nlast progress\n")
-    assert len(result.stderr) <= 4020
+    assert len(result.stderr) <= 4000
     assert "private-key-material" not in result.stderr
     assert "never-publish-this" not in result.stderr
     assert capfd.readouterr() == ("", "")

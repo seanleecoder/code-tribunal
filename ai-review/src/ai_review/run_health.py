@@ -26,8 +26,8 @@ from .types import JobOutcome, JobStage, RunHealth, RunHealthGrade, RunHealthJob
 
 ERROR_MESSAGE_LIMIT = 300
 ERROR_CLASS_LIMIT = 120
-# Redaction input bound. The PEM pattern is quadratic in unterminated BEGIN
-# headers, and the runner stores whole adapter stderr unbounded.
+# Redaction input bound. Status text is untrusted: a model CLI in the same job
+# can rewrite the status file with arbitrarily long text.
 REDACTION_INPUT_LIMIT = 8192
 # Longer text is omitted, not cut: a cut can split a secret so redaction no
 # longer recognizes it, and redacting earlier secrets pulls the fragment into

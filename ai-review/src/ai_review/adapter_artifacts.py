@@ -156,10 +156,9 @@ def _write_parse_debug(
     # at the elided region. Keep the whole thing next to the preview, bounded and
     # redacted, so the next parse failure is readable instead of inferred.
     raw_path = output_dir / "status" / f"{stem}-{kind}-raw-stdout.txt"
-    raw_text = stdout
-    if len(raw_text) > _RAW_STDOUT_ARTIFACT_LIMIT:
-        raw_text = (
-            raw_text[:_RAW_STDOUT_ARTIFACT_LIMIT]
+    if len(stdout) > _RAW_STDOUT_ARTIFACT_LIMIT:
+        stdout = (
+            stdout[:_RAW_STDOUT_ARTIFACT_LIMIT]
             + f"\n...[truncated at {_RAW_STDOUT_ARTIFACT_LIMIT} characters]...\n"
         )
-    raw_path.write_text(raw_text, encoding="utf-8")
+    raw_path.write_text(stdout, encoding="utf-8")
