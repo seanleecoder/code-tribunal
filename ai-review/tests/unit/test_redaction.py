@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 
-from ai_review.redact import redact_text
+from ai_review.redact import redact_file_tail, redact_text
 
 
 class RedactionTests(unittest.TestCase):
@@ -54,6 +55,20 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("moresecret", redacted)
         self.assertIn("[REDACTED]", redacted)
         self.assertIn("after", redacted)
+
+    def test_file_tail_masks_bearer_values_with_unicode_case_folds_before_clipping(self) -> None:
+        for character in ("İ", "ı", "ſ", "K"):
+            with self.subTest(character=character), tempfile.TemporaryFile() as capture:
+                diagnostic = (
+                    "Bearer prefix" + character + "never-publish-this" * 2000
+                    + "\nlast progress\n"
+                )
+                capture.write(diagnostic.encode())
+                capture.flush()
+                self.assertEqual(
+                    redact_file_tail(capture),
+                    "...[truncated]...\n[REDACTED]\nlast progress\n",
+                )
 
 
 if __name__ == "__main__":

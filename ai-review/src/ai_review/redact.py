@@ -60,6 +60,10 @@ def redact_file_tail(stream: BinaryIO, *, limit: int = 4000) -> str:
                 source = re.sub(
                     r"(?<!\\)[iks]", lambda match: folds[match[0]], source.replace("(?i)", "")
                 )
+                # Unicode ignore-case also expands ASCII letter ranges. A
+                # conservative byte superset keeps a Bearer value containing
+                # those characters from ending before the clipped window.
+                source = source.replace("A-Za-z", r"A-Za-z\x80-\xff")
             # A conservative superset of Unicode whitespace in UTF-8: this may
             # mask extra non-ASCII text, but cannot miss a split Bearer value.
             source = source.replace(r"\s", r"[\s\x80-\xff]")

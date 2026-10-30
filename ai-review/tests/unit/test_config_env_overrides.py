@@ -134,6 +134,7 @@ def test_unknown_effort_is_rejected(effort):
     "name",
     [
         "AI_REVIEW_CRITIQUE_ENABLED",
+        "AI_REVIEW_STREAM_ADAPTER_LOGS",
         "AI_REVIEW_CODEX_ENABLED",
         "AI_REVIEW_STATE_BACKEND",
         "AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED",

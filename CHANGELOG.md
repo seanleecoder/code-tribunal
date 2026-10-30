@@ -89,7 +89,8 @@ versioning.
   stderr tails, preserving process-group cleanup and stage timeouts. After
   normal completion, job logs show only the final 4,000 redacted stderr
   characters. The internal `AI_REVIEW_STREAM_ADAPTER_LOGS` switch is removed;
-  bounded, redacted parse and timeout artifacts remain available.
+  bounded, redacted parse and timeout artifacts remain available. Diagnostics
+  redact complete secret spans before truncation, including multiline keys.
 - Input preparation resolves GitHub revision metadata through the platform
   client and checks the revision before collection and manifest publication
   (N17). The workflow's JavaScript resolver is removed; automatic runs check out

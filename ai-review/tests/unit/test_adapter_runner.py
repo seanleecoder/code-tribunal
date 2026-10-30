@@ -1029,6 +1029,30 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             self.assertIn("...[truncated]...", preview)
             self.assertIn("\n", preview.split("stdout_preview:")[1].strip())
 
+    def test_parse_failure_redacts_secrets_before_building_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _scaffold_project(Path(tmp))
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
+            diagnostic = (
+                "old progress\n" * 500
+                + "-----BEGIN PRIVATE KEY-----\n"
+                + "private-key-material\n" * 500
+                + "-----END PRIVATE KEY-----\nlast progress\n"
+            )
+            _write_adapter(
+                paths["adapter_dir"], "codex", f"#!/bin/sh\ncat <<'EOF'\n{diagnostic}EOF\n"
+            )
+            self._set_env(paths, config_path)
+
+            self.assertEqual(run_prepared_adapter("codex", "review"), _EXIT_ERROR)
+
+            for suffix in ("debug", "raw-stdout"):
+                artifact = paths["output_dir"] / "status" / f"codex-parse-{suffix}.txt"
+                text = artifact.read_text(encoding="utf-8")
+                self.assertNotIn("private-key-material", text)
+                self.assertIn("[REDACTED]", text)
+                self.assertIn("last progress", text)
+
     def test_successful_run_writes_no_parse_debug_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
