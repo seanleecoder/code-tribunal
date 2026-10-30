@@ -29,33 +29,31 @@ it can be staged independently with their posting/state consumers.
 
 ## Proposed artifact contract
 
-Retain these authoritative paths and schema files:
-
-| Stage | Outcome path | Schema |
-|---|---|---|
-| Review | `out/findings/<reviewer>.json` | `finding_batch.schema.json` |
-| Critique | `out/critiques/<reviewer>.json` | `critique_batch.schema.json` |
+Keep the review (`out/findings/<reviewer>.json`) and critique
+(`out/critiques/<reviewer>.json`) outcome paths and schema files listed in the
+[artifact reference](../reference/artifacts-and-schemas.md).
 
 The current `finding_batch.v2` and `critique_batch.v2` are unreleased, so evolve
 them in place for the same major cutover. The released 2.1.0 schemas use v1;
 there is no supported released v2 shape to decode. Raw authoring contracts,
 `pooled_findings.v2`, finding content and critique content stay as they are.
 
-Both outcome schemas require the following metadata, supplied by the runner:
+Both batches already require `schema_version`, `run_id`,
+`effective_config_sha256` and the existing `adapter_status` enum; review
+batches also require `started_at` and `completed_at`. Add these
+runner-supplied fields:
 
-| Fields | Meaning |
-|---|---|
-| `schema_version` | The stage-specific batch version |
-| `run_id`, `effective_config_sha256` | Binding to prepare's manifest |
-| `adapter_status` | Existing `success`, `skipped`, `timeout`, `model_error`, `schema_error`, `config_error` or `internal_error` |
-| `started_at`, `completed_at`, `duration_ms` | Execution timestamps and nonnegative monotonic duration |
-| `error_class`, `error_message_redacted` | Nullable diagnostic fields; redact and bound before writing |
+| Fields | Stage | Meaning |
+|---|---|---|
+| `started_at`, `completed_at` | Critique | Execution timestamps, as in review |
+| `duration_ms` | Both | Nonnegative monotonic duration |
+| `error_class`, `error_message_redacted` | Both | Nullable diagnostics; redact and bound before writing |
 
 Review retains `reviewer`, `model`, `raw_finding_count`,
-`dropped_finding_count` and `findings`. Critique retains `critic` and `critiques`.
-The directory and schema identify the stage, so no extra `stage` or
-self-referential `output_file` field is needed. Consumers obtain model/effort
-and timeout settings from the admitted manifest configuration as they do today.
+`dropped_finding_count` and `findings`; critique retains `critic` and
+`critiques`. Do not add `stage`, `output_file` or settings fields: the path
+identifies the stage, and the admitted manifest configuration supplies
+model/effort and timeouts.
 
 Remove persisted `accepted_finding_count` and `usable_for_resolution` from
 review outcomes. One pure quality helper derives:
@@ -65,11 +63,14 @@ review outcomes. One pure quality helper derives:
 - review eligibility: `adapter_status == "success"` and either
   `raw_finding_count == 0` or at least one finding was accepted.
 
-Counts must be nonnegative, and accepted plus dropped cannot exceed raw.
-Validate these relationships at transport admission as well as at construction;
-do not recreate an independent eligibility flag or status projection file.
-Keep the existing derived count fields in consensus health rows, since those
-are the operator-facing report rather than another input authority.
+Critique pool selection, consensus and health all use that helper. Counts must
+be nonnegative, and accepted plus dropped cannot exceed raw. Express the
+status-dependent payload, count and error-field rules below as `if`/`then`
+conditionals in both schemas; one `validate_outcome` function adds the count
+arithmetic. Outcome constructors return validated outcomes, the runner publishes
+them without revalidating, and admission calls the same function. Consensus
+health rows keep their derived count fields as the operator-facing report, not
+another input authority.
 
 ## Outcome handling
 
@@ -77,97 +78,96 @@ are the operator-facing report rather than another input authority.
 |---|---|
 | Valid empty review | `success`, zero counts and no findings; eligible |
 | Valid nonempty review | `success`; accepted findings enter the pool and reducer |
-| Some candidates invalid or capped | Retain accepted findings and raw/dropped accounting; health shows the loss and grades the run accordingly; current eligibility is preserved |
+| Some candidates invalid or capped | Retain accepted findings and raw/dropped accounting; health shows the loss and grades the run accordingly |
 | Every reported candidate rejected | Nonzero raw count, no accepted findings; health says `unusable`; ineligible |
 | Valid empty or nonempty critique | `success`; existing critique validation and contribution rules apply |
-| Timeout, output budget failure, model or schema failure | Existing failure classification, empty stage payload; no evidence or resolution eligibility |
-| Disabled seat | `skipped`, empty payload; excluded from the expected enabled roster |
+| Timeout, output budget failure, model or schema failure | Existing failure classification; no evidence or resolution eligibility |
+| Disabled seat | `skipped`; excluded from the expected enabled roster |
 | No outcome delivered | Health says `missing`; never synthesize a successful empty result |
 
-Failure and skipped outcomes require an empty stage payload and zero review
-counts. The failure status distinguishes those zeros from a genuine empty
-success. Successful outcomes carry null error fields; loss during finding
-normalization is recorded by the quality counts, not an invented failure flag.
+Failure and skipped outcomes carry an empty payload and zero review counts; the
+status distinguishes them from an empty success. Successful outcomes carry null
+error fields; normalization loss is recorded by the quality counts, not an
+invented failure flag.
 
-An abnormal or interrupted execution must not become a successful empty
-review. Timeout stdout remains bounded diagnostic material, not evidence.
-This consolidation does not expand partial-output salvage or change the
-existing handling of a completed CLI's nonzero exit with parseable stdout;
-cover that behavior explicitly when migrating the runner tests. A stricter
-exit-code policy is a separate decision.
+Timeout stdout remains bounded diagnostic material, not evidence. This
+consolidation does not expand partial-output salvage or change the existing
+handling of a completed CLI's nonzero exit with parseable stdout; cover that
+behavior explicitly when migrating the runner tests. A stricter exit-code
+policy is a separate decision.
 
 When a valid prepare run/config binding is available, every handled execution
-writes one complete outcome, including failures. Validate the outcome before
-publishing it. Remove `_write_status`, the separate status constructor and the
-status-only fallback. If the runner cannot establish a valid manifest binding,
-exit nonzero with a bounded, redacted diagnostic and emit no authoritative
-outcome. Do not invent `unknown-run`, nullable identity or a success placeholder
-to make such a file admissible. A valid downstream manifest will report the
-undelivered job as missing; an invalid manifest already prevents consensus.
+writes one complete outcome, including failures. Remove `_write_status`, the
+separate status constructor and the status-only fallback. If the runner cannot
+establish a valid manifest binding, exit nonzero with a bounded, redacted
+diagnostic and emit no authoritative outcome. Do not invent `unknown-run`,
+nullable identity or a success placeholder to make such a file admissible. A
+valid downstream manifest will report the undelivered job as missing; an
+invalid manifest already prevents consensus.
 
-Existing redacted parse/timeout debug files may remain under `out/status/` as
-operator diagnostics. Their directory name does not make them outcome inputs.
-Keep S09's private capture, budgets, process cleanup and diagnostic redaction.
-Neither these files nor the on-disk critique pool are reloaded as evidence.
+Redacted parse/timeout debug files stay under `out/status/` and in uploads as
+operator diagnostics; like the on-disk critique pool, they are never reloaded
+as evidence. S09's capture, budgets, cleanup and redaction are unchanged.
 
 ## Admission and authority
 
-Treat all delivered outcomes as untrusted CI transport, including metadata
-written in a job that also runs the model CLI. Critique pooling and consensus
-must use the same admission rules:
+Delivered outcomes are untrusted CI transport, as the
+[security model](../SECURITY_MODEL.md#state-authenticity-and-integrity)
+describes for status files today, including metadata written in a job that
+also runs the model CLI. One outcome loader reads a stage directory, binds each
+file to its filename and admits it through `validate_outcome`. Critique pooling
+and consensus both call it, replacing today's separate finding and critique
+loops. Admission:
 
-1. Validate the stage-specific schema and count relationships.
-2. Match the filename to `reviewer` or `critic`, and require a trusted registry
-   identity. A review artifact cannot substitute for a critique artifact.
-3. Check exact run and effective-config bindings for every present outcome,
-   including failures. Reject duplicates, unknown seats, mismatched filenames,
-   stale bindings and non-skipped results for disabled seats.
-4. Compare delivered outcomes with the enabled roster in the manifest config.
-   Missing files degrade execution health; malformed or misbound present files
-   fail integrity validation rather than being silently discarded.
+1. Validates the stage-specific schema and count relationships.
+2. Matches the filename to `reviewer` or `critic` and requires a trusted
+   registry identity. A review artifact cannot substitute for a critique
+   artifact.
+3. Checks exact run and effective-config bindings for every present outcome,
+   including failures. It rejects duplicates, unknown seats, mismatched
+   filenames, stale bindings and non-skipped results for disabled seats.
+4. In consensus only, compares delivered outcomes with the enabled roster in
+   the manifest config. Missing files degrade execution health; malformed or
+   misbound present files fail integrity validation, where a bad status file
+   counts as absent today.
 
-The runner supplies identity, execution metadata and quality accounting after
-normalizing model output; models do not author those fields. Existing critique
-short-ID binding to the in-memory pool remains intact. A critic whose review
-failed may still supply valid independent critique.
+Models do not author identity, execution metadata or quality accounting.
+Existing critique short-ID binding to the in-memory pool remains intact. A
+critic whose review failed may still supply valid independent critique.
 
-Health derives duration and diagnostic text from the admitted outcome and
-reapplies bounded redaction and workflow-command escaping before rendering.
-It remains observational: health grades and diagnostic fields never feed
-support counts, reducer decisions, resolution quorum or exit policy.
+Health reads no files: it derives duration and diagnostic text from the
+outcomes consensus admitted, and reapplies bounded redaction and
+workflow-command escaping before rendering. It remains observational: health
+grades and diagnostic fields never feed support counts, reducer decisions,
+resolution quorum or exit policy.
 
 `batch_missing` ceases to be an emitted health outcome because batch and status
 are now one artifact. Delete its branch, label and enum member from the
 unreleased `consensus.v3` contract. Keep the remaining consensus fields, health
-row layout and persisted state format. No platform client enters pure modules.
+row layout and persisted state format.
 
 ## Cutover and deletion
 
-One implementation pull request changes the outcome schemas and writer,
+One implementation pull request migrates the outcome schemas and writer,
 critique pool admission, consensus/health consumers, both canonical workflow
-invocations and artifact uploads, and packaged/canary readers together. Those
-consumers currently read both files; splitting their migration would require a
-temporary decoder or writer for both contracts. Updating them together avoids
-that compatibility path. Keep the change centered on the adapter-to-consumer
-artifact contract; it does not require a platform or state migration.
+invocations and artifact uploads, both images, and packaged/canary readers,
+then runs fresh artifacts from prepare. Those consumers read both files today,
+so moving them together needs no decoder, alias, feature flag or dual writer.
+If implementation discovers a real compatibility need, record it in
+[temporary compatibility](../development/temporary-compatibility.md) with a
+removal condition before adding it. The change requires no platform or state
+migration.
 
-Delete `adapter_status.schema.json`, status JSON writing/loading,
+Delete `adapter_status.schema.json`, status JSON writing, loading and uploads,
 `consensus --status-dir`, status mirrors in fixtures, and their obsolete
 assertions. Update the local harness, packaged smoke probes,
-`validate_candidate_canary.py`, both platform canaries and shared lifecycle
-checks to read the complete outcome. Derive any existing canary summary counts
-from its payload; do not turn this into a new canary summary schema or release
-authority. Preserve bounded debug uploads even after removing status JSON
-uploads. Refactor private helpers directly rather than retaining wrappers.
+[`validate_candidate_canary.py`](../../scripts/validate_candidate_canary.py),
+both platform canaries and shared lifecycle checks to read the complete
+outcome. Derive any existing canary summary counts from its payload; do not
+turn this into a new canary summary schema or release authority.
 
-Upgrade the canonical GitHub workflow, GitLab include and both images together,
-then run fresh artifacts from prepare. No old/new online decoder, alias,
-feature flag or dual writer is planned. If implementation discovers a real
-compatibility need, record it in
-[temporary compatibility](../development/temporary-compatibility.md) with a
-removal condition before adding it. Update the artifact reference, CLI docs,
-architecture ownership, troubleshooting and breaking-change notes with the
-implementation; this proposal is not current product documentation.
+Update the artifact reference, security model, CLI docs, architecture
+ownership, troubleshooting and breaking-change notes with the implementation.
 
 ## Acceptance and verification
 
@@ -184,16 +184,15 @@ Extend the smallest existing tests at each owning boundary:
 - Workflow/packaging/canary: remove every status-JSON dependency and
   `--status-dir` invocation while keeping failure diagnostics available.
 - Regression: existing consensus goldens, publish and revision-lifecycle
-  integration cases, and import-boundary checks stay green. Review any golden
-  diff; use `make update-golden` only for an intentional contract change.
+  integration cases, and import-boundary checks stay green; review any golden
+  diff per the [testing guide](../development/testing.md).
 
-Run `make quality` using the documented interpreter/profile and report missing
-native parser/tool prerequisites with local results. Run packaged base/reviewer
-smoke checks in their matching images. Before release, panel and lifecycle
-campaigns on both platforms must exercise the consolidated artifacts on the
-exact candidate images; include hostile evidence as required by the
-[release checklist](../development/release-process.md#release-pull-request-checklist).
+Run `make quality` per the
+[setup guide](../development/setup.md#termux-development-profile) and the
+packaged base/reviewer smoke checks in their matching images. Before release,
+panel and lifecycle campaigns on both platforms must exercise the consolidated
+artifacts on the exact candidate images; include hostile evidence as required
+by the [release checklist](../development/release-process.md#release-pull-request-checklist).
 
 Report deleted paths and measured source/config changes without a deletion
-quota. After implementation, update the active index and audit disposition and
-delete this completed spec; history retains the proposal.
+quota.
