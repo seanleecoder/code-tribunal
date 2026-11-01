@@ -52,7 +52,7 @@ recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S09 (unreleased), S10, S12 (unreleased), S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
 - **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release), S06 (complete reviewer outcomes; status JSON mirrors removed), S11 (severity policy removal; suggestions remain informational), S15 (single-line inline posting and COMPAT-008 writer removal; historical multiline threads and old markers remain readable).
-- **Partial:** S08 (per-seat codecs, through N06; further deletion awaits current CLI traces), S18, S19.
+- **Partial:** S08 (per-seat codecs and Cursor final-answer transport; further deletion awaits current CLI traces), S18, S19.
 - **Closed as bounded cleanup:** S07; the remaining shells only check prerequisites
   and invoke Python-built commands. No further launcher rewrite is planned.
 - **Decided on 2026-10-13 and 2026-10-14:**

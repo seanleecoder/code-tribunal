@@ -11,7 +11,7 @@ from typing import Literal
 
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
-OutputCodec = Literal["batch_json", "claude_stream_json", "cursor_json"]
+OutputCodec = Literal["batch_json", "claude_stream_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -139,14 +139,16 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 ("OPENCODE_DISABLE_MODELS_FETCH", "1"),
             ),
         ),
+        # Pinned Cursor JSON mode aggregates intermediate answers. Text mode
+        # emits the final answer for the shared strict batch codec.
         "cursor": _definition(
             "cursor",
             "cursor_backend",
-            output_codec="cursor_json",
+            output_codec="batch_json",
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
             cli_arguments=(
-                "-p", "--output-format", "json", "--trust", "--sandbox", "disabled",
+                "-p", "--output-format", "text", "--trust", "--sandbox", "disabled",
                 "--mode", "ask", "--model", "{model}",
             ),
             home_files=((

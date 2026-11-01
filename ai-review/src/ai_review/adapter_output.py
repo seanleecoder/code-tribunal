@@ -315,36 +315,12 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
-def _load_cursor_result(stdout: str, *, stage: str) -> Any:
-    try:
-        envelope = json_loads_no_duplicates(stdout)
-    except ValueError as exc:
-        raise SchemaValidationError(
-            f"Cursor result envelope was not JSON: {exc}; preview={_json_preview(stdout)!r}"
-        ) from exc
-    if not isinstance(envelope, dict) or envelope.get("type") != "result":
-        raise SchemaValidationError("Cursor output must be a JSON result envelope")
-    if envelope.get("is_error") is True:
-        error_detail = _json_preview(_terminal_error_detail(envelope))
-        raise AdapterModelError(
-            f"Cursor returned an error result: {error_detail!r}"
-        )
-    result = envelope.get("result")
-    if not isinstance(result, str):
-        raise SchemaValidationError("Cursor result must contain answer text")
-    if not result.strip():
-        raise AdapterModelError("Cursor result was empty")
-    return _load_answer_json(result, stage=stage)
-
-
 def _load_adapter_json(stdout: str, *, codec: OutputCodec, stage: str) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
         raw = _load_answer_json(stdout, stage=stage)
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
-    elif codec == "cursor_json":
-        raw = _load_cursor_result(stdout, stage=stage)
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)

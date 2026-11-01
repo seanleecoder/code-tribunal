@@ -190,17 +190,7 @@ if grep -q '^<CRITIC>$'; then
 else
   result='{"findings":[]}'
 fi
-RESULT="$result" python3 - <<'PY'
-import json
-import os
-payload = {
-    "type": "result",
-    "subtype": "success",
-    "is_error": False,
-    "result": os.environ["RESULT"],
-}
-print(json.dumps(payload))
-PY
+printf '%s\n' "$result"
 """
             cli.write_text(script, encoding="utf-8")
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
@@ -568,7 +558,7 @@ PY
         invocations = cli_args.splitlines()
         self.assertEqual(len(invocations), 1)
         self.assertIn("/cursor-agent -p", invocations[0])
-        self.assertIn("--output-format json", cli_args)
+        self.assertIn("--output-format text", cli_args)
         self.assertIn("--trust", cli_args)
         self.assertIn("--sandbox disabled", cli_args)
         self.assertIn("--mode ask", cli_args)

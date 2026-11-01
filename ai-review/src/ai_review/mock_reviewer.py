@@ -188,8 +188,6 @@ def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
         codec = get_reviewer_definition(args.reviewer).output_codec
         if codec == "claude_stream_json":
             batch = {"type": "result", "is_error": False, "structured_output": batch}
-        elif codec == "cursor_json":
-            batch = {"type": "result", "is_error": False, "result": json.dumps(batch)}
     json.dump(batch, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0

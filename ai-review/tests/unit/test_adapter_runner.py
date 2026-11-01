@@ -178,80 +178,11 @@ class AdapterRunnerOutputTests(unittest.TestCase):
             _load_adapter_json(json.dumps(envelope), codec="batch_json", stage="review"),
             envelope,
         )
-        with self.assertRaisesRegex(SchemaValidationError, "result envelope"):
-            _load_adapter_json('{"findings":[]}', codec="cursor_json", stage="review")
         with self.assertRaisesRegex(SchemaValidationError, "event must be an object with a type"):
             _load_adapter_json('{"findings":[]}', codec="claude_stream_json", stage="review")
         stream = self._claude_answer('{"findings":[]}') + "\n" + json.dumps(envelope)
-        for codec in ("batch_json", "cursor_json"):
-            with self.subTest(codec=codec), self.assertRaises(SchemaValidationError):
-                _load_adapter_json(stream, codec=codec, stage="review")
-
-    def test_cursor_unwraps_only_its_result_text(self) -> None:
-        for stage, text, expected in (
-            ("review", '```json\n{"findings":[]}\n```', {"findings": []}),
-            ("critique", "[]", {"critiques": []}),
-        ):
-            with self.subTest(stage=stage):
-                stdout = json.dumps(
-                    {
-                        "type": "result",
-                        "is_error": False,
-                        "result": text,
-                        "structured_output": {"findings": [{"title": "wrong transport"}]},
-                    }
-                )
-                self.assertEqual(
-                    _load_adapter_json(stdout, codec="cursor_json", stage=stage), expected
-                )
-
-    def test_cursor_empty_and_error_results_are_model_errors(self) -> None:
-        for envelope, message in (
-            ({"type": "result", "result": ""}, "result was empty"),
-            (
-                {
-                    "type": "result",
-                    "is_error": True,
-                    "result": "provider unavailable",
-                    "structured_output": {"findings": []},
-                },
-                "provider unavailable",
-            ),
-        ):
-            with (
-                self.subTest(envelope=envelope),
-                self.assertRaisesRegex(AdapterModelError, message),
-            ):
-                _load_adapter_json(json.dumps(envelope), codec="cursor_json", stage="review")
-        with self.assertRaisesRegex(SchemaValidationError, "answer text"):
-            _load_adapter_json('{"type":"result"}', codec="cursor_json", stage="review")
-
-    def test_cursor_error_details_are_bounded(self) -> None:
-        detail = "provider unavailable\n" + "diagnostic " * 1000 + "cursor-error-tail"
-        for envelope in (
-            {"type": "result", "is_error": True, "result": detail},
-            {"type": "result", "is_error": True, "diagnostic": detail},
-        ):
-            with self.subTest(envelope_field=next(reversed(envelope))):
-                with self.assertRaises(AdapterModelError) as caught:
-                    _load_adapter_json(json.dumps(envelope), codec="cursor_json", stage="review")
-                message = str(caught.exception)
-                self.assertIn("provider unavailable", message)
-                self.assertIn("[truncated]", message)
-                self.assertNotIn("cursor-error-tail", message)
-                self.assertNotIn("\n", message)
-                self.assertLess(len(message), 600)
-
-    def test_cursor_malformed_envelope_includes_a_bounded_preview(self) -> None:
-        stdout = "malformed Cursor response\n" + "diagnostic " * 1000 + "cursor-stdout-tail"
-        with self.assertRaises(SchemaValidationError) as caught:
-            _load_adapter_json(stdout, codec="cursor_json", stage="review")
-        message = str(caught.exception)
-        self.assertIn("preview=", message)
-        self.assertIn("malformed Cursor response", message)
-        self.assertIn("[truncated]", message)
-        self.assertNotIn("cursor-stdout-tail", message)
-        self.assertLess(len(message), 700)
+        with self.assertRaises(SchemaValidationError):
+            _load_adapter_json(stream, codec="batch_json", stage="review")
 
     def test_claude_structured_output_wins_and_is_normalized_for_stage(self) -> None:
         for stage, payload, expected in (
@@ -361,14 +292,9 @@ class AdapterRunnerOutputTests(unittest.TestCase):
     def test_duplicate_keys_are_rejected_at_transport_and_answer_boundaries(self) -> None:
         for codec, stdout in (
             ("batch_json", '{"findings":[],"findings":[]}'),
-            ("cursor_json", '{"type":"result","result":"{}","result":"{}"}'),
             (
                 "claude_stream_json",
                 '{"type":"result","structured_output":{"findings":[],"findings":[]}}',
-            ),
-            (
-                "cursor_json",
-                json.dumps({"type": "result", "result": '{"findings":[],"findings":[]}'}),
             ),
             ("claude_stream_json", self._claude_answer('{"findings":[],"findings":[]}')),
         ):
@@ -409,10 +335,12 @@ class AdapterRunnerOutputTests(unittest.TestCase):
             '} prose {"findings":[]}',
             '] {"findings":[]}',
         ):
-            with self.subTest(text=text), self.assertRaises(SchemaValidationError):
-                _load_adapter_json(
-                    self._claude_answer(text), codec="claude_stream_json", stage="review"
-                )
+            for codec, stdout in (
+                ("batch_json", text),
+                ("claude_stream_json", self._claude_answer(text)),
+            ):
+                with self.subTest(text=text, codec=codec), self.assertRaises(SchemaValidationError):
+                    _load_adapter_json(stdout, codec=codec, stage="review")
 
 
 class StringifiedStructuredOutputTests(unittest.TestCase):
