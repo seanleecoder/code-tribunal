@@ -145,6 +145,19 @@ release instead.
 Copy this into the release pull-request description. Each item records whether it
 applied, and the review checks the evidence it cites.
 
+- [ ] **Compatibility targets:** cite the current
+  [target audit](temporary-compatibility.md#next-major-target-audit-2026-11-01).
+  Record why COMPAT-009/010/011 remain or have reached their deletion criteria
+  before freezing `R`.
+- [ ] **State v2 cutover:** for the first S14 release, rehearse the
+  [migration](../operations.md#state-v2-migration) on both GitHub and GitLab.
+  Pause reviews; export all authenticated notes with IDs/authors; retain exports;
+  convert and inspect; update the target and read it back; delete only obsolete
+  notes; resume on the exact candidate images and rerun from prepare. Verify
+  thread IDs, human dispositions and historical multiline threads survive, and
+  record the paused-review rollback procedure using the v1 exports. Preserve
+  older-format inline fixtures for the separate body-refresh check. Preliminary
+  rehearsals can find bugs before `R`; repeat acceptance on its exact image pair.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`

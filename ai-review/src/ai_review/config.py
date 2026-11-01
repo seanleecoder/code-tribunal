@@ -110,14 +110,8 @@ class PanelConfig:
 
 
 @dataclass(frozen=True)
-class CritiqueConfig:
-    allow_severity_downgrade: bool = False
-
-
-@dataclass(frozen=True)
 class PostingConfig:
     mode: str = "gitlab_discussions"
-    inline_multiline: bool = True
 
 
 @dataclass(frozen=True)
@@ -142,7 +136,6 @@ class LimitsConfig:
 class ReviewConfig:
     reviewers: Mapping[str, ReviewerConfig]
     panel: PanelConfig = field(default_factory=PanelConfig)
-    critique: CritiqueConfig = field(default_factory=CritiqueConfig)
     posting: PostingConfig = field(default_factory=PostingConfig)
     state: StateConfig = field(default_factory=StateConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
@@ -170,7 +163,6 @@ TOP_LEVEL_KEYS = {item.name for item in fields(ReviewConfig)}
 REVIEWER_ALLOWED_KEYS = {item.name for item in fields(ReviewerConfig)}
 REVIEWER_REQUIRED_KEYS = {item.name for item in fields(ReviewerConfig) if item.default is MISSING}
 PANEL_KEYS = {item.name for item in fields(PanelConfig)}
-CRITIQUE_KEYS = {item.name for item in fields(CritiqueConfig)}
 POSTING_KEYS = {item.name for item in fields(PostingConfig)}
 STATE_KEYS = {item.name for item in fields(StateConfig)}
 STATE_RETENTION_KEYS = {item.name for item in fields(StateRetention)}
@@ -402,8 +394,6 @@ def _validate_posting(config: dict[str, Any]) -> dict[str, Any]:
         or posting["mode"] not in {"gitlab_discussions", "github_reviews"}
     ):
         raise ConfigError("posting.mode must be gitlab_discussions or github_reviews")
-    if "inline_multiline" in posting and not isinstance(posting["inline_multiline"], bool):
-        raise ConfigError("posting.inline_multiline must be a boolean")
     return posting
 
 
@@ -513,13 +503,6 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
         resolved_reviewers[name] = _resolve_section(
             ReviewerConfig, {**reviewer, "enabled": enabled}, f"reviewers.{name}"
         )
-    critique = config.get("critique", {})
-    if not isinstance(critique, dict):
-        raise ConfigError("critique must be a mapping")
-    _reject_unknown_keys(critique, CRITIQUE_KEYS, "critique")
-    for flag in sorted(CRITIQUE_KEYS):
-        if flag in critique and not isinstance(critique[flag], bool):
-            raise ConfigError(f"critique.{flag} must be a boolean")
     # The resolution threshold is authored against the *configured* seat count
     # and takes effect against the *enabled* count. The two bounds answer
     # different questions: a threshold above the configured count is an authoring
@@ -573,7 +556,6 @@ def validate_config(config: dict[str, Any]) -> ReviewConfig:
     return ReviewConfig(
         reviewers=resolved_reviewers,
         panel=panel_config,
-        critique=_resolve_section(CritiqueConfig, critique, "critique"),
         posting=_resolve_section(PostingConfig, posting, "posting"),
         state=_resolve_section(StateConfig, state, "state"),
         limits=_resolve_section(LimitsConfig, limits, "limits"),

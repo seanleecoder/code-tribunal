@@ -164,8 +164,6 @@ def test_unsupported_version_has_one_actionable_diagnostic(document, version):
 @pytest.mark.parametrize(
     ("section", "key"),
     [
-        ("critique", "enabled"),
-        ("critique", "blind_reviewer_identity"),
         ("posting", "v1_inline_sides"),
         ("posting", "stale_head_guard"),
         ("posting", "fyi_mode"),
@@ -230,27 +228,29 @@ def test_yaml_cannot_select_a_panel_below_the_floor(document):
         validate_config(document)
 
 
-def test_severity_downgrade_policy_remains_opt_in(document):
-    assert not validate_config(document).critique.allow_severity_downgrade
-    document["critique"]["allow_severity_downgrade"] = True
-    assert validate_config(document).critique.allow_severity_downgrade
-    document["critique"]["allow_severity_downgrade"] = "false"
-    with pytest.raises(ConfigError, match="must be a boolean"):
+@pytest.mark.parametrize("retired", [
+    {"critique": {"allow_severity_downgrade": True}},
+    {"critique": {}},
+    {"posting": {"inline_multiline": True}},
+    {"posting": {"inline_multiline": False}},
+])
+def test_retired_policy_and_placement_settings_require_migration(document, retired):
+    document.update(retired)
+    with pytest.raises(ConfigError, match="unknown config keys.*migrate"):
         validate_config(document)
 
 
 @pytest.mark.parametrize(
-    "section", ["posting", "state", "limits", "reviewers", "panel", "critique"]
+    "section", ["posting", "state", "limits", "reviewers", "panel"]
 )
 def test_digest_binds_every_remaining_section(document, section):
     config = validate_config(document)
     changes = {
-        "posting": {"inline_multiline": False},
+        "posting": {"mode": "github_reviews"},
         "state": {"retention": {"max_records": 1}},
         "limits": {"max_files": 1},
         "reviewers": {"codex": {**document["reviewers"]["codex"], "model": "provider/other"}},
         "panel": {"min_successful_reviewers_for_resolution": 3},
-        "critique": {"allow_severity_downgrade": True},
     }
     document[section].update(changes[section])
     assert effective_config_digest(validate_config(document)) != effective_config_digest(config)

@@ -9,6 +9,22 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: remove severity downgrading (S11).
+  Delete the entire `critique` YAML section, including
+  `critique.allow_severity_downgrade`. Critics' severity suggestions remain
+  informational dissent; final severity, independent support, noise demotion and
+  absence-based resolution retain their existing rules.
+- Breaking, for the next major release: new inline comments use a single line
+  (S15), with spanning ranges shown in their body. Delete
+  `posting.inline_multiline`; failed creates go directly to summary fallback.
+  Old/new/context sides, historical multiline threads, human commands and
+  thread identity remain supported; existing comment positions do not move.
+- Inline markers stop writing the unused zero `source=` attribute. Historical
+  markers remain readable and marker-only differences do not force thread edits.
+  The shorter marker frees visible-body space near the platform limit, so some
+  previously truncated bodies may refresh once. Rollback to 2.0.3 is no longer
+  supported; rolling back state to 2.1.x requires the saved v1 exports.
+
 - Simplify artifact contract tests (S12): remove the reflection-based schema/type
   comparator and test concrete production output and malformed admission instead.
   JSON schemas retain wire-contract authority; production types remain internal
@@ -36,8 +52,7 @@ versioning.
   and `AI_REVIEW_CRITIQUE_ENABLED`; unsupported keys and `AI_REVIEW_` variables
   receive generic migration errors. Per-version removal tables and environment
   tombstones are deleted. Explicit `effort: null` or the existing `unset`
-  environment value clears inherited effort. Severity downgrading remains an
-  opt-in policy pending S11; absence-based resolution is unchanged. Upgrade the
+  environment value clears inherited effort. Absence-based resolution is unchanged. Upgrade the
   canonical workflow/include and both images together and run fresh artifacts
   from prepare; see the [configuration migration](docs/configuration.md#next-major-migration).
 - Breaking, for the next major release: GitLab supports protected direct includes

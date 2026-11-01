@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, overload
+from typing import Literal, cast, overload
 
+from .anchors import anchor_location
 from .canonical import normalize_text, sha256_hex
 from .redact import redact_text
-from .types import FindingGroup
+from .types import Anchor, FindingGroup
 
 # GitHub and GitLab platform comment limits are Unicode character counts.
 PLATFORM_COMMENT_LIMITS = {
@@ -344,13 +345,9 @@ def _inline_marker(
     run_id: object,
     body_hash: str,
 ) -> str:
-    # COMPAT-008: 2.0.3 requires `source=` to read a marker, and it ignores the
-    # value. Without it, a rollback silently drops commands on wontfix and
-    # resolved threads, which it never re-renders.
     return (
         f"<!-- ai-review:v1 issue_id={encode_marker_token(issue_id)} "
-        f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} "
-        f"source={'0' * 64} -->"
+        f"run_id={encode_marker_token(run_id)} body_hash={encode_marker_token(body_hash)} -->"
     )
 
 
@@ -372,6 +369,17 @@ def render_body(
     title_fragment = _span_fragment("Title: ", title, max_length=240, required=True)
     if title_fragment is not None:
         variable_fragments.append(title_fragment)
+    anchor = cast(Anchor, group["representative_anchor"])
+    if anchor["start"] != anchor["end"]:
+        span = anchor_location(anchor)
+        location = _span_fragment(
+            "Range: ",
+            f"{span['path']}:{span['start_line']}-{span['end_line']} ({span['side']})",
+            required=True,
+        )
+        if location is not None:
+            variable_fragments.append(location)
+
     body_fragment = _prose_fragment("Body:", summary, required=True)
     if body_fragment is not None:
         variable_fragments.append(body_fragment)

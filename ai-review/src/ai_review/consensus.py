@@ -159,7 +159,7 @@ def build_consensus(
             groups.append(group)
     else:
         valid_duplicate_links = set()
-    _apply_critiques(groups, critique_batches, config, valid_duplicate_links)
+    _apply_critiques(groups, critique_batches, valid_duplicate_links)
     groups = sorted(groups, key=_group_sort_key)
     jobs = build_run_health_jobs(config, finding_batches, critique_batches)
     return {

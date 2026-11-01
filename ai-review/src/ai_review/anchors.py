@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -51,7 +51,7 @@ def gitlab_line_code(file_path: str, old_line: int | None, new_line: int | None)
     return f"{path_hash}_{old_line or 0}_{new_line or 0}"
 
 
-def anchor_path_key(anchor: dict[str, Any]) -> str:
+def anchor_path_key(anchor: Mapping[str, Any]) -> str:
     side = anchor.get("side")
     path = anchor.get("new_path") if side in {"new", "unchanged"} else anchor.get("old_path")
     if not path:
@@ -423,7 +423,7 @@ class DiffLocationResolver:
         return add_line_codes(anchor)
 
 
-def anchor_location(anchor: dict[str, Any]) -> dict[str, Any]:
+def anchor_location(anchor: Mapping[str, Any]) -> dict[str, Any]:
     """Project an anchor back to the model-facing location that resolves to it."""
     number = _line_key(anchor["side"])
     return {

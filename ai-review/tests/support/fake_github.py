@@ -200,22 +200,10 @@ class FakeGitHubClient:
         return None
 
     def build_position(
-        self, anchor: dict[str, Any], version: PullRequestVersion, *, multiline: bool = False
+        self, anchor: dict[str, Any], version: PullRequestVersion
     ) -> dict[str, Any]:
-        # Delegate rather than re-derive. The hand-written copy this replaced pinned
-        # side to RIGHT and ignored `multiline`, so it could not produce an old-side
-        # or multiline position at all -- a fake that cannot express a shape is a
-        # fake that silently excuses the product from handling it.
-        return build_position(anchor, version, multiline=multiline)
-
-    def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
-        return "start_line" in position
-
-    def single_line_position(self, position: dict[str, Any]) -> dict[str, Any]:
-        single = dict(position)
-        single.pop("start_line", None)
-        single.pop("start_side", None)
-        return single
+        # Use the production single-line construction for every supported side.
+        return build_position(anchor, version)
 
     def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
         return int(response["notes"][0]["id"])

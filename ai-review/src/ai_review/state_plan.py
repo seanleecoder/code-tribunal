@@ -448,7 +448,6 @@ def plan_state(
     consensus: Consensus,
     persisted_state: State,
     inline_candidates: list[FindingGroup],
-    summary_fallback_groups: list[FindingGroup],
     fyi_groups: list[FindingGroup],
     human_commands: dict[str, str],
 ) -> StatePlan:
@@ -464,12 +463,10 @@ def plan_state(
     planned_issue_ids: set[str] = set()
     planning_used_discussion_ids: set[Any] = set()
     # Inline candidates plan first so they claim records and threads before
-    # fallback and fyi groups. Complete-link groups can share their primary
+    # fyi groups. Complete-link groups can share their primary
     # signature's issue ID, so each group keeps its own plan: a later claim
     # cannot replace an accepted match or make the earlier group ambiguous.
-    group_plans = [
-        InlinePlan(group) for group in inline_candidates + summary_fallback_groups + fyi_groups
-    ]
+    group_plans = [InlinePlan(group) for group in inline_candidates + fyi_groups]
     for group_plan in group_plans:
         group = group_plan.group
         issue_id = group["issue_id"]
@@ -575,8 +572,7 @@ def plan_state(
             render_summary_body(
                 consensus["run_id"],
                 consensus["run_health"],
-                summary_fallback_groups
-                + [inline.group for inline in inline_plans if not inline.settled],
+                [inline.group for inline in inline_plans if not inline.settled],
                 fyi_groups,
                 config.limits.max_fyi_findings,
                 posting_mode=config.posting.mode,

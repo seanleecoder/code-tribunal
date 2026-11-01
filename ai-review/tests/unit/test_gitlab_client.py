@@ -101,13 +101,6 @@ class GitLabClientTests(unittest.TestCase):
         self.assertEqual(unchanged["old_line"], 10)
         self.assertEqual(unchanged["new_line"], 12)
 
-    def test_build_position_multiline_adds_line_range(self) -> None:
-        position = build_position(
-            self._anchor("new"), MergeRequestVersion("b", "s", "h"), multiline=True
-        )
-        self.assertEqual(position["line_range"]["start"]["line_code"], "line-start")
-        self.assertEqual(position["line_range"]["end"]["line_code"], "line-end")
-
     def test_fetch_latest_version_uses_highest_id(self) -> None:
         session = FakeSession()
         client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)

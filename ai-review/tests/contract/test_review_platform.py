@@ -9,7 +9,7 @@ a new entry in ``_FAKES`` rather than a parallel suite that can drift.
 The contract:
 
 * fetch version, diff, and current head;
-* build single- and multiline positions;
+* build single-line positions from point and range anchors;
 * create and update a thread;
 * resolve and reopen a thread;
 * create and update the owned state note;
@@ -158,29 +158,34 @@ def test_platform_fetches_version_diff_and_current_head(
 
 
 @pytest.mark.parametrize(("factory", "project"), _FAKES)
-def test_platform_builds_single_and_multiline_positions(
-    factory: Any, project: str
+@pytest.mark.parametrize("side", ["new", "old", "unchanged"])
+def test_platform_builds_single_line_positions_from_ranges(
+    factory: Any, project: str, side: str
 ) -> None:
-    """A multiline position must be retryable as a single line, and collapse cleanly.
-
-    Posting falls back to a single-line comment when a platform rejects the range,
-    so `can_retry_as_single_line` and `single_line_position` are the pair that makes
-    the fallback possible -- and the collapsed position must no longer look
-    retryable, or the fallback would loop.
-    """
     platform = _platform(factory())
     version = platform.fetch_version(project, 1)
-
-    single = platform.build_position(_ANCHOR, version)
-    assert not platform.can_retry_as_single_line(single)
-
-    ranged = platform.build_position(_SPANNING_ANCHOR, version, multiline=True)
-    assert platform.can_retry_as_single_line(ranged)
-
-    collapsed = platform.single_line_position(ranged)
-    assert not platform.can_retry_as_single_line(collapsed)
-    # Collapsing drops only the range; the location it anchors to is unchanged.
-    assert collapsed == {k: v for k, v in ranged.items() if k in collapsed}
+    for source in (_ANCHOR, _SPANNING_ANCHOR):
+        anchor = {
+            **source, "side": side,
+            "start": {"old_line": 10, "new_line": source["start"]["new_line"]},
+            "end": {"old_line": 12, "new_line": source["end"]["new_line"]},
+        }
+        if side == "new":
+            anchor["start"]["old_line"] = anchor["end"]["old_line"] = None
+        elif side == "old":
+            anchor["start"]["new_line"] = anchor["end"]["new_line"] = None
+        position = platform.build_position(anchor, version)
+        assert "line_range" not in position
+        assert "start_line" not in position
+        if "line" in position:
+            key = "old_line" if side == "old" else "new_line"
+            assert position["line"] in (anchor["start"][key], anchor["end"][key])
+            assert position["side"] == ("LEFT" if side == "old" else "RIGHT")
+        else:
+            if side in ("new", "unchanged"):
+                assert position["new_line"] == anchor["start"]["new_line"]
+            if side in ("old", "unchanged"):
+                assert position["old_line"] == anchor["start"]["old_line"]
 
 
 @pytest.mark.parametrize(("factory", "project"), _FAKES)

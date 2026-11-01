@@ -57,29 +57,9 @@ def _diff_path(change: dict[str, Any]) -> str:
     return path if isinstance(path, str) else "<unknown>"
 
 
-def _line_range_type(anchor: dict[str, Any]) -> str:
-    if anchor["side"] == "old":
-        return "old"
-    return "new"
-
-
-def _line_range_endpoint(anchor: dict[str, Any], key: str) -> dict[str, Any]:
-    line = anchor[key]
-    path = anchor["old_path"] if anchor["side"] == "old" else anchor["new_path"]
-    return {
-        "type": _line_range_type(anchor),
-        "old_line": line.get("old_line"),
-        "new_line": line.get("new_line"),
-        "line_code": line.get("line_code")
-        or gitlab_line_code(path, line.get("old_line"), line.get("new_line")),
-    }
-
-
 def build_position(
     anchor: dict[str, Any],
     version: MergeRequestVersion,
-    *,
-    multiline: bool = False,
 ) -> dict[str, Any]:
     start = anchor["start"]
     position = {
@@ -97,11 +77,6 @@ def build_position(
     else:
         position["old_line"] = start["old_line"]
         position["new_line"] = start["new_line"]
-    if multiline and anchor.get("start") != anchor.get("end"):
-        position["line_range"] = {
-            "start": _line_range_endpoint(anchor, "start"),
-            "end": _line_range_endpoint(anchor, "end"),
-        }
     return position
 
 
@@ -528,21 +503,11 @@ class GitLabReviewPlatform:
         self,
         anchor: Anchor,
         version: MergeRequestVersion,
-        *,
-        multiline: bool = False,
     ) -> Position:
-        return build_position(dict(anchor), version, multiline=multiline)
+        return build_position(dict(anchor), version)
 
     def current_user_id(self) -> int | None:
         return current_user_id(self)
-
-    def can_retry_as_single_line(self, position: Position) -> bool:
-        return isinstance(position.get("line_range"), dict)
-
-    def single_line_position(self, position: Position) -> Position:
-        single_line = dict(position)
-        single_line.pop("line_range", None)
-        return single_line
 
     def root_note_id_from_thread(self, response: Thread) -> int:
         return root_note_id_from_discussion(response)

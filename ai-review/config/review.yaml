@@ -40,14 +40,9 @@ reviewers:
 panel:
   min_successful_reviewers_for_resolution: 2
 
-# One blind critique round always runs. Severity downgrading remains an opt-in
-# policy pending the separate S11 decision; it never changes the support rule.
-critique:
-  allow_severity_downgrade: false
-
+# One blind critique round always runs; severity suggestions are informational.
 posting:
   mode: gitlab_discussions # AI_REVIEW_POSTING_MODE selects github_reviews on GitHub.
-  inline_multiline: true
 
 # State integrity, author checks and stale-head protection are unconditional.
 state:

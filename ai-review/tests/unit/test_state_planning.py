@@ -164,7 +164,6 @@ class StatePlanningTests(PostCase):
             state,
             [group],
             [],
-            [],
             {},
         )
 
@@ -196,7 +195,6 @@ class StatePlanningTests(PostCase):
             state,
             [current_group],
             [],
-            [],
             {current_group["issue_id"]: "wontfix", stale_group["issue_id"]: "resolve"},
         )
 
@@ -227,7 +225,6 @@ class StatePlanningTests(PostCase):
             self._state_with_records([previous_record]),
             [],
             [],
-            [],
             {},
         )
 
@@ -249,7 +246,6 @@ class StatePlanningTests(PostCase):
             self._state_with_records([previous_record]),
             [],
             [],
-            [],
             {},
         )
 
@@ -269,7 +265,6 @@ class StatePlanningTests(PostCase):
             consensus,
             state,
             [group],
-            [],
             [],
             {},
         )
@@ -335,27 +330,22 @@ class StatePlanningTests(PostCase):
             self._state_with_records([]),
             [group],
             [],
-            [],
             {},
         )
-        summary_fallback_groups: list[dict[str, Any]] = []
-
         outcome = post_inline(
             client,
             manifest,
             consensus,
             result,
             state_plan,
-            summary_fallback_groups,
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
-            inline_multiline=False,
             dry_run=False,
         )
 
         self.assertIs(outcome.result, result)
         self.assertIs(outcome.state_plan, state_plan)
-        self.assertIs(outcome.summary_fallback_groups, summary_fallback_groups)
+        self.assertEqual(outcome.summary_fallback_groups, [])
         self.assertEqual(outcome.result["created_discussions"], 1)
         self.assertEqual(outcome.result["posted_discussions"][0]["action"], "created")
         planned_record = outcome.state_plan.inline_plans[0].record
@@ -381,7 +371,6 @@ class StatePlanningTests(PostCase):
             manifest,
             consensus,
             persisted_state,
-            [],
             [group],
             [],
             {group["issue_id"]: "resolve"},
@@ -436,7 +425,6 @@ class StatePlanningTests(PostCase):
             manifest,
             consensus,
             persisted_state,
-            [],
             [group],
             [],
             {group["issue_id"]: "resolve"},
@@ -480,7 +468,6 @@ class StatePlanningTests(PostCase):
             manifest,
             consensus,
             persisted_state,
-            [],
             [group],
             [],
             {group["issue_id"]: "resolve"},
@@ -535,7 +522,6 @@ class StatePlanningTests(PostCase):
             manifest,
             consensus,
             persisted_state,
-            [],
             [group],
             [],
             {group["issue_id"]: "reopen"},

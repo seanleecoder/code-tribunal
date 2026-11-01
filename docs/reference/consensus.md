@@ -57,8 +57,8 @@ never erase dissent. A `duplicate` link affects grouping only. Where one critic
 holds several critiques against one final group they collapse to a single
 effective verdict by the precedence `noise > dispute > duplicate > agree`, so a
 critic that voiced any stronger objection is never counted as an unqualified
-supporter. Critique severity downgrades are disabled by default and never cross
-the blocker boundary.
+supporter. Critique severity suggestions remain visible with dissent and never
+change the reported severity.
 
 ## Panel degradation
 

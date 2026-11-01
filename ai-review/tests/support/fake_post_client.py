@@ -89,18 +89,8 @@ class FakePostClient:
         self,
         anchor: dict[str, Any],
         version: MergeRequestVersion,
-        *,
-        multiline: bool = False,
     ) -> dict[str, Any]:
-        return build_position(anchor, version, multiline=multiline)
-
-    def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
-        return isinstance(position.get("line_range"), dict)
-
-    def single_line_position(self, position: dict[str, Any]) -> dict[str, Any]:
-        single_line = dict(position)
-        single_line.pop("line_range", None)
-        return single_line
+        return build_position(anchor, version)
 
     def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
         return root_note_id_from_discussion(response)

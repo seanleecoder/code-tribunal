@@ -87,54 +87,6 @@ def _initial_post_result(
 
 
 @dataclass(frozen=True)
-class PostGroupClassification:
-    inline_candidates: list[FindingGroup]
-    summary_fallback_groups: list[FindingGroup]
-    fyi_groups: list[FindingGroup]
-    warnings: list[str]
-
-
-def _classify_post_groups(
-    groups: list[FindingGroup],
-    *,
-    inline_multiline: bool,
-) -> PostGroupClassification:
-    """Route each consensus group to a thread, the summary fallback, or FYI.
-
-    There is no surfaced-thread cap: every anchorable ``surface`` group becomes a
-    thread. The volume bound is each reviewer's ``max_findings`` upstream. A group
-    reaches the summary only because its anchor cannot carry a thread — never
-    because a configured count was reached.
-    """
-
-    inline_candidates: list[FindingGroup] = []
-    summary_fallback_groups: list[FindingGroup] = []
-    fyi_groups: list[FindingGroup] = []
-    warnings: list[str] = []
-    for group in groups:
-        decision = group.get("decision")
-        if decision == "fyi":
-            fyi_groups.append(group)
-            continue
-        if decision != "surface":
-            continue
-        anchor = group["representative_anchor"]
-        if anchor.get("start") != anchor.get("end") and not inline_multiline:
-            warnings.append("summary fallback required for multiline anchor")
-            summary_fallback_groups.append(group)
-            continue
-        inline_candidates.append(group)
-
-    inline_candidates = _sort_groups(inline_candidates)
-    return PostGroupClassification(
-        inline_candidates=inline_candidates,
-        summary_fallback_groups=summary_fallback_groups,
-        fyi_groups=fyi_groups,
-        warnings=warnings,
-    )
-
-
-@dataclass(frozen=True)
 class InlinePostOutcome:
     result: PostResult
     state_plan: StatePlan
@@ -159,30 +111,11 @@ def _create_inline_discussion(
             position,
         )
     except ReviewPlatformError as exc:
-        if not client.can_retry_as_single_line(position):
-            result["warnings"].append(
-                f"create_discussion for {post_group['issue_id']} failed: {exc}"
-            )
-            summary_fallback_groups.append(group)
-            return None
-        issue_id = post_group["issue_id"]
         result["warnings"].append(
-            f"multiline create failed for {issue_id}; retrying single-line: {exc}"
+            f"create_discussion for {post_group['issue_id']} failed: {exc}"
         )
-        single_line_position = client.single_line_position(position)
-        try:
-            discussion = client.create_inline_comment(
-                manifest["project_id"],
-                manifest["merge_request_iid"],
-                body,
-                single_line_position,
-            )
-        except ReviewPlatformError as retry_exc:
-            result["warnings"].append(
-                f"create_discussion for {post_group['issue_id']} failed: {retry_exc}"
-            )
-            summary_fallback_groups.append(group)
-            return None
+        summary_fallback_groups.append(group)
+        return None
     if not isinstance(discussion, dict) or discussion.get("id") is None:
         result["warnings"].append(
             f"create_discussion for {group['issue_id']} returned no response body; skipped"
@@ -249,20 +182,17 @@ def post_inline(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
     posting_mode: str,
-    inline_multiline: bool,
     dry_run: bool,
 ) -> InlinePostOutcome:
-    """Post inline discussions and return the mutated posting/state phase outputs.
+    """Post inline discussions and return the posting/state phase outputs.
 
-    The monolithic posting path historically updated the result counters,
-    planned state records, and summary fallback list in one pass. Returning the
-    mutated objects makes that seam explicit for callers and direct tests while
-    preserving the in-place behavior expected by the finalization phase.
+    Result counters and planned state records are updated in place; groups whose
+    thread could not be created or updated are returned as summary fallbacks.
     """
+    summary_fallback_groups: list[FindingGroup] = []
     # Planning claims each record and discussion at most once, so no two plans
     # here can reach the same existing thread.
     for inline_plan in state_plan.inline_plans:
@@ -320,7 +250,6 @@ def post_inline(
         position = client.build_position(
             cast(Anchor, post_group["representative_anchor"]),
             version,
-            multiline=inline_multiline,
         )
         created = _create_inline_discussion(
             client,
@@ -588,8 +517,7 @@ def post_consensus(
     *,
     dry_run: bool = False,
 ) -> PostResult:
-    posting = config.posting
-    posting_mode = posting.mode
+    posting_mode = config.posting.mode
     # Fail fast on unsupported modes before fetching or mutating platform state.
     platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
@@ -605,7 +533,6 @@ def post_consensus(
         result["status"] = "stale_head"
         return result
 
-    inline_multiline = posting.inline_multiline
     max_fyi = config.limits.max_fyi_findings
     context = prepare_post_context(
         client,
@@ -616,16 +543,12 @@ def post_consensus(
         current_issue_ids={group["issue_id"] for group in consensus["groups"]},
     )
 
-    # Classify groups: inline-postable surface findings, surface findings that must fall
-    # back to the summary comment (a disabled multiline anchor), and FYI findings.
-    classification = _classify_post_groups(
-        consensus.get("groups", []),
-        inline_multiline=inline_multiline,
-    )
-    inline_candidates = classification.inline_candidates
-    summary_fallback_groups = classification.summary_fallback_groups
-    fyi_groups = classification.fyi_groups
-    result["warnings"].extend(classification.warnings)
+    # Every surface group attempts a single-line thread; placement failures fall
+    # back to the summary during publication. FYI findings go directly to the
+    # summary. The volume bound is each reviewer's max_findings, not a cap here.
+    groups = consensus.get("groups", [])
+    inline_candidates = _sort_groups([g for g in groups if g.get("decision") == "surface"])
+    fyi_groups = [g for g in groups if g.get("decision") == "fyi"]
 
     state_plan = plan_state(
         config,
@@ -633,7 +556,6 @@ def post_consensus(
         consensus,
         context.persisted_state,
         inline_candidates,
-        summary_fallback_groups,
         fyi_groups,
         context.human_commands,
     )
@@ -673,7 +595,7 @@ def post_consensus(
             consensus,
             result,
             None,
-            summary_fallback_groups,
+            [],
             fyi_groups,
             recovered_state,
             posting_mode=posting_mode,
@@ -696,10 +618,8 @@ def post_consensus(
         consensus,
         result,
         state_plan,
-        summary_fallback_groups,
         context.version,
         posting_mode=posting_mode,
-        inline_multiline=inline_multiline,
         dry_run=dry_run,
     )
 
