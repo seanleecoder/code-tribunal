@@ -73,11 +73,9 @@ def load_outcomes(
 ) -> list[dict[str, Any]]:
     """Load one stage directory; absent outcomes remain absent."""
     try:
-        return admit_outcomes(
-            ((path.stem, load_json_file(path)) for path in sorted(Path(directory).glob("*.json"))),
-            stage=stage,
-            config=config,
-            manifest=manifest,
-        )
+        entries = [
+            (path.stem, load_json_file(path)) for path in sorted(Path(directory).glob("*.json"))
+        ]
     except (OSError, ValueError, RecursionError) as exc:
         raise ConsensusIntegrityError(f"cannot admit {stage} outcomes: {exc}") from exc
+    return admit_outcomes(entries, stage=stage, config=config, manifest=manifest)

@@ -12,23 +12,22 @@ from typing import Any, cast
 
 from .config import ReviewConfig, enabled_reviewers
 from .critique import critique_batch_succeeded
-from .redact import bounded_diagnostic, escape_legacy_workflow_commands
-from .schema import batch_quality_fields
+from .redact import (
+    ERROR_CLASS_LIMIT,
+    ERROR_MESSAGE_LIMIT,
+    bounded_diagnostic,
+    escape_legacy_workflow_commands,
+)
+from .schema import batch_quality_fields, batch_usable
 from .types import JobOutcome, JobStage, RunHealth, RunHealthGrade, RunHealthJob
 
-ERROR_MESSAGE_LIMIT = 300
-ERROR_CLASS_LIMIT = 120
 _JOB_STAGES: tuple[JobStage, ...] = ("review", "critique")
 
 
 def _job_outcome(stage: JobStage, batch: dict[str, Any] | None) -> JobOutcome:
     """One job's outcome, derived solely from its admitted artifact."""
     if batch is not None:
-        if (
-            batch_quality_fields(batch)["usable_for_resolution"]
-            if stage == "review"
-            else critique_batch_succeeded(batch)
-        ):
+        if batch_usable(batch) if stage == "review" else critique_batch_succeeded(batch):
             return "success"
         adapter_status = str(batch.get("adapter_status") or "")
         return "unusable" if adapter_status == "success" else cast(JobOutcome, adapter_status)

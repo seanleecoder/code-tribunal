@@ -9,10 +9,9 @@ from typing import Any
 
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
-    batch_quality_fields,
+    batch_usable,
     load_json_file,
-    validate_instance,
-    validate_outcome,
+    validate_artifact,
     write_canonical_json,
 )
 from candidate_canary_common import read_state
@@ -26,10 +25,7 @@ class CanaryValidationError(RuntimeError):
 
 def _load(path: Path, schema: str) -> dict[str, Any]:
     value = load_json_file(path)
-    if schema in {"finding_batch.schema.json", "critique_batch.schema.json"}:
-        validate_outcome(value, "review" if schema.startswith("finding") else "critique")
-    else:
-        validate_instance(value, schema)
+    validate_artifact(value, schema)
     return value
 
 
@@ -102,7 +98,7 @@ def validate_run(
         )
         if finding_batch["reviewer"] != reviewer or critique_batch["critic"] != reviewer:
             raise CanaryValidationError(f"{platform} {reviewer} outcome filename identity mismatch")
-        if not batch_quality_fields(finding_batch)["usable_for_resolution"]:
+        if not batch_usable(finding_batch):
             raise CanaryValidationError(
                 f"{platform} {reviewer} finding batch is not resolution-eligible"
             )

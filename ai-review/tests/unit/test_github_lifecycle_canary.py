@@ -123,7 +123,6 @@ class CreateStepTests(unittest.TestCase):
         self.assertEqual(set(observed["reviewers"]), set(REVIEWERS))
         for seat in observed["reviewers"].values():
             self.assertEqual(seat["adapter_status"], "success")
-            self.assertEqual(seat["status"], "success")
             self.assertEqual(seat["raw_finding_count"], 1)
             self.assertEqual(seat["accepted_finding_count"], 1)
 

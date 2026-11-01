@@ -520,22 +520,22 @@ class GitLabLifecycle(Lifecycle):
         return run, self._post_result(run)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
-        loaded: dict[str, dict[str, Any]] = {"findings": {}}
+        findings: dict[str, Any] = {}
         for archive in self._archives(run, "AI review"):
             for name in archive.namelist():
                 parts = name.split("/")
-                if len(parts) != 3 or parts[0] != "out" or not name.endswith(".json"):
+                if parts[:2] != ["out", "findings"] or len(parts) != 3:
                     continue
-                directory, reviewer = parts[1], parts[2].removesuffix(".json")
-                if directory not in loaded:
+                if not name.endswith(".json"):
                     continue
-                if reviewer in loaded[directory]:
-                    raise LifecycleFailure(f"duplicate {directory} artifact for {reviewer}")
+                reviewer = parts[2].removesuffix(".json")
+                if reviewer in findings:
+                    raise LifecycleFailure(f"duplicate findings artifact for {reviewer}")
                 try:
-                    loaded[directory][reviewer] = json.loads(archive.read(name))
+                    findings[reviewer] = json.loads(archive.read(name))
                 except json.JSONDecodeError, UnicodeDecodeError:
-                    raise LifecycleFailure(f"unreadable {directory} review artifact") from None
-        return lifecycle_reviewer_results(loaded["findings"])
+                    raise LifecycleFailure("unreadable findings review artifact") from None
+        return lifecycle_reviewer_results(findings)
 
     def threads(self) -> list[dict[str, Any]]:
         discussions = _request(

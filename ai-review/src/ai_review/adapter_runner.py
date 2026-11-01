@@ -31,7 +31,7 @@ from .config import (
     require_effective_config_binding,
 )
 from .prompt_render import render_critique_prompt, render_review_prompt
-from .redact import bounded_diagnostic, escape_legacy_workflow_commands
+from .redact import ERROR_MESSAGE_LIMIT, bounded_diagnostic, escape_legacy_workflow_commands
 from .reviewer_setup import prepare_shell_adapter
 from .reviewers import (
     ReviewerRegistryError,
@@ -62,25 +62,26 @@ def run_adapter(reviewer: str, stage: str) -> int:
     config_digest: str | None = None
     model = "unknown-model"
 
+    def _elapsed_ms() -> int:
+        return max(0, int((time.monotonic() - started_monotonic) * 1000))
+
     def _fail(
         status: str,
         *,
-        digest: str | None,
-        model: str,
         error_class: str | None = None,
         error_message: str | None = None,
         exit_code: int = _EXIT_ERROR,
     ) -> int:
         """Publish one complete failure outcome only with a valid binding."""
-        if digest is None:
-            diagnostic = bounded_diagnostic(error_message, 300) or status
+        if config_digest is None:
+            diagnostic = bounded_diagnostic(error_message, ERROR_MESSAGE_LIMIT) or status
             sys.stderr.write(f"ai-review adapter: {escape_legacy_workflow_commands(diagnostic)}\n")
             return exit_code
         fields: dict[str, Any] = {
             "run_id": run_id,
             "started_at": started_at,
-            "duration_ms": max(0, int((time.monotonic() - started_monotonic) * 1000)),
-            "effective_config_sha256": digest,
+            "duration_ms": _elapsed_ms(),
+            "effective_config_sha256": config_digest,
             "error_class": error_class,
             "error_message": error_message,
         }
@@ -118,13 +119,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 "(for image preflight and mock lifecycle runs only)"
             )
         if not reviewer_config.enabled:
-            return _fail("skipped", digest=config_digest, model=model, exit_code=0)
+            return _fail("skipped", exit_code=0)
 
         if (validation_error := _model_id_validation_error(model)) is not None:
             return _fail(
                 "model_error",
-                digest=config_digest,
-                model=model,
                 error_class="ReviewerConfigValidation",
                 error_message=validation_error,
             )
@@ -188,8 +187,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             stderr_text = result.stderr or f"adapter exited {result.returncode}"
             return _fail(
                 "model_error",
-                digest=config_digest,
-                model=model,
                 error_class="AdapterExit",
                 error_message=stderr_text,
             )
@@ -208,7 +205,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     effective_config_sha256=config_digest,
                     input_dir=input_dir,
                     max_findings=reviewer_config.max_findings,
-                    duration_ms=max(0, int((time.monotonic() - started_monotonic) * 1000)),
+                    duration_ms=_elapsed_ms(),
                 )
             elif stage == "critique":
                 assert pooled is not None
@@ -219,7 +216,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                     effective_config_sha256=config_digest,
                     pooled_findings=pooled,
                     started_at=started_at,
-                    duration_ms=max(0, int((time.monotonic() - started_monotonic) * 1000)),
+                    duration_ms=_elapsed_ms(),
                 )
             else:
                 finalized = raw
@@ -228,8 +225,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
             _write_parse_debug(output_dir, reviewer, stage, result.stdout, result.stderr)
             return _fail(
                 status,
-                digest=config_digest,
-                model=model,
                 error_class=exc.__class__.__name__,
                 error_message=str(exc),
             )
@@ -248,8 +243,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
         return _fail(
             "timeout",
-            digest=config_digest,
-            model=model,
             error_class="TimeoutExpired",
             error_message=str(exc),
         )
@@ -263,16 +256,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 )
         return _fail(
             "model_error",
-            digest=config_digest,
-            model=model,
             error_class="AdapterOutputLimitError",
             error_message=str(exc),
         )
     except Exception as exc:
         return _fail(
             "config_error" if isinstance(exc, ConfigError) else "internal_error",
-            digest=config_digest,
-            model=model,
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )

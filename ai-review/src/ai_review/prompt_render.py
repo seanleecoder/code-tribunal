@@ -8,7 +8,7 @@ from .canonical import canonical_json_text
 from .config import ReviewConfig
 from .outcomes import load_outcomes
 from .reviewers import trusted_runtime_root
-from .schema import batch_quality_fields, load_json_file, validate_instance
+from .schema import batch_usable, load_json_file, validate_instance
 
 
 class PromptRenderError(ValueError):
@@ -131,7 +131,7 @@ def build_pooled_findings(
     critic: str,
 ) -> dict[str, Any]:
     successful_batches = [
-        batch for batch in finding_batches if batch_quality_fields(batch)["usable_for_resolution"]
+        batch for batch in finding_batches if batch_usable(batch)
     ]
     aliases = _reviewer_aliases([str(batch["reviewer"]) for batch in successful_batches])
     ordered = sorted(

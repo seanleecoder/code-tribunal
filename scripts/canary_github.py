@@ -454,19 +454,18 @@ class GitHubLifecycle(Lifecycle):
         reviews = download_run(
             run, self.downloads / str(run) / "reviews", "--pattern", "ai-review-review-*"
         )
-        loaded: dict[str, dict[str, Any]] = {"findings": {}}
-        for directory in loaded:
-            for path in sorted(reviews.glob(f"*/{directory}/*.json")):
-                try:
-                    artifact = load_json_file(path)
-                except OSError, ValueError:
-                    raise LifecycleFailure(f"unreadable review artifact {path.name}") from None
-                if path.parent.parent.name != f"ai-review-review-{path.stem}":
-                    raise LifecycleFailure(f"{path.name} is in the wrong artifact")
-                if path.stem in loaded[directory]:
-                    raise LifecycleFailure(f"duplicate {directory} artifact for {path.stem}")
-                loaded[directory][path.stem] = artifact
-        return lifecycle_reviewer_results(loaded["findings"])
+        findings: dict[str, Any] = {}
+        for path in sorted(reviews.glob("*/findings/*.json")):
+            try:
+                artifact = load_json_file(path)
+            except OSError, ValueError:
+                raise LifecycleFailure(f"unreadable review artifact {path.name}") from None
+            if path.parent.parent.name != f"ai-review-review-{path.stem}":
+                raise LifecycleFailure(f"{path.name} is in the wrong artifact")
+            if path.stem in findings:
+                raise LifecycleFailure(f"duplicate findings artifact for {path.stem}")
+            findings[path.stem] = artifact
+        return lifecycle_reviewer_results(findings)
 
     def threads(self) -> list[dict[str, Any]]:
         comments = _json(

@@ -139,16 +139,11 @@ class PackagedReviewerImageTests(unittest.TestCase):
         )
 
     def _validate(self, path: Path, schema_name: str) -> dict[str, Any]:
-        from ai_review.schema import load_json_file, validate_instance, validate_outcome
+        from ai_review.schema import load_json_file, validate_artifact
 
         self.assertTrue(path.is_file(), f"{path} was not written")
         instance = load_json_file(path)
-        if schema_name in {"finding_batch.schema.json", "critique_batch.schema.json"}:
-            validate_outcome(
-                instance, "review" if schema_name.startswith("finding") else "critique"
-            )
-        else:
-            validate_instance(instance, schema_name)
+        validate_artifact(instance, schema_name)
         self.assertIsInstance(instance, dict)
         return dict(instance)
 

@@ -13,7 +13,12 @@ from typing import Any
 from ai_review.memory import decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
-from ai_review.schema import batch_quality_fields, validate_outcome, write_canonical_json
+from ai_review.schema import (
+    batch_quality_fields,
+    batch_usable,
+    validate_outcome,
+    write_canonical_json,
+)
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
@@ -234,7 +239,7 @@ def lifecycle_reviewer_results(findings: dict[str, Any]) -> dict[str, dict[str, 
         if batch["reviewer"] != reviewer:
             raise LifecycleFailure(f"{reviewer} review outcome has a mismatched reviewer identity")
         quality = batch_quality_fields(batch)
-        if not quality["usable_for_resolution"]:
+        if not batch_usable(batch):
             raise LifecycleFailure(f"{reviewer} review did not succeed")
         if not (
             quality["raw_finding_count"] == quality["accepted_finding_count"] == 1
@@ -242,7 +247,6 @@ def lifecycle_reviewer_results(findings: dict[str, Any]) -> dict[str, dict[str, 
         ):
             raise LifecycleFailure(f"{reviewer} did not retain exactly one mock finding")
         results[reviewer] = {
-            "status": batch["adapter_status"],
             "adapter_status": batch["adapter_status"],
             "raw_finding_count": quality["raw_finding_count"],
             "accepted_finding_count": quality["accepted_finding_count"],

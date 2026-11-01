@@ -18,7 +18,7 @@ from .anchors import (
     title_fingerprint,
 )
 from .canonical import canonical_json_text, json_loads_no_duplicates
-from .redact import bounded_diagnostic, redact_text
+from .redact import ERROR_CLASS_LIMIT, ERROR_MESSAGE_LIMIT, bounded_diagnostic, redact_text
 
 
 class SchemaValidationError(ValueError):
@@ -48,9 +48,15 @@ def batch_quality_fields(batch: dict[str, Any]) -> dict[str, Any]:
         "accepted_finding_count": accepted,
         "dropped_finding_count": dropped,
         "cap_omitted_finding_count": raw - accepted - dropped,
-        "usable_for_resolution": batch["adapter_status"] == "success"
-        and (raw == 0 or accepted > 0),
+        "usable_for_resolution": batch_usable(batch),
     }
+
+
+def batch_usable(batch: dict[str, Any]) -> bool:
+    """Whether an admitted review outcome may contribute to resolution."""
+    return batch["adapter_status"] == "success" and (
+        batch["raw_finding_count"] == 0 or len(batch["findings"]) > 0
+    )
 
 
 def validate_outcome(outcome: Any, stage: str) -> None:
@@ -67,6 +73,21 @@ def validate_outcome(outcome: Any, stage: str) -> None:
     canonical_json_text(outcome).encode("utf-8")
 
 
+_OUTCOME_SCHEMA_STAGES = {
+    "finding_batch.schema.json": "review",
+    "critique_batch.schema.json": "critique",
+}
+
+
+def validate_artifact(instance: Any, schema_name: str) -> None:
+    """Validate by schema file name, applying outcome invariants to stage outcomes."""
+    stage = _OUTCOME_SCHEMA_STAGES.get(schema_name)
+    if stage is None:
+        validate_instance(instance, schema_name)
+    else:
+        validate_outcome(instance, stage)
+
+
 def _execution_fields(
     started_at: str,
     duration_ms: int,
@@ -78,8 +99,8 @@ def _execution_fields(
         "started_at": started_at,
         "completed_at": completed_at or now_iso(),
         "duration_ms": duration_ms,
-        "error_class": bounded_diagnostic(error_class, 120),
-        "error_message_redacted": bounded_diagnostic(error_message, 300),
+        "error_class": bounded_diagnostic(error_class, ERROR_CLASS_LIMIT),
+        "error_message_redacted": bounded_diagnostic(error_message, ERROR_MESSAGE_LIMIT),
     }
 
 
@@ -336,13 +357,7 @@ def cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "validate":
-        instance = load_json_file(args.input)
-        if args.schema in {"finding_batch.schema.json", "critique_batch.schema.json"}:
-            validate_outcome(
-                instance, "review" if args.schema.startswith("finding") else "critique"
-            )
-        else:
-            validate_instance(instance, args.schema)
+        validate_artifact(load_json_file(args.input), args.schema)
         return 0
     raise AssertionError(args.command)
 

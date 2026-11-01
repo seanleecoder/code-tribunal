@@ -207,6 +207,10 @@ def escape_legacy_workflow_commands(text: str) -> str:
     return text.replace("##[", "## [")
 
 
+ERROR_CLASS_LIMIT = 120
+ERROR_MESSAGE_LIMIT = 300
+
+
 def bounded_diagnostic(value: object, limit: int) -> str | None:
     """Redact a complete diagnostic before bounding and rendering its text."""
     if not isinstance(value, str):

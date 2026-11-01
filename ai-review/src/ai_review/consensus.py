@@ -24,11 +24,11 @@ from .grouping import (
     issue_id_for_group,
 )
 from .outcomes import load_outcomes
-from .redact import bounded_diagnostic, escape_legacy_workflow_commands
+from .redact import ERROR_MESSAGE_LIMIT, bounded_diagnostic, escape_legacy_workflow_commands
 from .run_health import build_run_health_jobs, run_health_grade, run_health_text
 from .schema import (
     SchemaValidationError,
-    batch_quality_fields,
+    batch_usable,
     load_json_file,
     validate_instance,
     write_canonical_json,
@@ -88,7 +88,7 @@ def build_consensus(
     successful = sorted(
         str(batch["reviewer"])
         for batch in finding_batches
-        if batch_quality_fields(batch)["usable_for_resolution"]
+        if batch_usable(batch)
     )
     resolution_eligible = list(successful)
     failed = sorted(set(enabled) - set(successful))
@@ -96,7 +96,7 @@ def build_consensus(
 
     all_findings = []
     for batch in finding_batches:
-        if batch_quality_fields(batch)["usable_for_resolution"]:
+        if batch_usable(batch):
             for finding in batch["findings"]:
                 copied = dict(finding)
                 copied["reviewer"] = batch["reviewer"]
@@ -197,10 +197,6 @@ def cli(argv: list[str] | None = None) -> int:
         manifest = load_json_file(inputs / "manifest.json")
         if not isinstance(manifest, dict):
             raise ConsensusIntegrityError("manifest root must be an object")
-        run_id = str(manifest.get("run_id") or "").strip()
-        if not run_id:
-            raise ConsensusIntegrityError("manifest missing run_id")
-
         config = config_from_manifest(manifest)
         batches = load_outcomes(args.findings_dir, stage="review", config=config, manifest=manifest)
         critique_batches = load_outcomes(
@@ -213,22 +209,20 @@ def cli(argv: list[str] | None = None) -> int:
             critique_batches=critique_batches,
         )
         validate_instance(consensus, "consensus.schema.json")
-    except (OSError, json.JSONDecodeError) as exc:
-        detail = escape_legacy_workflow_commands(
-            bounded_diagnostic(str(exc), 300) or "invalid input"
-        )
-        print(f"ai-review consensus: cannot read artifact: {detail}", file=sys.stderr)
-        return 3
     except (
+        OSError,
+        json.JSONDecodeError,
         EffectiveConfigMismatch,
         ConsensusIntegrityError,
         SchemaValidationError,
         CanonicalError,
     ) as exc:
         detail = escape_legacy_workflow_commands(
-            bounded_diagnostic(str(exc), 300) or "invalid input"
+            bounded_diagnostic(str(exc), ERROR_MESSAGE_LIMIT) or "invalid input"
         )
-        print(f"ai-review consensus: {detail}", file=sys.stderr)
+        unreadable = isinstance(exc, (OSError, json.JSONDecodeError))
+        prefix = "cannot read artifact: " if unreadable else ""
+        print(f"ai-review consensus: {prefix}{detail}", file=sys.stderr)
         return 3
 
     # run_health_text neutralizes CI workflow-command syntax in untrusted text.
