@@ -16,7 +16,7 @@ still needs its own decision, and items marked "ADR" need an accepted ADR first.
 | S05 | Shrink the model-facing finding/critique contracts | **Done, unreleased for the next major.** Compact locations resolve against the prepared diff; short critique IDs resolve through the exact pool held in runner memory. Confidence is removed, and caps and representatives use stable impact ordering. Finding, critique and pooled artifacts move to v2; current health reporting, consensus and persisted-state formats remain. | The original [#171](https://github.com/seanleecoder/code-tribunal/pull/171) and [#172](https://github.com/seanleecoder/code-tribunal/pull/172) were reverted in `63ca67a` for compatible 2.0.2. The re-land omits their health-reporting machinery, superseded by SPEC-66. |
 | S06 | One result envelope instead of a batch plus status mirror | **Done, unreleased for the next major.** Each review/critique batch carries execution metadata; one admission path binds every outcome to its filename, registry seat and run/config. Health reads admitted outcomes; status JSON mirrors are deleted. | — |
 | S07 | Python as the sole adapter launcher | **Bounded cleanup closed (2026-11-01):** N07/N08 already put configuration, isolation and argv in Python. | Keep the three small command-only shells and shared prerequisite checks; moving them alone adds no demonstrated simplification. |
-| S08 | Explicit pinned transport codecs | Partial: N06 delivered per-seat codecs. **Remaining deletion deferred (2026-11-01).** | Current pinned-CLI traces must prove a fallback obsolete before deletion; S05 completion alone is insufficient. |
+| S08 | Explicit pinned transport codecs | Partial: N06 delivered per-seat codecs. **Cursor final-answer transport corrected (2026-11-01); other deletion deferred.** | Current pinned-CLI traces must prove a fallback obsolete before deletion; S05 completion alone is insufficient. |
 | S09 | Remove opt-in live mirroring (`mirror_logs`) | **Done, unreleased:** private temporary-file capture, bounded redacted stderr tails, output budgets and process-group cleanup replace the pump threads and streaming switch. | — |
 | S10 | Remove grouping's union-find prepass | Done in [#170](https://github.com/seanleecoder/code-tribunal/pull/170), verified by differential check against the pre-change code. | — |
 | S11 | Remove the noise veto and severity negotiation | **Done, unreleased for the next major:** noise still demotes to FYI (SPEC-67); severity downgrading and its config section are removed. | Severity suggestions remain informational dissent. |
@@ -97,8 +97,26 @@ S08's remaining parser rules have documented observed failure cases in
 `adapter_output.py`, `test_adapter_runner.py` and `test_opencode_client.py`.
 The checked-in OpenCode answer parts are replayed through the current HTTP
 transport, but they are not a complete captured corpus for the current pins in
-`ai-review/images/package.json`. No new live current-pin trace evidence was
-collected for this cleanup. Keep the Claude/OpenCode text fallback, Cursor answer
-text and stringified payload handling. Removing them requires a separately
-reviewed captured corpus, with duplicate-key and ambiguity rejection preserved;
+`ai-review/images/package.json`. Keep the Claude/OpenCode text fallback and
+stringified payload handling. Removing them requires a separately reviewed
+captured corpus, with duplicate-key and ambiguity rejection preserved;
 it is not a 3.0 release blocker.
+
+### Cursor final-answer transport (2026-11-01)
+
+Candidate Canary [41346849696](https://github.com/seanleecoder/code-tribunal/actions/runs/41346849696)
+rejected the GitHub panel because Cursor's successful JSON result contained two
+different complete finding batches. Strict ambiguity rejection correctly made
+that seat ineligible; this run cannot qualify a release.
+
+The checksum-verified `2026.10.18-ea085cb` archive in
+`ai-review/images/cursor-agent.pin` confirms the
+[documented output formats](https://cursor.com/docs/cli/reference/output-format):
+JSON `result` accumulates assistant text, while text output emits the final
+answer segment (reset on tool calls). Use `--output-format text` and the existing
+`batch_json` codec for Cursor; remove its JSON envelope decoder and matching mock
+wrapper. Retain duplicate-key and conflicting-root rejection, and the existing
+Claude/OpenCode fallbacks. Invocation tests cover both Cursor stages and nonempty
+payloads; parser regressions require conflicting roots to fail for batch text as
+well as Claude streams. A new runtime candidate and fresh full Candidate Canary
+are required after review; the failed run is diagnostic evidence only.

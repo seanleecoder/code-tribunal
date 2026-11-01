@@ -9,6 +9,10 @@ versioning.
 
 ### Changed
 
+- Read Cursor's final text output rather than its aggregated JSON result.
+  Intermediate answer drafts can no longer make an otherwise valid final batch
+  ambiguous; conflicting JSON roots in the final answer still fail validation.
+
 - Breaking, for the next major release: remove severity downgrading (S11).
   Delete the entire `critique` YAML section, including
   `critique.allow_severity_downgrade`. Critics' severity suggestions remain

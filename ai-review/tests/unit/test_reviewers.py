@@ -373,11 +373,12 @@ class ReviewerAdapterContractTests(unittest.TestCase):
     def test_runner_uses_the_registry_codec_instead_of_guessing_from_stdout(self) -> None:
         result = subprocess.CompletedProcess(
             args=[], returncode=0,
-            stdout=json.dumps({"type": "result", "result": '{"findings":[]}'}), stderr="",
+            stdout=json.dumps({"type": "result", "structured_output": {"findings": []}}),
+            stderr="",
         )
         for codec, expected_status, expected_exit in (
             ("batch_json", "schema_error", _EXIT_ERROR),
-            ("cursor_json", "success", 0),
+            ("claude_stream_json", "success", 0),
         ):
             definition = replace(REVIEWERS["codex"], output_codec=codec)
             with (
