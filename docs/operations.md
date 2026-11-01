@@ -1,13 +1,20 @@
 # Operations
 
-## Next-major upgrade
+## Upgrade to 3.0
 
-Save the current workflow/include SHA, image digests, custom configuration and CI
-variables for rollback. Follow the [configuration migration](configuration.md#next-major-migration),
-pause reviews and complete the explicit state migration below, then upgrade the
-canonical workflow/include and both images together. Resume with fresh artifacts
-from prepare through post. The runtime does not support replaying pre-cutover artifacts. A rollback
-must restore the complete saved deployment and configuration.
+1. Save the current workflow/include SHA, image digests, custom configuration
+   and CI variables for rollback.
+2. Pause reviews and complete the [state v2 migration](#state-v2-migration).
+   Preserve its exports through the rollback window.
+3. Remove retired settings using the
+   [configuration migration](configuration.md#migrate-to-30).
+4. Upgrade the canonical workflow/include and both images together. Update any
+   required check to `ai-review / post`.
+5. Resume with fresh artifacts from prepare through post; verify thread identity
+   and human dispositions. The runtime does not replay pre-cutover artifacts.
+
+A rollback restores the complete saved deployment, configuration and v1 state
+together.
 
 For a 1.x deployment, also remove the retired merge-gate job and any required
 `gate` check before upgrading; Code Tribunal publishes informational review

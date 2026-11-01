@@ -193,9 +193,9 @@ with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
 before any Chain A run and after every Chain B campaign.
 
 Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, updated
-`20:59:24`) for the same body-refresh reason as the GitHub comment above. It was
-never refreshed, so it still carries the 1.0.0 body format and can prove the GitLab
-refresh surface.
+`20:59:24`) for the same body-refresh reason as the GitHub comment above. The 3.0
+candidate refreshed it in place; see the
+[preserved GitLab refresh fixture](#preserved-gitlab-refresh-fixture).
 
 ## Per-release setup checklist
 
@@ -254,6 +254,6 @@ caller-only Codex `medium` effort override; the resting value was restored to
 `low`. Caller roster/model values matched the prepared configuration. The PR is
 closed without merging and the persistent deployment is unchanged.
 
-This evidence is for the `e95335b` image pair. The live fork-skip check remains
-pending per the maintainer's 2026-11-01 decision; no separate fork namespace was
-authorized. The full release canary must also pass independently.
+This evidence is for the `e95335b` image pair. The live fork-skip check is a
+[carried coverage gap](RUNBOOK.md#carried-coverage-gaps). The full release canary
+must also pass independently.

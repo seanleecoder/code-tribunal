@@ -11,17 +11,11 @@ versioning.
 
 ### Upgrade
 
-1. Pause review triggers and save the current workflow/include, image references,
-   configuration, variables and complete authenticated state exports.
-2. Follow the [state v2 migration](docs/operations.md#state-v2-migration): convert
-   offline, update and read back the target summary, then remove only obsolete
-   state notes. Preserve exports through the rollback window.
-3. Remove retired settings using the
-   [configuration migration](docs/configuration.md#next-major-migration).
-4. Adopt the SHA-pinned GitHub reusable caller or protected GitLab direct include
-   together with both 3.0 images. Update any required check to `ai-review / post`.
-5. Resume at prepare with fresh artifacts; verify thread identity and human
-   dispositions. Restore the saved v1 deployment/state together for rollback.
+Follow the [3.0 upgrade](docs/operations.md#upgrade-to-30): pause reviews,
+migrate state to v2 offline, remove retired configuration, then adopt the
+SHA-pinned GitHub reusable caller or protected GitLab direct include together
+with both 3.0 images. A rollback restores the saved deployment and v1 state
+together.
 
 ### Changed
 
@@ -29,16 +23,15 @@ versioning.
   Intermediate answer drafts can no longer make an otherwise valid final batch
   ambiguous; conflicting JSON roots in the final answer still fail validation.
 
-- Breaking: remove severity downgrading (S11).
-  Delete the entire `critique` YAML section, including
-  `critique.allow_severity_downgrade`. Critics' severity suggestions remain
-  informational dissent; final severity, independent support, noise demotion and
-  absence-based resolution retain their existing rules.
-- Breaking: new inline comments use a single line
-  (S15), with spanning ranges shown in their body. Delete
-  `posting.inline_multiline`; failed creates go directly to summary fallback.
-  Old/new/context sides, historical multiline threads, human commands and
-  thread identity remain supported; existing comment positions do not move.
+- Breaking: remove severity downgrading (S11). Delete the entire `critique` YAML
+  section, including `critique.allow_severity_downgrade`. Critics' severity
+  suggestions remain informational dissent; final severity, independent support,
+  noise demotion and absence-based resolution retain their existing rules.
+- Breaking: new inline comments use a single line (S15), with spanning ranges
+  shown in their body. Delete `posting.inline_multiline`; failed creates go
+  directly to summary fallback. Old/new/context sides, historical multiline
+  threads, human commands and thread identity remain supported; existing comment
+  positions do not move.
 - Inline markers stop writing the unused zero `source=` attribute. Historical
   markers remain readable and marker-only differences do not force thread edits.
   The shorter marker frees visible-body space near the platform limit, so some
@@ -50,91 +43,88 @@ versioning.
   JSON schemas retain wire-contract authority; production types remain internal
   annotations.
 
-- Breaking: each `finding_batch.v2` and
-  `critique_batch.v2` is the complete execution outcome (S06), with timing and
-  bounded redacted diagnostics. Status JSON mirrors, `adapter_status.v1` and
-  consensus `--status-dir` are removed; `out/status/` keeps only diagnostic text.
-  Accepted counts and review eligibility are derived from the payload rather
-  than stored. Pooling and consensus share admission that binds every present
-  outcome, including failures, to its filename, registry seat and exact run/config.
-  Missing outcomes degrade health; malformed or misbound present outcomes fail
-  integrity validation. `batch_missing` is removed from unreleased `consensus.v3`.
-  Upgrade both images and canonical invocations together and generate fresh
-  artifacts from prepare. Publication/state and eligibility policy are unchanged.
+- Breaking: each `finding_batch.v2` and `critique_batch.v2` is the complete
+  execution outcome (S06), with timing and bounded redacted diagnostics. Status
+  JSON mirrors, `adapter_status.v1` and consensus `--status-dir` are removed;
+  `out/status/` keeps only diagnostic text. Accepted counts and review eligibility
+  are derived from the payload rather than stored. Pooling and consensus share
+  admission that binds every present outcome, including failures, to its filename,
+  registry seat and exact run/config. Missing outcomes degrade health; malformed
+  or misbound present outcomes fail integrity validation. `batch_missing` is
+  removed from unreleased `consensus.v3`. Upgrade both images and canonical
+  invocations together and generate fresh artifacts from prepare.
+  Publication/state and eligibility policy are unchanged.
 
-- Breaking: configuration moves to `review_config.v4`
-  (S04). Prepare resolves shipped defaults, sparse custom reviewer settings and
-  operator overrides once; downstream stages validate the complete manifest
-  configuration without reading YAML or reapplying environment overrides.
-  Consensus and post no longer accept `--config`. One blind critique round,
-  all supported inline sides, FYI summary placement, stale-head protection and
-  external-fork secret refusal are unconditional. Delete their old YAML switches
-  and `AI_REVIEW_CRITIQUE_ENABLED`; unsupported keys and `AI_REVIEW_` variables
-  receive generic migration errors. Per-version removal tables and environment
-  tombstones are deleted. Explicit `effort: null` or the existing `unset`
-  environment value clears inherited effort. Absence-based resolution is unchanged. Upgrade the
-  canonical workflow/include and both images together and run fresh artifacts
-  from prepare; see the [configuration migration](docs/configuration.md#next-major-migration).
-- Breaking: GitLab supports protected direct includes
-  only (N02). The child stage wrapper and `parent_pipeline` rules are removed;
-  replace the trigger job with a top-level include and retain the `ai_review`
-  stage before upgrading. The trust auditor no longer takes `--mode`.
-  Protect the CI composition and restrict pipeline variables as described in the
-  [GitLab installation guide](docs/getting-started/gitlab.md).
-  Panel, lifecycle and hostile canaries run in the MR pipeline itself; existing
-  child-topology evidence must be replaced by a direct-include hostile campaign
-  before release.
-- Breaking: GitHub consumers call
-  `.github/workflows/ai-review-reusable.yml` at a reviewed release SHA (N03).
-  The copied canonical template and synchronization tooling are deleted; this
-  repository uses a small same-commit caller. Caller Actions variables remain
-  the configuration source, and secrets are inherited or passed by name.
-  Optional required checks change from `post` to `ai-review / post` with the
-  documented caller. The canary runs through the caller and reusable workflow;
-  historical 2.1 publication retries retain their original byte-parity check.
-  See the [GitHub installation guide](docs/getting-started/github.md).
-- Breaking: state v2 lives inside the bot's summary
-  comment (S14/N04). An explicit offline converter, `scripts/migrate_state_v2.py`,
-  preserves thread IDs and human dispositions from exported v1 notes; pause
-  reviews, apply its emitted update, and remove the obsolete state note before
-  switching images. Runtime rejects v1, corrupt, duplicate and inaccessible
-  state. The wrapper checksum, self-referential `state_note_id`, unread history,
-  candidate/title/symbol aliases, unread `remap_status` and legacy `drop` state
-  decisions are removed. Checksum, load-error, marker-recovery, per-status
-  retention and `max_state_bytes` controls are removed (the platform comment
-  limit bounds the ledger); active records and human dispositions are preserved, with a fixed
-  tail of five automatically resolved records. Matching uses issue IDs, source
-  finding IDs and path/category/context hashes. Posting uses each current
-  group's prepared anchor instead of fetching another diff and remapping old
-  coordinates (N14). Same-revision bot-thread reconciliation recovers from
-  interrupted publication for current finding/command identities, or all eligible
-  open roots when no ledger exists. GitHub checks thread resolution before reuse
-  so resurfaced compacted findings stay visible. Compacted, absent roots are not
-  re-imported. State is validated before writing, supported
-  returned thread-ID sizes are reserved before publication, and GitHub repository
-  renames/transfers refresh the stored slug on load. See the state migration and
-  missing-ledger repair in `docs/operations.md`.
-- Breaking: reviewers author compact `location`
-  ranges and finding content; trusted finalization derives paths, line codes,
-  context hashes, fingerprints and finding IDs from the prepared diff (S05).
-  Critiques use short pool-local IDs such as `F001`, resolved against the exact
-  run/config/critic-bound pool held in runner memory. Unknown IDs fail the
-  critique batch. Numeric `confidence` is removed from findings and critiques;
-  severity, stable finding IDs and content determine caps and representatives.
-  Every candidate is validated before the cap, so malformed and cap-omitted
-  findings have separate counts in the existing run-health report.
-  `finding_batch.v2`, `critique_batch.v2` and `pooled_findings.v2` replace v1;
-  generate fresh artifacts with one image pair instead of replaying old ones.
-- Breaking: consensus uses only this run's evidence
-  (N11). `consensus.v3` assigns signature-derived issue IDs and removes
-  `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
-  `summary.drop_count`; `run_health` is required. Prepare no longer writes
-  `state_aliases.json`, and consensus no longer accepts `--state`. Posting alone
-  matches the latest authenticated state, preserving historical thread IDs and
-  human commands. Ambiguous or already-claimed matches use summary fallback
-  without changing the reducer's decision or automatically resolving candidate
-  threads. Re-run from prepare with one image pair; v2 consensus artifacts are
-  rejected.
+- Breaking: configuration moves to `review_config.v4` (S04). Prepare resolves
+  shipped defaults, sparse custom reviewer settings and operator overrides once;
+  downstream stages validate the complete manifest configuration without reading
+  YAML or reapplying environment overrides. Consensus and post no longer accept
+  `--config`. One blind critique round, all supported inline sides, FYI summary
+  placement, stale-head protection and external-fork secret refusal are
+  unconditional. Delete their old YAML switches and `AI_REVIEW_CRITIQUE_ENABLED`;
+  unsupported keys and `AI_REVIEW_` variables receive generic migration errors.
+  Per-version removal tables and environment tombstones are deleted. Explicit
+  `effort: null` or the existing `unset` environment value clears inherited
+  effort. Absence-based resolution is unchanged. Upgrade the canonical
+  workflow/include and both images together and run fresh artifacts from prepare;
+  see the [configuration migration](docs/configuration.md#migrate-to-30).
+- Breaking: GitLab supports protected direct includes only (N02). The child stage
+  wrapper and `parent_pipeline` rules are removed; replace the trigger job with a
+  top-level include and retain the `ai_review` stage before upgrading. The trust
+  auditor no longer takes `--mode`. Protect the CI composition and restrict
+  pipeline variables as described in the [GitLab installation
+  guide](docs/getting-started/gitlab.md). Panel, lifecycle and hostile canaries
+  run in the MR pipeline itself.
+- Breaking: GitHub consumers call `.github/workflows/ai-review-reusable.yml` at a
+  reviewed release SHA (N03). The copied canonical template and synchronization
+  tooling are deleted; this repository uses a small same-commit caller. Caller
+  Actions variables remain the configuration source, and secrets are inherited or
+  passed by name. Optional required checks change from `post` to `ai-review /
+  post` with the documented caller. The canary runs through the caller and
+  reusable workflow; historical 2.1 publication retries retain their original
+  byte-parity check. See the [GitHub installation
+  guide](docs/getting-started/github.md).
+- Breaking: state v2 lives inside the bot's summary comment (S14/N04). An explicit
+  offline converter, `scripts/migrate_state_v2.py`, preserves thread IDs and human
+  dispositions from exported v1 notes; pause reviews, apply its emitted update,
+  and remove the obsolete state note before switching images. Runtime rejects v1,
+  corrupt, duplicate and inaccessible state. The wrapper checksum,
+  self-referential `state_note_id`, unread history, candidate/title/symbol
+  aliases, unread `remap_status` and legacy `drop` state decisions are removed.
+  Checksum, load-error, marker-recovery, per-status retention and
+  `max_state_bytes` controls are removed (the platform comment limit bounds the
+  ledger); active records and human dispositions are preserved, with a fixed tail
+  of five automatically resolved records. Matching uses issue IDs, source finding
+  IDs and path/category/context hashes. Posting uses each current group's prepared
+  anchor instead of fetching another diff and remapping old coordinates (N14).
+  Same-revision bot-thread reconciliation recovers from interrupted publication
+  for current finding/command identities, or all eligible open roots when no
+  ledger exists. GitHub checks thread resolution before reuse so resurfaced
+  compacted findings stay visible. Compacted, absent roots are not re-imported.
+  State is validated before writing, supported returned thread-ID sizes are
+  reserved before publication, and GitHub repository renames/transfers refresh the
+  stored slug on load. See the state migration and missing-ledger repair in
+  `docs/operations.md`.
+- Breaking: reviewers author compact `location` ranges and finding content;
+  trusted finalization derives paths, line codes, context hashes, fingerprints and
+  finding IDs from the prepared diff (S05). Critiques use short pool-local IDs
+  such as `F001`, resolved against the exact run/config/critic-bound pool held in
+  runner memory. Unknown IDs fail the critique batch. Numeric `confidence` is
+  removed from findings and critiques; severity, stable finding IDs and content
+  determine caps and representatives. Every candidate is validated before the cap,
+  so malformed and cap-omitted findings have separate counts in the existing
+  run-health report. `finding_batch.v2`, `critique_batch.v2` and
+  `pooled_findings.v2` replace v1; generate fresh artifacts with one image pair
+  instead of replaying old ones.
+- Breaking: consensus uses only this run's evidence (N11). `consensus.v3` assigns
+  signature-derived issue IDs and removes `issue_id_source`, `state_match`,
+  `group.body_hash`, the `drop` decision and `summary.drop_count`; `run_health` is
+  required. Prepare no longer writes `state_aliases.json`, and consensus no longer
+  accepts `--state`. Posting alone matches the latest authenticated state,
+  preserving historical thread IDs and human commands. Ambiguous or
+  already-claimed matches use summary fallback without changing the reducer's
+  decision or automatically resolving candidate threads. Re-run from prepare with
+  one image pair; v2 consensus artifacts are rejected.
 - Reviewer output is captured in private temporary files instead of memory and
   pump threads (S09). The runner checks a 32 MiB budget per stream every 100 ms
   and reports excess output as `model_error` with bounded, redacted stdout and
