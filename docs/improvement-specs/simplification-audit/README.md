@@ -105,18 +105,11 @@ it is not a 3.0 release blocker.
 ### Cursor final-answer transport (2026-11-01)
 
 Candidate Canary [41346849696](https://github.com/seanleecoder/code-tribunal/actions/runs/41346849696)
-rejected the GitHub panel because Cursor's successful JSON result contained two
-different complete finding batches. Strict ambiguity rejection correctly made
-that seat ineligible; this run cannot qualify a release.
-
-The checksum-verified `2026.10.18-ea085cb` archive in
-`ai-review/images/cursor-agent.pin` confirms the
+made the Cursor seat ineligible: its JSON `result` concatenated two complete
+finding batches, which strict ambiguity rejection refused. The pinned
+`2026.10.18-ea085cb` archive matches the
 [documented output formats](https://cursor.com/docs/cli/reference/output-format):
-JSON `result` accumulates assistant text, while text output emits the final
-answer segment (reset on tool calls). Use `--output-format text` and the existing
-`batch_json` codec for Cursor; remove its JSON envelope decoder and matching mock
-wrapper. Retain duplicate-key and conflicting-root rejection, and the existing
-Claude/OpenCode fallbacks. Invocation tests cover both Cursor stages and nonempty
-payloads; parser regressions require conflicting roots to fail for batch text as
-well as Claude streams. A new runtime candidate and fresh full Candidate Canary
-are required after review; the failed run is diagnostic evidence only.
+JSON `result` accumulates assistant text, while text output emits only the final
+answer segment. Cursor therefore uses `--output-format text` with the shared
+`batch_json` codec, and its envelope decoder is removed. That run is diagnostic
+only; a new runtime candidate needs a fresh full Candidate Canary.
