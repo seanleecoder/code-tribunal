@@ -150,35 +150,35 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
     Also done, unreleased: private file-backed adapter capture and removal of the optional
     live log-mirroring path (S09).
 
-**Step 4 — next major release: one consensus, state, and consumer cutover.**
+**Step 4 — 3.0.0: one consensus, state, and consumer cutover.**
 
-11. Done, unreleased: S05 restores `resolve_location`, removes `confidence`, and
+11. Done in 3.0.0: S05 restores `resolve_location`, removes `confidence`, and
     binds short critique IDs to the trusted pool. Finding and critique batches
     move to v2; consensus and persisted state retain their current formats.
-12. Done, unreleased: consensus is state-free (N11). `consensus.v3` drops
+12. Done in 3.0.0: consensus is state-free (N11). `consensus.v3` drops
     `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
     `summary.drop_count`, and requires `run_health`. Posting alone matches the
     latest state and preserves thread identity; prepare no longer writes the
     state-alias artifact. COMPAT-003, COMPAT-006 and COMPAT-007 are removed.
-13. Done, unreleased: S14 state v2 moves state into the summary (N04), uses
+13. Done in 3.0.0: S14 state v2 moves state into the summary (N04), uses
     current group anchors and context aliases (N14), and provides an explicit
     offline v1 migration. COMPAT-005 is removed; COMPAT-009 tracks the offline
     converter. Corrupt or inaccessible state fails closed.
 14. Consumer-visible changes:
-    - Done, unreleased: the GitHub reusable workflow (N03). The copied template
+    - Done in 3.0.0: the GitHub reusable workflow (N03). The copied template
       and sync tooling are deleted; COMPAT-010 covers historical release retries.
       Verify an external SHA-pinned caller before release, per the release checklist;
-    - Done, unreleased: GitLab direct include only (N02). The child wrapper,
+    - Done in 3.0.0: GitLab direct include only (N02). The child wrapper,
       `parent_pipeline` rules, auditor mode switch and child polling are removed.
       All three canaries use the MR pipeline; run the direct-include hostile
       campaign before release. COMPAT-004 is removed;
-    - Done, unreleased: S04 resolves configuration once in prepare and carries
+    - Done in 3.0.0: S04 resolves configuration once in prepare and carries
       `review_config.v4` in the manifest. Downstream environment overrides and
       YAML reloads are removed; sparse reviewer settings inherit image defaults.
       Critique enablement/blinding, inline sides, stale-head and fork-secret
       switches are deleted. COMPAT-001/002 are removed. Severity downgrading is
       retained pending S11's separate policy decision; S13 is unchanged.
-15. Done, unreleased: S06 consolidates each reviewer/stage into one complete
+15. Done in 3.0.0: S06 consolidates each reviewer/stage into one complete
     outcome. Pooling and consensus share admission; health derives metadata and
     counts from outcomes. Status JSON mirrors and `--status-dir` are removed.
 

@@ -7,18 +7,34 @@ versioning.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-01
+
+### Upgrade
+
+1. Pause review triggers and save the current workflow/include, image references,
+   configuration, variables and complete authenticated state exports.
+2. Follow the [state v2 migration](docs/operations.md#state-v2-migration): convert
+   offline, update and read back the target summary, then remove only obsolete
+   state notes. Preserve exports through the rollback window.
+3. Remove retired settings using the
+   [configuration migration](docs/configuration.md#next-major-migration).
+4. Adopt the SHA-pinned GitHub reusable caller or protected GitLab direct include
+   together with both 3.0 images. Update any required check to `ai-review / post`.
+5. Resume at prepare with fresh artifacts; verify thread identity and human
+   dispositions. Restore the saved v1 deployment/state together for rollback.
+
 ### Changed
 
 - Read Cursor's final text output rather than its aggregated JSON result.
   Intermediate answer drafts can no longer make an otherwise valid final batch
   ambiguous; conflicting JSON roots in the final answer still fail validation.
 
-- Breaking, for the next major release: remove severity downgrading (S11).
+- Breaking: remove severity downgrading (S11).
   Delete the entire `critique` YAML section, including
   `critique.allow_severity_downgrade`. Critics' severity suggestions remain
   informational dissent; final severity, independent support, noise demotion and
   absence-based resolution retain their existing rules.
-- Breaking, for the next major release: new inline comments use a single line
+- Breaking: new inline comments use a single line
   (S15), with spanning ranges shown in their body. Delete
   `posting.inline_multiline`; failed creates go directly to summary fallback.
   Old/new/context sides, historical multiline threads, human commands and
@@ -34,7 +50,7 @@ versioning.
   JSON schemas retain wire-contract authority; production types remain internal
   annotations.
 
-- Breaking, for the next major release: each `finding_batch.v2` and
+- Breaking: each `finding_batch.v2` and
   `critique_batch.v2` is the complete execution outcome (S06), with timing and
   bounded redacted diagnostics. Status JSON mirrors, `adapter_status.v1` and
   consensus `--status-dir` are removed; `out/status/` keeps only diagnostic text.
@@ -46,7 +62,7 @@ versioning.
   Upgrade both images and canonical invocations together and generate fresh
   artifacts from prepare. Publication/state and eligibility policy are unchanged.
 
-- Breaking, for the next major release: configuration moves to `review_config.v4`
+- Breaking: configuration moves to `review_config.v4`
   (S04). Prepare resolves shipped defaults, sparse custom reviewer settings and
   operator overrides once; downstream stages validate the complete manifest
   configuration without reading YAML or reapplying environment overrides.
@@ -59,7 +75,7 @@ versioning.
   environment value clears inherited effort. Absence-based resolution is unchanged. Upgrade the
   canonical workflow/include and both images together and run fresh artifacts
   from prepare; see the [configuration migration](docs/configuration.md#next-major-migration).
-- Breaking, for the next major release: GitLab supports protected direct includes
+- Breaking: GitLab supports protected direct includes
   only (N02). The child stage wrapper and `parent_pipeline` rules are removed;
   replace the trigger job with a top-level include and retain the `ai_review`
   stage before upgrading. The trust auditor no longer takes `--mode`.
@@ -68,7 +84,7 @@ versioning.
   Panel, lifecycle and hostile canaries run in the MR pipeline itself; existing
   child-topology evidence must be replaced by a direct-include hostile campaign
   before release.
-- Breaking, for the next major release: GitHub consumers call
+- Breaking: GitHub consumers call
   `.github/workflows/ai-review-reusable.yml` at a reviewed release SHA (N03).
   The copied canonical template and synchronization tooling are deleted; this
   repository uses a small same-commit caller. Caller Actions variables remain
@@ -77,7 +93,7 @@ versioning.
   documented caller. The canary runs through the caller and reusable workflow;
   historical 2.1 publication retries retain their original byte-parity check.
   See the [GitHub installation guide](docs/getting-started/github.md).
-- Breaking, for the next major release: state v2 lives inside the bot's summary
+- Breaking: state v2 lives inside the bot's summary
   comment (S14/N04). An explicit offline converter, `scripts/migrate_state_v2.py`,
   preserves thread IDs and human dispositions from exported v1 notes; pause
   reviews, apply its emitted update, and remove the obsolete state note before
@@ -98,7 +114,7 @@ versioning.
   returned thread-ID sizes are reserved before publication, and GitHub repository
   renames/transfers refresh the stored slug on load. See the state migration and
   missing-ledger repair in `docs/operations.md`.
-- Breaking, for the next major release: reviewers author compact `location`
+- Breaking: reviewers author compact `location`
   ranges and finding content; trusted finalization derives paths, line codes,
   context hashes, fingerprints and finding IDs from the prepared diff (S05).
   Critiques use short pool-local IDs such as `F001`, resolved against the exact
@@ -109,7 +125,7 @@ versioning.
   findings have separate counts in the existing run-health report.
   `finding_batch.v2`, `critique_batch.v2` and `pooled_findings.v2` replace v1;
   generate fresh artifacts with one image pair instead of replaying old ones.
-- Breaking, for the next major release: consensus uses only this run's evidence
+- Breaking: consensus uses only this run's evidence
   (N11). `consensus.v3` assigns signature-derived issue IDs and removes
   `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
   `summary.drop_count`; `run_health` is required. Prepare no longer writes
@@ -174,6 +190,23 @@ versioning.
   the mock. The runner also pins every seat's `PYTHONPATH` to its own package
   instead of forwarding the ambient value. Configuration, prompts, requests and
   output are unchanged.
+
+### Known limitations
+
+The live GitHub fork-skip check remains pending: no separate authorized namespace
+was available for a temporary fork of the demo. Same-repository automatic/manual
+caller verification does not establish fork behavior; the canonical fork guard
+continues to have regression coverage.
+
+The GitLab hostile campaign uses an unprotected in-project source rather than a
+fork. Cursor's deny policy has invocation coverage but no live hostile permission
+probe, so Cursor remains outside the default roster. The uniform mock does not
+exercise below-quorum FYI, unmappable inline fallback, majority-noise demotion or
+invalid-location loss live; regression tests cover these paths. Live truncation,
+platform-visible comment re-anchoring and the symlink containment variant remain
+outside this release's evidence. Non-default effort routes beyond the configured
+Codex `medium` external-caller check remain unproven. Updating a
+thread body does not move its original platform diff position.
 
 ## [2.1.0] - 2026-10-19
 

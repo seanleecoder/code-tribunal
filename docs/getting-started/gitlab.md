@@ -90,7 +90,7 @@ the composition is noticed without someone remembering to look.
 
 ### Migrate from the child pipeline
 
-The next major release removes the child wrapper and `parent_pipeline` rules.
+Version 3.0 removes the child wrapper and `parent_pipeline` rules.
 Before upgrading, protect the composition and restrict pipeline variables as
 described above. Replace the `ai_review` trigger job and its two nested includes
 with the top-level [direct include](examples/gitlab-direct.yml), pinned to the

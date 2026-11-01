@@ -106,7 +106,13 @@ The posted-body refresh check needs a bot-authored thread created by an **older*
 image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR #6
 (created `2026-07-25 20:13:42`, `issue_id` shared with the GitLab note below). The
 1.0.1 image refreshed it to `render-body.v3` and the 2.0.0 candidate to
-`render-body.v4`. Run the next refresh with the
+`render-body.v4`. The 3.0 candidate at `e95335b` refreshed the same root in
+[run 41345703863](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41345703863)
+and skipped it as unchanged in
+[run 41345948621](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41345948621).
+The author, creation time and finding identity were preserved. State v2 now lives
+in summary comment `6276182501`; retain the original v1 exports for rollback.
+Run the next refresh with the
 [body-format refresh](RUNBOOK.md#body-format-refresh) procedure on
 `evidence/chain-b-88bc941`, after confirming its diff is still only the fixture.
 Closing the PR is fine; deleting the comment or the branch is not.
@@ -221,3 +227,33 @@ refresh surface.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
 7. After any manual mock run, follow the
    [mock cleanup](RUNBOOK.md#the-deterministic-mock-reviewer).
+
+### Preserved GitLab refresh fixture
+
+MR `!11` retains root note `3601861614`, authored by bot `40508593` on
+2026-07-25. The 3.0 candidate at `e95335b` refreshed it in place in
+[pipeline 3015320769](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015320769),
+with one update, no creates and no warnings. Its
+[unchanged rerun](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015327225)
+made no thread edits. State v2 reuses note `3601861625`. The fixture is closed,
+its previous CI configuration is restored, and the temporary direct-include
+refresh template branch is deleted. Preserve the root, branch and v1 exports;
+adopt the current trusted topology before reopening the fixture again.
+
+### External reusable-workflow caller (3.0 candidate)
+
+[Demo PR #49](https://github.com/seanleecoder/code-tribunal-demo/pull/49) calls
+`seanleecoder/code-tribunal/.github/workflows/ai-review-reusable.yml` at
+`8092ea76fe7950e669781e75323dfafc709b620b`, using named secrets. GitHub's run
+metadata confirms that external workflow SHA. Both the
+[automatic run](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41346849838)
+and [manual run](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41347108804)
+completed review and critique on all four seats with full run health and a
+successful `ai-review / post`. The manual manifest and health rows captured a
+caller-only Codex `medium` effort override; the resting value was restored to
+`low`. Caller roster/model values matched the prepared configuration. The PR is
+closed without merging and the persistent deployment is unchanged.
+
+This evidence is for the `e95335b` image pair. The live fork-skip check remains
+pending per the maintainer's 2026-11-01 decision; no separate fork namespace was
+authorized. The full release canary must also pass independently.

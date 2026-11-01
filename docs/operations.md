@@ -4,16 +4,16 @@
 
 Save the current workflow/include SHA, image digests, custom configuration and CI
 variables for rollback. Follow the [configuration migration](configuration.md#next-major-migration),
-upgrade the canonical workflow/include and both images together, complete the
-explicit state migration below, then run fresh artifacts from prepare through
-post. The runtime does not support replaying pre-cutover artifacts. A rollback
+pause reviews and complete the explicit state migration below, then upgrade the
+canonical workflow/include and both images together. Resume with fresh artifacts
+from prepare through post. The runtime does not support replaying pre-cutover artifacts. A rollback
 must restore the complete saved deployment and configuration.
 
 For a 1.x deployment, also remove the retired merge-gate job and any required
 `gate` check before upgrading; Code Tribunal publishes informational review
 output and never decides whether a change may merge.
 
-## Unreleased major: consensus artifact cutover
+## Version 3.0: consensus artifact cutover
 
 Run prepare through post with one image pair and generate fresh artifacts.
 `consensus.v3` replaces v2, requires `run_health`, and removes `issue_id_source`,
@@ -56,7 +56,7 @@ error before the CLI exits nonzero.
 
 ## State v2 migration
 
-The next major release stores its checksummed ledger inside the bot's summary,
+Version 3.0 stores its checksummed ledger inside the bot's summary,
 with one top-level bot comment per change request. Runtime accepts only v2.
 Existing v1 ledgers must be converted before switching images; never delete a
 ledger and start empty. Keep the original export for rollback. State v2 cannot
