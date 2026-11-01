@@ -61,7 +61,22 @@ with one top-level bot comment per change request. Runtime accepts only v2.
 Existing v1 ledgers must be converted before switching images; never delete a
 ledger and start empty. Keep the original export for rollback. State v2 cannot
 be read by 2.1.x: rollback requires restoring the exported v1 note and summary
-while reviews are paused.
+while reviews are paused. Keep reviews paused while restoring the original v1
+summary and state-note bodies from the exports, read each restored body back,
+remove the v2 container only when it is a separate newly created note, then
+restore the old workflow/include and images together. Verify there is exactly
+one authenticated v1 ledger before resuming. Restore the saved note IDs where
+possible; if the old state note was deleted, inspect any recreated-note ID
+binding before running 2.1.x. Do not run an old image against v2 or synthesize an
+empty ledger. If reviews have already recorded new dispositions after migration,
+reconcile those decisions before restoring an older export.
+
+The first v2 release must rehearse this migration on both platforms with the
+candidate images. Verify an unchanged rerun reuses the same thread IDs, human
+commands still work on historical multiline threads and dispositions persist.
+Keep older-format inline roots for the separate body-format refresh; migration
+alone does not prove a successful body refresh. Record live results in the
+[release checklist](development/release-process.md#release-pull-request-checklist).
 
 For each open change request with previous state:
 

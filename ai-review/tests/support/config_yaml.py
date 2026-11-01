@@ -22,13 +22,11 @@ from ai_review.reviewers import REVIEWERS
 SHIPPED_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "review.yaml"
 
 
-def config_tail(*, allow_severity_downgrade: bool = False) -> list[str]:
+def config_tail() -> list[str]:
     """Everything below `reviewers:` in a minimal valid document."""
     return [
         "panel:",
         "  min_successful_reviewers_for_resolution: 1",
-        "critique:",
-        f"  allow_severity_downgrade: {'true' if allow_severity_downgrade else 'false'}",
         "posting:",
         "  mode: gitlab_discussions",
         "state:",

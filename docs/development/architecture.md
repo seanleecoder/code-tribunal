@@ -134,6 +134,13 @@ These rules are worth stating because breaking them is silent:
   module. `critique` must import it from `consensus_errors`, never from
   `consensus`.
 
+New inline threads always use a single-line position; spanning finding ranges
+are rendered in their bodies. Historical multiline positions remain readable,
+and existing threads keep their original positions. Create failures go directly
+to summary fallback. Critique severity suggestions are informational; no config
+section or reducer path can apply them to final severity. The support/noise
+policy and absence-based resolution quorum are unchanged.
+
 `posting.post_inline` and `posting.finalize_state` mutate the shared
 `PostResult` dict and `StatePlan.planned_records` **in place**. That is the
 contract callers rely on; converting either to returned deltas is a redesign.

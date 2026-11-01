@@ -349,7 +349,6 @@ class StatePlanningTests(PostCase):
             summary_fallback_groups,
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
-            inline_multiline=False,
             dry_run=False,
         )
 

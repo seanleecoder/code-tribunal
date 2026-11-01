@@ -41,31 +41,24 @@ before the first N03 release, following the
 - **Repository variables** (persisted): `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
   `pull_request` runs, which manual mode skips),
   `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`.
-  Since 2026-10-18 the other seats pin the 2.0.3 shipped defaults explicitly,
-  because the consumer still runs an older image:
-  `AI_REVIEW_CLAUDE_MODEL=anthropic/claude-haiku-5.5`,
-  `AI_REVIEW_CODEX_MODEL=openai/gpt-6-luna`,
-  `AI_REVIEW_OPENCODE_MODEL=deepseek/deepseek-v4.1-flash-1017`, and each
-  `AI_REVIEW_<SEAT>_EFFORT=low`. The canaries clear the effort variables but
-  not the model variables, so keep the model variables equal to the shipped
-  defaults; delete all six once the consumer is repinned to 2.0.3.
+  The historical deployment also set model/effort overrides for an older image.
+  Inspect their current values before adoption: remove obsolete overrides or align
+  them with the candidate's intended model/effort routes, then verify the resolved
+  manifest. Do not assume the recorded old defaults match current pins. Canaries
+  clear effort variables but retain model variables.
   The roster variable must include `cursor`: the canonical workflow reads it before exposing
   `CURSOR_API_KEY`. Keep this four-seat resting roster for `make demo-preflight`;
   scope an exact three-seat default smoke to its temporary workflow, then rerun
   preflight after cleanup. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
   `AI_REVIEW_MERGE_GATE_ENABLED` were deleted; a current image fails at config
-  load while the merge-gate override is set. The pre-#126 workflow copy still on
-  `main` hard-maps that override to `'true'`, so the next adoption from a
-  current `R` is what finally removes it.
-- **The recorded mock-variable mapping is already in the workflow.** The one-time edit the
-  runbook describes has been made: the review and critique steps read
-  `AI_REVIEW_LOCAL_MOCK: ${{ vars.AI_REVIEW_LOCAL_MOCK || '0' }}`,
-  `AI_REVIEW_ALLOW_LOCAL_MOCK: … || 'false'`,
-  `AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}`, and each
-  `AI_REVIEW_REQUIRE_REAL_*: … || '1'`. So Chain A runs safely with the variables
-  unset, and Chain B is driven purely by setting repository variables — no workflow
-  commit, which matters because a new commit on the reviewed branch changes the diff
-  and moves the mock's selected anchor.
+  load while the merge-gate override is set. During adoption, replace the legacy
+  workflow (including any hard-mapped retired overrides) with the SHA-pinned
+  caller. Verify both automatic and manual review plus secret/variable forwarding
+  through an external caller before the first N03 release.
+- **Legacy mock mappings:** older workflow copies included mock controls and
+  `AI_REVIEW_REQUIRE_REAL_*`. Replace that workflow during adoption. Production
+  callers do not gain permanent mock controls; deterministic checks use the
+  canary's temporary caller/reusable pair.
 - **Mock variables are currently absent**, which is the intended resting state.
   **Delete them again after every Chain B campaign.** When adopting an image with
   S03, remove the older workflow's `AI_REVIEW_REQUIRE_REAL_*` mappings: the runner

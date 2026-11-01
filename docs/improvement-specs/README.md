@@ -11,12 +11,13 @@ deleted rather than archived. `git log` holds them, and a completed spec
 describes work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-Last reviewed against main at `1ccdb51` on 2026-11-01. Historical maintainer
+Last reviewed against main at `40ec9da` on 2026-11-01. Historical maintainer
 decisions are recorded below.
 
 ## Open specifications
 
-No open specifications.
+- [Prepare missing-ledger check](PREPARE_MISSING_LEDGER.md): deferred compatible
+  follow-up after 3.0; posting already fails closed.
 
 SPEC-66 (run health in the summary comment) shipped in 2.1.0; see
 [`CHANGELOG.md`](../../CHANGELOG.md).
@@ -51,8 +52,12 @@ recommendation's disposition.
 
 - **Done:** S01, S02, S03, S05 (unreleased, next major), S09 (unreleased), S10, S12 (unreleased), S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
 - **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
-- **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
-  SPEC-67), S18, S19.
+- **Partial:** S08 (per-seat codecs, through N06; further deletion awaits current CLI traces), S18, S19.
+- **Done, unreleased for the next major:** S11 severity policy removal, S15
+  single-line inline posting and COMPAT-008 writer removal. Severity suggestions
+  remain informational; historical multiline threads and old markers remain readable.
+- **Closed as bounded cleanup:** S07; the remaining shells only check prerequisites
+  and invoke Python-built commands. No further launcher rewrite is planned.
 - **Done, unreleased for the next major:** S06 (complete reviewer outcomes; status JSON mirrors removed).
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
@@ -185,6 +190,16 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 dropping effort settings, and a single cross-platform canary.
 
 **Paused:** SPEC-46, SPEC-48, X01, and the archived plans.
+
+## Maintainer scope decisions (2026-11-01)
+
+- Remove severity downgrading; keep informational suggestions and noise demotion.
+- Use single-line new comments with range context; retain historical readers and commands.
+- Retain absence-based resolution pending health evidence; no S13 policy change.
+- Keep S08 fallback deletion dependent on current pinned-CLI traces, not S05 alone.
+- Stop implementation before freezing `R` for code reviews. Live migration/caller,
+  direct-include hostile, body-refresh and exact-image canary checks remain pending
+  in the [release checklist](../development/release-process.md#release-pull-request-checklist).
 
 ## Standing obligations
 

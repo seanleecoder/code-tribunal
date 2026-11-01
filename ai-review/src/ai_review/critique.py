@@ -14,10 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 from .anchors import anchor_path_key
-from .config import ReviewConfig
 from .consensus_errors import ConsensusIntegrityError
 from .consensus_policy import apply_group_decision
-from .constants import SEVERITY_BY_RANK, SEVERITY_RANK
 from .grouping import DuplicateLink, _duplicate_link_key
 
 # Grouping can combine several source findings after a critic has already
@@ -38,18 +36,6 @@ def _critique_sort_key(critique: dict[str, Any]) -> tuple[str, str, str, str, st
         str(critique.get("adjusted_severity", "")),
         str(critique.get("rationale", "")),
     )
-
-
-def _severity_after_group_downgrade(current: str, adjusted_values: list[str]) -> str:
-    requested_ranks = [SEVERITY_RANK[value] for value in adjusted_values if value in SEVERITY_RANK]
-    current_rank = SEVERITY_RANK[current]
-    lower_ranks = [rank for rank in requested_ranks if rank < current_rank]
-    if not lower_ranks:
-        return current
-    downgraded = SEVERITY_BY_RANK[max(current_rank - 1, min(lower_ranks))]
-    if current == "blocker" and downgraded != "blocker":
-        return current
-    return downgraded
 
 
 def _same_path_and_category(left: dict[str, Any], right: dict[str, Any]) -> bool:
@@ -140,7 +126,7 @@ def _collapse_critiques(
     ``critiques`` are ``(verdict, critique)`` pairs from one critic against one
     final group. The strongest objection wins; ties within the winning verdict
     resolve by the existing stable critique sort key, which supplies the
-    rationale and the single permitted severity request.
+    rationale and informational severity suggestion.
     """
     winning = max(_VERDICT_PRECEDENCE[verdict] for verdict, _ in critiques)
     representative = min(
@@ -153,7 +139,6 @@ def _collapse_critiques(
 def _apply_critiques(
     groups: list[dict[str, Any]],
     critique_batches: list[dict[str, Any]] | None,
-    config: ReviewConfig,
     valid_duplicate_links: set[DuplicateLink],
 ) -> None:
     source_to_group: dict[str, int] = {}
@@ -189,7 +174,6 @@ def _apply_critiques(
 
     agreeing: dict[int, list[str]] = {}
     noise_counts: dict[int, int] = {}
-    downgrades: dict[int, list[str]] = {}
     for (group_index, critic), critiques in sorted(collected.items()):
         group = groups[group_index]
         verdict, representative = _collapse_critiques(critiques)
@@ -217,9 +201,6 @@ def _apply_critiques(
                         ),
                     }
                 )
-            adjusted = representative.get("adjusted_severity")
-            if isinstance(adjusted, str):
-                downgrades.setdefault(group_index, []).append(adjusted)
 
     for group in groups:
         group["critique_disputes"] = sorted(
@@ -227,7 +208,6 @@ def _apply_critiques(
             key=lambda item: (str(item["critic"]), str(item["rationale"])),
         )
 
-    allow_downgrade = config.critique.allow_severity_downgrade
     for index, group in enumerate(groups):
         # "Eligible" counts critics that *could* have critiqued the group, not
         # only those that did: a critic with a successful critique batch and no
@@ -240,15 +220,6 @@ def _apply_critiques(
         majority_noise = bool(eligible_critics) and noise_counts.get(index, 0) > len(
             eligible_critics
         ) / 2
-        if allow_downgrade:
-            severity = str(group["final_severity"])
-            group["final_severity"] = _severity_after_group_downgrade(
-                severity,
-                sorted(
-                    downgrades.get(index, []),
-                    key=lambda item: SEVERITY_RANK.get(item, SEVERITY_RANK[severity]),
-                ),
-            )
         apply_group_decision(
             group,
             agreeing_critics=agreeing.get(index, []),

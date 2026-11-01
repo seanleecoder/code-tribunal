@@ -40,7 +40,7 @@ actual executable without installing incompatible wheel metadata:
 make lint
 ```
 
-The pinned mypy needs `ast-serialize>=0.11.2,<1`. No Android wheel was
+The pinned mypy needs `ast-serialize>=0.12.1,<1`. No Android wheel was
 available in the audited release; building it requires Rust/maturin. A fresh
 requirements install remains blocked without native build prerequisites; other
 native dependencies can need them too. Do not call copied packages a clean

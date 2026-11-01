@@ -84,13 +84,7 @@ class ReviewPlatform(Protocol):
         self,
         anchor: Anchor,
         version: Any,
-        *,
-        multiline: bool = False,
     ) -> Position: ...
-
-    def can_retry_as_single_line(self, position: Position) -> bool: ...
-
-    def single_line_position(self, position: Position) -> Position: ...
 
     def root_note_id_from_thread(self, response: Thread) -> int: ...
 

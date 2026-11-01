@@ -13,7 +13,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 import ai_review.redact as redact_module
-from ai_review.config import CritiqueConfig, ReviewConfig, ReviewerConfig
+from ai_review.config import ReviewConfig, ReviewerConfig
 from ai_review.consensus import build_consensus, panel_status
 from ai_review.consensus_errors import ConsensusIntegrityError
 from ai_review.consensus_policy import SUPPORT_REQUIRED, decide_group, demoted_by_noise
@@ -30,7 +30,7 @@ from .test_consensus_groups import (
 )
 
 
-def _critique_config(**overrides: object) -> ReviewConfig:
+def _critique_config() -> ReviewConfig:
     config = _config()
     return replace(
         config,
@@ -40,7 +40,6 @@ def _critique_config(**overrides: object) -> ReviewConfig:
                 enabled=True, model="model", timeout_seconds=600, max_findings=50
             ),
         },
-        critique=CritiqueConfig(**overrides),
     )
 
 
@@ -319,14 +318,14 @@ _EMPTY_SUMMARY = {"agree": 0, "dispute": 0, "noise": 0, "duplicate": 0}
 class EffectiveVerdictTests(unittest.TestCase):
     """One critic, several critiques, one final group: the strongest wins."""
 
-    def _grouped_pair_run(self, critiques: list[dict], **config_overrides: object) -> dict:
+    def _grouped_pair_run(self, critiques: list[dict]) -> dict:
         consensus = build_consensus(
             _manifest(),
             [
                 _batch("claude", _finding("claude", _SOURCE_IDS["claude"], "major")),
                 _batch("codex", _finding("codex", _SOURCE_IDS["codex"], "major")),
             ],
-            _critique_config(**config_overrides),
+            _critique_config(),
             critique_batches=[_critique_batch("opencode", critiques)],
         )
         validate_instance(consensus, "consensus.schema.json")
@@ -387,11 +386,12 @@ class EffectiveVerdictTests(unittest.TestCase):
                 critique_batches=[unknown],
             )
 
-    def test_severity_downgrade_is_bounded_and_never_crosses_blocker(self) -> None:
+    def test_severity_suggestions_are_informational(self) -> None:
         cases = (
             ("no request", "major", None, "major"),
-            ("one level", "major", "info", "minor"),
-            ("blocker boundary", "blocker", "minor", "blocker"),
+            ("lower suggestion", "major", "info", "major"),
+            ("blocker", "blocker", "minor", "blocker"),
+            ("higher suggestion", "minor", "major", "minor"),
         )
         for label, severity, adjusted, expected in cases:
             source_id = _SOURCE_IDS["claude"]
@@ -399,7 +399,6 @@ class EffectiveVerdictTests(unittest.TestCase):
                 consensus = _run(
                     contributors=["claude"],
                     severity=severity,
-                    config=_critique_config(allow_severity_downgrade=True),
                     critique_batches=[
                         _critique_batch(
                             "codex",
@@ -462,9 +461,9 @@ class EffectiveVerdictTests(unittest.TestCase):
             rationale="beta rationale",
         )
 
-        forward = self._grouped_pair_run([first, second], allow_severity_downgrade=True)
+        forward = self._grouped_pair_run([first, second])
         reversed_order = self._grouped_pair_run(
-            [second, first], allow_severity_downgrade=True
+            [second, first]
         )
 
         self.assertEqual(forward["critique_disputes"], reversed_order["critique_disputes"])
@@ -478,10 +477,9 @@ class EffectiveVerdictTests(unittest.TestCase):
                 }
             ],
         )
-        # One effective verdict is also one severity request, so the second
-        # critique's `info` never participates.
-        self.assertEqual(forward["final_severity"], "minor")
-        self.assertEqual(reversed_order["final_severity"], "minor")
+        # Suggestions remain visible but never change the reported severity.
+        self.assertEqual(forward["final_severity"], "major")
+        self.assertEqual(reversed_order["final_severity"], "major")
 
 
 class MajorityNoiseTests(unittest.TestCase):

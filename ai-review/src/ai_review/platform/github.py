@@ -40,9 +40,7 @@ def _github_side(anchor: Anchor) -> str:
     return "LEFT" if anchor.get("side") == "old" else "RIGHT"
 
 
-def build_position(
-    anchor: Anchor, version: PullRequestVersion, *, multiline: bool = False
-) -> Position:
+def build_position(anchor: Anchor, version: PullRequestVersion) -> Position:
     """Derive a review-comment position from an anchor.
 
     Free-standing because it reads nothing off the platform, which lets the fakes
@@ -58,9 +56,6 @@ def build_position(
         "line": end.get(line_key) or start.get(line_key),
         "side": _github_side(anchor),
     }
-    if multiline and start != end:
-        position["start_line"] = start.get(line_key)
-        position["start_side"] = _github_side(anchor)
     return position
 
 
@@ -371,7 +366,7 @@ class GitHubReviewPlatform:
         self, project_id_or_path: str | int, change_id: str | int, body: str, position: Position
     ) -> Thread:
         payload = {"body": body, "commit_id": position["commit_id"], "path": position["path"]}
-        for key in ("line", "side", "start_line", "start_side"):
+        for key in ("line", "side"):
             if key in position:
                 payload[key] = position[key]
         comment = self._request(
@@ -640,18 +635,9 @@ class GitHubReviewPlatform:
         return None
 
     def build_position(
-        self, anchor: Anchor, version: PullRequestVersion, *, multiline: bool = False
+        self, anchor: Anchor, version: PullRequestVersion
     ) -> Position:
-        return build_position(anchor, version, multiline=multiline)
-
-    def can_retry_as_single_line(self, position: Position) -> bool:
-        return "start_line" in position
-
-    def single_line_position(self, position: Position) -> Position:
-        single = dict(position)
-        single.pop("start_line", None)
-        single.pop("start_side", None)
-        return single
+        return build_position(anchor, version)
 
     def root_note_id_from_thread(self, response: Thread) -> int:
         notes = response.get("notes")

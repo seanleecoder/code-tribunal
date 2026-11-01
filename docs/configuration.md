@@ -201,19 +201,20 @@ anchor to the same code, not when they happen to choose similar phrasing.
 One blind critique round always runs for each enabled seat. Failed or missing
 critique evidence degrades run health; it does not suppress valid reviews.
 
-| Key | Type/default | Meaning |
-|---|---|---|
-| `critique.allow_severity_downgrade` | boolean, `false` | Allow bounded downgrade policy; never crosses the blocker boundary. |
+Severity suggestions accompany displayed dissent; they never change the reported
+severity. There is no `critique` configuration section.
 
 ### Posting and state
 
 | Key | Type/default | Meaning |
 |---|---|---|
 | `posting.mode` | enum, `gitlab_discussions` | `gitlab_discussions` or `github_reviews`. |
-| `posting.inline_multiline` | boolean, `true` | Permit multiline inline comments. |
 
 All three supported diff sides (`new`, `old`, `unchanged`) are eligible for
-inline placement. FYI findings always go to the summary. Posting always refuses
+inline placement. New comments attach to one line; a spanning finding includes
+its range in the body. Existing multiline threads are reused without moving their
+positions. A failed create goes directly to summary fallback, without retrying
+another placement. FYI findings always go to the summary. Posting always refuses
 stale-head mutations; these behaviors have no configuration switches.
 
 Persistent cross-run state is always active and has no backend setting.
@@ -438,6 +439,12 @@ The digest detects mixed or corrupt artifacts; it does not authenticate a writer
 that already controls a trusted job. Trusted CI delivery remains the boundary.
 
 ## Next-major migration
+
+Remove the entire `critique` section (including
+`critique.allow_severity_downgrade`) and `posting.inline_multiline` from custom
+YAML before upgrading. Both are rejected by the ordinary unsupported-key error.
+Severity suggestions remain informational; new inline comments always use a
+single line with range context in the body. Absence-based resolution is unchanged.
 
 Upgrade the canonical workflow/include and both images together and start a new
 run at prepare. Existing v3 configuration and old run artifacts are rejected.

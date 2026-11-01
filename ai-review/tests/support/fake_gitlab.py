@@ -176,21 +176,11 @@ class FakeGitLabClient:
         self,
         anchor: dict[str, Any],
         version: MergeRequestVersion,
-        *,
-        multiline: bool = False,
     ) -> dict[str, Any]:
-        return build_position(anchor, version, multiline=multiline)
+        return build_position(anchor, version)
 
     def current_user_id(self) -> int | None:
         return current_user_id(self)
-
-    def can_retry_as_single_line(self, position: dict[str, Any]) -> bool:
-        return isinstance(position.get("line_range"), dict)
-
-    def single_line_position(self, position: dict[str, Any]) -> dict[str, Any]:
-        single_line_position = dict(position)
-        single_line_position.pop("line_range", None)
-        return single_line_position
 
     def root_note_id_from_thread(self, response: dict[str, Any]) -> int:
         return root_note_id_from_discussion(response)

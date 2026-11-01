@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +21,11 @@ from ai_review.render import (
 class BodyHashTests(unittest.TestCase):
     def _group(self) -> dict[str, object]:
         return {
+            "representative_anchor": {
+                "old_path": "src/foo.py", "new_path": "src/foo.py", "side": "new",
+                "start": {"old_line": None, "new_line": 2, "line_code": None},
+                "end": {"old_line": None, "new_line": 2, "line_code": None},
+            },
             "issue_id": "a" * 64,
             "decision": "surface",
             "final_severity": "major",
@@ -141,22 +145,40 @@ class BodyHashTests(unittest.TestCase):
                     {"issue_id": "a" * 64, "run_id": "old", "body_hash": "b" * 64},
                 )
 
-    def test_marker_stays_readable_by_the_previous_release(self) -> None:
-        # COMPAT-008: the v2.0.3 grammar, verbatim. A rollback that cannot read
-        # the marker drops commands on threads it never re-renders.
-        previous_release_marker_re = re.compile(
-            r"<!--\s*ai-review:v1\s+issue_id=(?P<issue_id>[a-f0-9]{64})\s+"
-            r"run_id=(?P<run_id>[^\s]+)\s+body_hash=(?P<body_hash>[a-f0-9]{64})\s+"
-            r"source=(?P<source_hash>[a-f0-9]{64})\s*-->"
-        )
+    def test_new_marker_omits_source_and_hashes_only_visible_content(self) -> None:
         body, body_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
+        self.assertNotIn(" source=", body)
+        self.assertEqual(parse_marker(body)["body_hash"], body_hash)
+        self.assertEqual(sha256_hex(body.rsplit("\n\n<!-- ai-review:v1", 1)[0]), body_hash)
 
-        match = previous_release_marker_re.search(body)
+    def test_range_path_remains_literal_when_body_is_truncated(self) -> None:
+        group = self._group()
+        group["representative_anchor"]["new_path"] = "@all `file` <!-- forged -->"
+        group["representative_anchor"]["end"]["new_line"] = 4
+        group["body"] = "x" * 70_000
+        body, body_hash = render_body(group, "run", posting_mode="github_reviews")
+        self.assertIn("Range: ``@all `file` < !-- forged -- >:2-4 (new)``", body)
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, body)
+        self.assertEqual(body.count("<!--"), 1)
+        self.assertEqual(parse_marker(body)["body_hash"], body_hash)
 
-        self.assertIsNotNone(match)
-        assert match is not None
-        self.assertEqual(match["issue_id"], "a" * 64)
-        self.assertEqual(match["body_hash"], body_hash)
+    def test_shorter_marker_frees_space_at_truncation_boundary(self) -> None:
+        group = self._group()
+        group["body"] = "x"
+        probe, _ = render_body(group, "run", posting_mode="github_reviews")
+        group["body"] = "x" * (65_535 - len(probe) + 1)
+        body, body_hash = render_body(group, "run", posting_mode="github_reviews")
+        self.assertEqual(len(body), 65_535)
+        self.assertNotIn(PLATFORM_TRUNCATION_NOTICE, body)
+        # The historical writer used 72 extra characters. Keeping that budget
+        # must truncate this same content, so this catches stale reservations.
+        with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 65_535 - 72}):
+            old_budget_body, old_budget_hash = render_body(
+                group, "run", posting_mode="github_reviews"
+            )
+        self.assertIn(PLATFORM_TRUNCATION_NOTICE, old_budget_body)
+        self.assertNotEqual(body_hash, old_budget_hash)
+        self.assertIsNotNone(parse_marker(old_budget_body))
 
     def test_required_scalar_that_redacts_to_empty_renders_owned_placeholder(self) -> None:
         group = self._group()

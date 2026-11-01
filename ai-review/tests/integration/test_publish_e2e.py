@@ -16,6 +16,7 @@ from ai_review.memory import decode_state_note_body, encode_state_note
 from ai_review.notes import parse_marker
 from ai_review.post import exit_code_for_status
 from ai_review.posting import post_consensus
+from ai_review.render import render_body
 from ai_review.schema import load_json_file, validate_instance
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,78 @@ class PublishEndToEndTests(unittest.TestCase):
         self.assertEqual(len(client.summary_notes), 1)
         # A blocker is an impact label. Publication succeeded, so the job passes.
         self.assertEqual(exit_code, 0)
+
+    def test_historical_multiline_threads_are_reused_and_accept_commands(self) -> None:
+        for mode in ("gitlab_discussions", "github_reviews"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+                config = replace(config, posting=replace(config.posting, mode=mode))
+                if mode == "github_reviews":
+                    manifest = dict(manifest, project_id="octo/repo")
+                    client = FakeGitHubClient(
+                        head_sha=manifest["head_sha"], diff_text=diff_text,
+                        user_permissions={7: 40},
+                    )
+                else:
+                    client = FakeGitLabClient(head_sha=manifest["head_sha"], diff_text=diff_text)
+                consensus = build_consensus(manifest, self._blocking_batches(), config)
+                group = consensus["groups"][0]
+                anchor = group["representative_anchor"]
+                anchor["end"] = {**anchor["start"], "new_line": anchor["start"]["new_line"] + 1}
+                project, change = manifest["project_id"], manifest["merge_request_iid"]
+                position = client.build_position(anchor, client.fetch_version(project, change))
+                # Raw historical API positions: new code must read these even
+                # though it no longer constructs them for new comments.
+                if mode == "github_reviews":
+                    position.update(start_line=anchor["start"]["new_line"], start_side="RIGHT")
+                else:
+                    position["line_range"] = {
+                        "start": {**anchor["start"], "type": "new"},
+                        "end": {**anchor["end"], "type": "new"},
+                    }
+                legacy_body = (
+                    f"**AI review: BLOCKER correctness**\n\nTitle: `Legacy range`\n\n"
+                    f"<!-- ai-review:v1 issue_id={group['issue_id']} run_id={manifest['run_id']} "
+                    f"body_hash={'0' * 64} source={'b' * 64} -->"
+                )
+                thread = client.create_inline_comment(project, change, legacy_body, position)
+                root_id = client.root_note_id_from_thread(thread)
+                if mode == "github_reviews":
+                    client._comments[0].update(
+                        start_line=position["start_line"], start_side="RIGHT"
+                    )
+                original_position = copy.deepcopy(position)
+                for expected_updates in (1, 0):
+                    result = post_consensus(client, config, manifest, consensus)
+                    self.assertEqual(result["created_discussions"], 0)
+                    self.assertEqual(result["updated_discussions"], expected_updates)
+                    self.assertEqual(result["summary_comment"]["surface_findings"], 0)
+                    ledger = decode_state_note_body(client.state_notes[0]["body"])
+                    self.assertEqual(ledger["records"][0]["discussion_id"], str(thread["id"]))
+                expected_body, _ = render_body(group, manifest["run_id"], posting_mode=mode)
+                roots = [
+                    t for t in client.list_threads(project, change)
+                    if str(t["id"]) == str(thread["id"])
+                ]
+                self.assertEqual(roots[0]["notes"][0]["body"], expected_body)
+                if mode == "github_reviews":
+                    self.assertEqual(
+                        client._comments[0]["start_line"], original_position["start_line"]
+                    )
+                    client.add_reply(
+                        root_id, "/ai-review wontfix", author_id=7, author_login="writer"
+                    )
+                else:
+                    self.assertEqual(roots[0]["notes"][0]["position"], original_position)
+                    client.discussions[0]["notes"].append({
+                        "id": 500, "body": "/ai-review wontfix",
+                        "author": {"id": 7, "username": "writer"},
+                    })
+                result = post_consensus(client, config, manifest, consensus)
+                self.assertEqual(result["created_discussions"], 0)
+                ledger = decode_state_note_body(client.state_notes[0]["body"])
+                self.assertEqual(ledger["records"][0]["status"], "wontfix")
+                self.assertEqual(ledger["records"][0]["root_note_id"], root_id)
 
     def test_fyi_only_consensus_posts_summary_and_exits_zero(self) -> None:
         client, consensus, post_result, exit_code = self._run_e2e(self._fyi_batches())
@@ -299,7 +372,6 @@ class PublishEndToEndTests(unittest.TestCase):
     def _prepare_bundle(self, tmp: Path) -> tuple[ReviewConfig, dict[str, Any], str]:
         bundle = prepare_simple_bundle(tmp)
         config = load_config(SHIPPED_CONFIG_PATH).to_dict()
-        config["posting"]["inline_multiline"] = False
         config["panel"]["min_successful_reviewers_for_resolution"] = 1
         config["state"]["retention"] = {"max_records": 200}
         manifest = load_json_file(bundle / "manifest.json")

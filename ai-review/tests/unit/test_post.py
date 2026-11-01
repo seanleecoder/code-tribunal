@@ -394,7 +394,7 @@ class PostTests(PostCase):
                 self._consensus(),
             )
 
-    def test_classify_post_groups_routes_surface_fyi_and_fallbacks(self) -> None:
+    def test_classify_post_groups_keeps_ranges_inline_and_fyi_in_summary(self) -> None:
         base = self._consensus()["groups"][0]
         surface = copy.deepcopy(base)
         surface["issue_id"] = "1" * 64
@@ -414,24 +414,13 @@ class PostTests(PostCase):
 
         classification = _classify_post_groups(
             [surface, old_side, multiline, fyi],
-            inline_multiline=False,
         )
 
         self.assertEqual(
             [group["issue_id"] for group in classification.inline_candidates],
-            ["1" * 64, "2" * 64]
-        )
-        self.assertEqual(
-            [group["issue_id"] for group in classification.summary_fallback_groups],
-            ["3" * 64],
+            ["1" * 64, "2" * 64, "3" * 64]
         )
         self.assertEqual([group["issue_id"] for group in classification.fyi_groups], ["4" * 64])
-        self.assertEqual(
-            classification.warnings,
-            [
-                "summary fallback required for multiline anchor",
-            ],
-        )
 
     def test_classify_post_groups_never_diverts_on_count(self) -> None:
         """No surfaced-thread cap exists, at any severity or volume.
@@ -451,19 +440,15 @@ class PostTests(PostCase):
 
         classification = _classify_post_groups(
             groups,
-            inline_multiline=False,
         )
 
         self.assertEqual(len(classification.inline_candidates), 40)
-        self.assertEqual(classification.summary_fallback_groups, [])
-        self.assertEqual(classification.warnings, [])
 
     def test_classify_post_groups_preserves_fail_closed_malformed_group(self) -> None:
         with self.assertRaises(AttributeError):
             _classify_post_groups(
                 [object()],  # type: ignore[list-item]
-                inline_multiline=False,
-            )
+                )
 
     def test_render_body_redacts_model_authored_secrets(self) -> None:
         group = self._consensus()["groups"][0]
@@ -816,7 +801,7 @@ class PostTests(PostCase):
         consensus = self._consensus()
         consensus["groups"][0]["representative_anchor"]["end"]["new_line"] = 4
 
-        config = self._config(inline_multiline=False)
+        config = self._config()
         invalid = config.to_dict()
         invalid["posting"]["fallback_to_summary_comment"] = False
         with self.assertRaisesRegex(ConfigError, "fallback_to_summary_comment"):
@@ -828,12 +813,15 @@ class PostTests(PostCase):
                 }
             )
 
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            config,
-            self._manifest("head"),
-            consensus,
-        )
+        with patch.object(
+            client, "create_inline_comment", side_effect=ReviewPlatformError("invalid position")
+        ):
+            result = post_consensus(
+                client,  # type: ignore[arg-type]
+                config,
+                self._manifest("head"),
+                consensus,
+            )
 
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["summary_comment"]["action"], "created")
@@ -908,24 +896,24 @@ class PostTests(PostCase):
         )
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_multiline_surface_falls_back_to_summary(self) -> None:
-        # Bug #2: a multiline anchor without inline_multiline support falls back to summary.
+    def test_rejected_single_line_is_attempted_once_then_falls_back(self) -> None:
         client = FakePostClient("head")
         consensus = self._consensus()
-        anchor = consensus["groups"][0]["representative_anchor"]
-        anchor["end"] = {"old_line": None, "new_line": 4, "line_code": None}
-        result = post_consensus(
-            client,  # type: ignore[arg-type]
-            self._config(inline_multiline=False),
-            self._manifest("head"),
-            consensus,
-        )
+        consensus["groups"][0]["representative_anchor"]["end"] = {
+            "old_line": None, "new_line": 4, "line_code": None,
+        }
+        with patch.object(
+            client, "create_inline_comment", side_effect=ReviewPlatformError("invalid position")
+        ) as create:
+            result = post_consensus(client, self._config(), self._manifest("head"), consensus)
+        self.assertEqual(create.call_count, 1)
+        self.assertNotIn("line_range", create.call_args.args[3])
         self.assertEqual(result["created_discussions"], 0)
         self.assertEqual(result["summary_comment"]["surface_findings"], 1)
-        self.assertTrue(any("multiline anchor" in warning for warning in result["warnings"]))
+        self.assertEqual(result["status"], "success")
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_omitted_inline_settings_allow_multiline_on_all_documented_sides(self) -> None:
+    def test_range_posts_one_line_with_range_context_on_all_sides(self) -> None:
         for side in ("new", "old", "unchanged"):
             with self.subTest(side=side):
                 client = FakePostClient("head")
@@ -953,7 +941,8 @@ class PostTests(PostCase):
 
                 self.assertEqual(result["created_discussions"], 1)
                 self.assertEqual(result["summary_comment"]["surface_findings"], 0)
-                self.assertIn("line_range", client.created_positions[0])
+                self.assertNotIn("line_range", client.created_positions[0])
+                self.assertIn(f"Range: `src/foo.py:2-4 ({side})`", client.created_bodies[0])
                 validate_instance(result, "post_result.schema.json")
 
     def test_post_fyi_findings_go_to_summary(self) -> None:
@@ -1684,7 +1673,6 @@ class PostTests(PostCase):
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
-            inline_multiline=False,
             dry_run=True,
         )
 
@@ -1736,7 +1724,6 @@ class PostTests(PostCase):
             [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
-            inline_multiline=False,
             dry_run=True,
         )
 
