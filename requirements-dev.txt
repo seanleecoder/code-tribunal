@@ -12,7 +12,7 @@ pytest-cov==7.1.0
 # Android uses the same pinned static tool via scripts/install_termux_ruff.py.
 ruff==0.17.3; sys_platform != "android"
 types-PyYAML==6.0.12.20261030
-types-requests==2.33.0.20261006
+types-requests==2.33.0.20261030
 # PyPI has no Android wheel and the sdist needs a Rust toolchain. On Android, put
 # the binary from zizmor's static musllinux wheel on PATH instead.
 zizmor==1.31.1; sys_platform != "android"
