@@ -147,8 +147,8 @@ applied, and the review checks the evidence it cites.
 
 - [ ] **Compatibility targets:** cite the current
   [target audit](temporary-compatibility.md#next-major-target-audit-2026-11-01).
-  Confirm COMPAT-008's writer is removed and record why COMPAT-009/010/011
-  remain or have reached their deletion criteria before freezing `R`.
+  Record why COMPAT-009/010/011 remain or have reached their deletion criteria
+  before freezing `R`.
 - [ ] **State v2 cutover:** for the first S14 release, rehearse the
   [migration](../operations.md#state-v2-migration) on both GitHub and GitLab.
   Pause reviews; export all authenticated notes with IDs/authors; retain exports;

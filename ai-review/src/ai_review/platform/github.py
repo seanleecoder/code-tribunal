@@ -365,10 +365,7 @@ class GitHubReviewPlatform:
     def create_inline_comment(
         self, project_id_or_path: str | int, change_id: str | int, body: str, position: Position
     ) -> Thread:
-        payload = {"body": body, "commit_id": position["commit_id"], "path": position["path"]}
-        for key in ("line", "side"):
-            if key in position:
-                payload[key] = position[key]
+        payload = {"body": body, **position}
         comment = self._request(
             "POST",
             f"/repos/{self._repo(project_id_or_path)}/pulls/{change_id}/comments",

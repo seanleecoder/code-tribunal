@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast, overload
 
+from .anchors import anchor_location
 from .canonical import normalize_text, sha256_hex
 from .redact import redact_text
 from .types import Anchor, FindingGroup
@@ -370,12 +371,10 @@ def render_body(
         variable_fragments.append(title_fragment)
     anchor = cast(Anchor, group["representative_anchor"])
     if anchor["start"] != anchor["end"]:
-        line_key = "old_line" if anchor["side"] == "old" else "new_line"
-        path = anchor["old_path"] if anchor["side"] == "old" else anchor["new_path"]
+        span = anchor_location(anchor)
         location = _span_fragment(
             "Range: ",
-            f"{path}:{anchor['start'].get(line_key)}-{anchor['end'].get(line_key)} "
-            f"({anchor['side']})",
+            f"{span['path']}:{span['start_line']}-{span['end_line']} ({span['side']})",
             required=True,
         )
         if location is not None:

@@ -388,12 +388,12 @@ class EffectiveVerdictTests(unittest.TestCase):
 
     def test_severity_suggestions_are_informational(self) -> None:
         cases = (
-            ("no request", "major", None, "major"),
-            ("lower suggestion", "major", "info", "major"),
-            ("blocker", "blocker", "minor", "blocker"),
-            ("higher suggestion", "minor", "major", "minor"),
+            ("no request", "major", None),
+            ("lower suggestion", "major", "info"),
+            ("blocker", "blocker", "minor"),
+            ("higher suggestion", "minor", "major"),
         )
-        for label, severity, adjusted, expected in cases:
+        for label, severity, adjusted in cases:
             source_id = _SOURCE_IDS["claude"]
             with self.subTest(label):
                 consensus = _run(
@@ -413,7 +413,7 @@ class EffectiveVerdictTests(unittest.TestCase):
                         )
                     ],
                 )
-                self.assertEqual(consensus["groups"][0]["final_severity"], expected)
+                self.assertEqual(consensus["groups"][0]["final_severity"], severity)
 
     def test_agree_and_noise_collapse_to_one_noise_vote(self) -> None:
         group = self._grouped_pair_run(

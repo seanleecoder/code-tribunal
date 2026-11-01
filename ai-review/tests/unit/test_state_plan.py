@@ -134,7 +134,6 @@ def _plan(
         cast(Any, consensus if consensus is not None else _consensus()),
         state if state is not None else _state(persisted or []),
         cast(Any, inline or []),
-        [],
         cast(Any, fyi or []),
         commands or {},
     )

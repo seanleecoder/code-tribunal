@@ -29,7 +29,6 @@ from ai_review.platform.gitlab import (
     MergeRequestVersion,
 )
 from ai_review.posting import (
-    _classify_post_groups,
     _initial_post_result,
     post_consensus,
     post_inline,
@@ -393,62 +392,6 @@ class PostTests(PostCase):
                 self._manifest("head"),
                 self._consensus(),
             )
-
-    def test_classify_post_groups_keeps_ranges_inline_and_fyi_in_summary(self) -> None:
-        base = self._consensus()["groups"][0]
-        surface = copy.deepcopy(base)
-        surface["issue_id"] = "1" * 64
-        old_side = copy.deepcopy(base)
-        old_side["issue_id"] = "2" * 64
-        old_side["representative_anchor"]["side"] = "old"
-        multiline = copy.deepcopy(base)
-        multiline["issue_id"] = "3" * 64
-        multiline["representative_anchor"]["end"] = {
-            "old_line": None,
-            "new_line": 4,
-            "line_code": None,
-        }
-        fyi = copy.deepcopy(base)
-        fyi["issue_id"] = "4" * 64
-        fyi["decision"] = "fyi"
-
-        classification = _classify_post_groups(
-            [surface, old_side, multiline, fyi],
-        )
-
-        self.assertEqual(
-            [group["issue_id"] for group in classification.inline_candidates],
-            ["1" * 64, "2" * 64, "3" * 64]
-        )
-        self.assertEqual([group["issue_id"] for group in classification.fyi_groups], ["4" * 64])
-
-    def test_classify_post_groups_never_diverts_on_count(self) -> None:
-        """No surfaced-thread cap exists, at any severity or volume.
-
-        Every anchorable surface group becomes a thread. The only route to the
-        summary is an anchor that cannot carry one; a configured count is not a
-        reason to reclassify a finding two reviewers supported independently.
-        The volume bound is each reviewer's upstream ``max_findings``.
-        """
-        base = self._consensus()["groups"][0]
-        groups = []
-        for index in range(40):
-            group = copy.deepcopy(base)
-            group["issue_id"] = f"{index:064d}"
-            group["final_severity"] = "minor" if index % 2 else "blocker"
-            groups.append(group)
-
-        classification = _classify_post_groups(
-            groups,
-        )
-
-        self.assertEqual(len(classification.inline_candidates), 40)
-
-    def test_classify_post_groups_preserves_fail_closed_malformed_group(self) -> None:
-        with self.assertRaises(AttributeError):
-            _classify_post_groups(
-                [object()],  # type: ignore[list-item]
-                )
 
     def test_render_body_redacts_model_authored_secrets(self) -> None:
         group = self._consensus()["groups"][0]
@@ -1326,7 +1269,6 @@ class PostTests(PostCase):
                         state,
                         [],
                         [],
-                        [],
                         {record["issue_id"]: command},
                     )
                     result = _initial_post_result(
@@ -1364,7 +1306,6 @@ class PostTests(PostCase):
                         manifest,
                         consensus,
                         saved,
-                        [],
                         [],
                         [],
                         {record["issue_id"]: command},
@@ -1654,7 +1595,6 @@ class PostTests(PostCase):
             state,
             [group],
             [],
-            [],
             {},
         )
         client = StatePostClient("head", state)
@@ -1670,7 +1610,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
             dry_run=True,
@@ -1705,7 +1644,6 @@ class PostTests(PostCase):
             state,
             [group],
             [],
-            [],
             {},
         )
         client = StatePostClient("head", state)
@@ -1721,7 +1659,6 @@ class PostTests(PostCase):
             consensus,
             result,
             state_plan,
-            [],
             MergeRequestVersion("base", "start", "head"),
             posting_mode="gitlab_discussions",
             dry_run=True,

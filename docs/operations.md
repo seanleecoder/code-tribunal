@@ -71,12 +71,9 @@ binding before running 2.1.x. Do not run an old image against v2 or synthesize a
 empty ledger. If reviews have already recorded new dispositions after migration,
 reconcile those decisions before restoring an older export.
 
-The first v2 release must rehearse this migration on both platforms with the
-candidate images. Verify an unchanged rerun reuses the same thread IDs, human
-commands still work on historical multiline threads and dispositions persist.
-Keep older-format inline roots for the separate body-format refresh; migration
-alone does not prove a successful body refresh. Record live results in the
-[release checklist](development/release-process.md#release-pull-request-checklist).
+The first v2 release must rehearse this migration on both platforms; the
+[release checklist](development/release-process.md#release-pull-request-checklist)
+lists what to verify and record.
 
 For each open change request with previous state:
 

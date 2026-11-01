@@ -75,6 +75,7 @@ class PostCase(unittest.TestCase):
                         "side": "new",
                         "start": {"old_line": None, "new_line": 2, "line_code": None},
                         "end": {"old_line": None, "new_line": 2, "line_code": None},
+                        "symbol": None,
                     },
                 }
             ],

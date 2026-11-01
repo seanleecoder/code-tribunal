@@ -73,9 +73,7 @@ class PublishEndToEndTests(unittest.TestCase):
                 position = client.build_position(anchor, client.fetch_version(project, change))
                 # Raw historical API positions: new code must read these even
                 # though it no longer constructs them for new comments.
-                if mode == "github_reviews":
-                    position.update(start_line=anchor["start"]["new_line"], start_side="RIGHT")
-                else:
+                if mode == "gitlab_discussions":
                     position["line_range"] = {
                         "start": {**anchor["start"], "type": "new"},
                         "end": {**anchor["end"], "type": "new"},
@@ -89,7 +87,7 @@ class PublishEndToEndTests(unittest.TestCase):
                 root_id = client.root_note_id_from_thread(thread)
                 if mode == "github_reviews":
                     client._comments[0].update(
-                        start_line=position["start_line"], start_side="RIGHT"
+                        start_line=anchor["start"]["new_line"], start_side="RIGHT"
                     )
                 original_position = copy.deepcopy(position)
                 for expected_updates in (1, 0):
@@ -106,9 +104,6 @@ class PublishEndToEndTests(unittest.TestCase):
                 ]
                 self.assertEqual(roots[0]["notes"][0]["body"], expected_body)
                 if mode == "github_reviews":
-                    self.assertEqual(
-                        client._comments[0]["start_line"], original_position["start_line"]
-                    )
                     client.add_reply(
                         root_id, "/ai-review wontfix", author_id=7, author_login="writer"
                     )

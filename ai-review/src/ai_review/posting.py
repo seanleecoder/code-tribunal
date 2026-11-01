@@ -87,38 +87,6 @@ def _initial_post_result(
 
 
 @dataclass(frozen=True)
-class PostGroupClassification:
-    inline_candidates: list[FindingGroup]
-    fyi_groups: list[FindingGroup]
-
-
-def _classify_post_groups(
-    groups: list[FindingGroup],
-) -> PostGroupClassification:
-    """Separate surfaced threads from FYI summary entries.
-
-    Every surfaced group attempts a single-line thread; failed placement is
-    handled during publication. The volume bound is each reviewer's max_findings.
-    """
-    inline_candidates: list[FindingGroup] = []
-    fyi_groups: list[FindingGroup] = []
-    for group in groups:
-        decision = group.get("decision")
-        if decision == "fyi":
-            fyi_groups.append(group)
-            continue
-        if decision != "surface":
-            continue
-        inline_candidates.append(group)
-
-    inline_candidates = _sort_groups(inline_candidates)
-    return PostGroupClassification(
-        inline_candidates=inline_candidates,
-        fyi_groups=fyi_groups,
-    )
-
-
-@dataclass(frozen=True)
 class InlinePostOutcome:
     result: PostResult
     state_plan: StatePlan
@@ -214,19 +182,17 @@ def post_inline(
     consensus: Consensus,
     result: PostResult,
     state_plan: StatePlan,
-    summary_fallback_groups: list[FindingGroup],
     version: Any,
     *,
     posting_mode: str,
     dry_run: bool,
 ) -> InlinePostOutcome:
-    """Post inline discussions and return the mutated posting/state phase outputs.
+    """Post inline discussions and return the posting/state phase outputs.
 
-    The monolithic posting path historically updated the result counters,
-    planned state records, and summary fallback list in one pass. Returning the
-    mutated objects makes that seam explicit for callers and direct tests while
-    preserving the in-place behavior expected by the finalization phase.
+    Result counters and planned state records are updated in place; groups whose
+    thread could not be created or updated are returned as summary fallbacks.
     """
+    summary_fallback_groups: list[FindingGroup] = []
     # Planning claims each record and discussion at most once, so no two plans
     # here can reach the same existing thread.
     for inline_plan in state_plan.inline_plans:
@@ -551,8 +517,7 @@ def post_consensus(
     *,
     dry_run: bool = False,
 ) -> PostResult:
-    posting = config.posting
-    posting_mode = posting.mode
+    posting_mode = config.posting.mode
     # Fail fast on unsupported modes before fetching or mutating platform state.
     platform_comment_limit(posting_mode)
     current_head_sha = client.fetch_current_head_sha(
@@ -578,14 +543,12 @@ def post_consensus(
         current_issue_ids={group["issue_id"] for group in consensus["groups"]},
     )
 
-    # Surface groups attempt a single-line thread; placement failures fall back
-    # to the summary. FYI findings go directly to the summary.
-    classification = _classify_post_groups(
-        consensus.get("groups", []),
-    )
-    inline_candidates = classification.inline_candidates
-    summary_fallback_groups: list[FindingGroup] = []
-    fyi_groups = classification.fyi_groups
+    # Every surface group attempts a single-line thread; placement failures fall
+    # back to the summary during publication. FYI findings go directly to the
+    # summary. The volume bound is each reviewer's max_findings, not a cap here.
+    groups = consensus.get("groups", [])
+    inline_candidates = _sort_groups([g for g in groups if g.get("decision") == "surface"])
+    fyi_groups = [g for g in groups if g.get("decision") == "fyi"]
 
     state_plan = plan_state(
         config,
@@ -593,7 +556,6 @@ def post_consensus(
         consensus,
         context.persisted_state,
         inline_candidates,
-        summary_fallback_groups,
         fyi_groups,
         context.human_commands,
     )
@@ -633,7 +595,7 @@ def post_consensus(
             consensus,
             result,
             None,
-            summary_fallback_groups,
+            [],
             fyi_groups,
             recovered_state,
             posting_mode=posting_mode,
@@ -656,7 +618,6 @@ def post_consensus(
         consensus,
         result,
         state_plan,
-        summary_fallback_groups,
         context.version,
         posting_mode=posting_mode,
         dry_run=dry_run,

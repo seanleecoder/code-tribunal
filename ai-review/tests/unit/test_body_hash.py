@@ -25,6 +25,7 @@ class BodyHashTests(unittest.TestCase):
                 "old_path": "src/foo.py", "new_path": "src/foo.py", "side": "new",
                 "start": {"old_line": None, "new_line": 2, "line_code": None},
                 "end": {"old_line": None, "new_line": 2, "line_code": None},
+                "symbol": None,
             },
             "issue_id": "a" * 64,
             "decision": "surface",
