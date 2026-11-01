@@ -9,6 +9,11 @@ versioning.
 
 ### Changed
 
+- Simplify artifact contract tests (S12): remove the reflection-based schema/type
+  comparator and test concrete production output and malformed admission instead.
+  JSON schemas retain wire-contract authority; production types remain internal
+  annotations.
+
 - Breaking, for the next major release: each `finding_batch.v2` and
   `critique_batch.v2` is the complete execution outcome (S06), with timing and
   bounded redacted diagnostics. Status JSON mirrors, `adapter_status.v1` and

@@ -19,6 +19,9 @@ When behavior changes, update the smallest relevant test and any schema-backed
 golden file. Run `make update-golden` only for an intentional reducer contract
 change and review the generated diff.
 
+Test artifact producers and admission boundaries against the shipped JSON
+schemas, with concrete artifacts; see [module ownership](architecture.md#module-ownership).
+
 `make test` invokes pytest directly with coverage. `make docs-check` uses the
 pinned native Lychee binary to check local Markdown links and anchors. The
 historical `release/<version>.md` notes are frozen and not link-checked. GitLab

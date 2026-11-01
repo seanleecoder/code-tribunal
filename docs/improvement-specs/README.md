@@ -11,7 +11,7 @@ deleted rather than archived. `git log` holds them, and a completed spec
 describes work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-Last reviewed against main at `2d9f08d` on 2026-10-30. Historical maintainer
+Last reviewed against main at `1ccdb51` on 2026-11-01. Historical maintainer
 decisions are recorded below.
 
 ## Open specifications
@@ -49,10 +49,10 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S03, S05 (unreleased, next major), S09 (unreleased), S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
+- **Done:** S01, S02, S03, S05 (unreleased, next major), S09 (unreleased), S10, S12 (unreleased), S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
 - **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release).
 - **Partial:** S07 (Python launch for OpenCode and shared setup, through N07/N08), S08 (per-seat codecs, through N06), S11 (the noise half, through
-  SPEC-67), S12 (the test-only TypedDicts, through N16), S18, S19.
+  SPEC-67), S18, S19.
 - **Done, unreleased for the next major:** S06 (complete reviewer outcomes; status JSON mirrors removed).
 - **Decided on 2026-10-13 and 2026-10-14:**
   - S01: retire the release-certificate machinery, with the panel and lifecycle
@@ -180,7 +180,6 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 15. Done, unreleased: S06 consolidates each reviewer/stage into one complete
     outcome. Pooling and consensus share admission; health derives metadata and
     counts from outcomes. Status JSON mirrors and `--status-dir` are removed.
-    S12's remaining reflection-checker cleanup can follow.
 
 **Rejected:** structured-output-only seats, thread-only state, merged prompts,
 dropping effort settings, and a single cross-platform canary.

@@ -1,3 +1,8 @@
+"""Internal annotations; the shipped JSON schemas own wire contracts.
+
+See docs/development/architecture.md#module-ownership.
+"""
+
 from typing import Literal, NotRequired, TypedDict
 
 # JSON helper aliases for extension points whose schemas intentionally allow any
