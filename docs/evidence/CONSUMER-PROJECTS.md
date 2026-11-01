@@ -257,3 +257,53 @@ closed without merging and the persistent deployment is unchanged.
 This evidence is for the `e95335b` image pair. The live fork-skip check is a
 [carried coverage gap](RUNBOOK.md#carried-coverage-gaps). The full release canary
 must also pass independently.
+
+### Exact-pair 3.0 cutover acceptance
+
+The final candidate runtime is `a9208beed5ef0244ebfad9602937c59469fcb944`;
+[image publication 41351512443](https://github.com/seanleecoder/code-tribunal/actions/runs/41351512443)
+built and attested both images. The release templates pin the base digest
+`sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6`
+and reviewer digest
+`sha256:6c4259eb7a3a95b3f2568033856c5c1e50aaefb181b0bcf76b5eb660af911e83`.
+The earlier candidate's failed full canary is not release assurance; the fresh
+[full canary 41353175842](https://github.com/seanleecoder/code-tribunal/actions/runs/41353175842)
+tests this pair with `panel,lifecycle,hostile`.
+
+With the preserved fixtures closed, acceptance repeated conversion from the
+retained original authenticated v1 exports, saved the current notes, applied the
+converted v2 bodies to the existing summary IDs, and verified exact readback.
+The earlier rehearsal had already removed the obsolete v1 note; no historical
+thread or human reply was deleted. Fresh prepare-through-post runs then used
+this exact image pair:
+
+- GitHub [automatic run 41353409925](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41353409925)
+  updated root `3650942127` once, created no threads and reported no warnings.
+  [Manual run 41353526257](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41353526257)
+  skipped the unchanged thread with no edits or warnings. Both used an external
+  SHA-pinned reusable workflow at `299dbc59793b44afabf0278a95acd4d0dd8391dc`,
+  inherited secrets and temporary deterministic mock seats. The manual manifest
+  and health report captured the caller's Codex `medium` override; its repository
+  variable was restored to `low`. A queued event for the old fixture head failed
+  safely in prepare before diff collection; it is not an acceptance run.
+- GitLab [pipeline 3015434694](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015434694)
+  updated root `3601861614` once, created no threads and reported no warnings.
+  [Unchanged pipeline 3015438995](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015438995)
+  skipped it without edits or warnings. Both used a protected direct include,
+  the candidate image pair and temporary deterministic mock seats.
+
+Both roots retained their original author, creation time and finding identity;
+the v2 records retained the human `reopen` disposition and original discussion
+IDs. GitHub summary `6276182501` and GitLab summary `3601861625` remain the state
+containers. Both fixtures were closed again, their previous CI files restored,
+and temporary workflow/template branches deleted. Original v1 exports remain
+outside version control for the paused-review
+[rollback procedure](../operations.md#state-v2-migration). Historical multiline
+reader behavior also remains covered by the regression suite; these preserved
+live roots have single-line positions.
+
+The real panel on both platforms completed all four review and critique seats
+with full health. Its prepared model and effort routes match the shipped
+defaults, so it supplies default-route evidence without a separate three-seat
+run. The temporary mock caller checks prove forwarding and state handling, not
+provider behavior for non-default efforts or the pending live fork skip.
