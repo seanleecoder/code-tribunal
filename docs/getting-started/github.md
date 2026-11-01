@@ -15,9 +15,9 @@ because GitHub does not expose provider secrets to them.
 
 ## Install the workflow
 
-The next major release replaces the copied workflow with the
-[reusable workflow](../../.github/workflows/ai-review-reusable.yml). Until that
-release ships, use the installation guide at your existing release tag.
+Version 3.0 replaces the copied workflow with the
+[reusable workflow](../../.github/workflows/ai-review-reusable.yml). For an older
+release, use the installation guide at its tag.
 
 Create `.github/workflows/ai-review.yml` in the consumer repository:
 
@@ -98,7 +98,7 @@ Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
 unset for shipped defaults. State-load failures always stop prepare; an
 existing installation must complete the [state v2 migration](../operations.md#state-v2-migration)
-before switching to the next major release.
+before switching to 3.0.
 
 ## Branch protection
 
@@ -148,8 +148,8 @@ project has proven live, and its limits, is indexed in the
 
 Update the caller's `uses:` SHA to one reviewed Code Tribunal release commit.
 Both images and the implementation move together. Read the
-[upgrade notes](../operations.md#next-major-upgrade) before moving from
-1.0.x to 2.0: the required `gate` check must be removed first. To roll back,
+[upgrade notes](../operations.md#upgrade-to-30) before upgrading; a 1.x
+deployment must first remove the required `gate` check. To roll back,
 restore the previous caller SHA (or the complete copied workflow for a pre-cutover
 release) and rerun against a fresh PR revision;
 do not reuse old prepare/reviewer artifacts across versions.

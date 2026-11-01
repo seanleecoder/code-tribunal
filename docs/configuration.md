@@ -366,7 +366,7 @@ rejected. Native Anthropic routing is not supported.
 
 Prepare rejects unsupported `AI_REVIEW_` names, including typos and removed
 controls, with one unknown-variable diagnostic. Cursor effort is unsupported;
-choose its model variant. Migration instructions are [below](#next-major-migration).
+choose its model variant. Migration instructions are [below](#migrate-to-30).
 
 ### Template and internal runtime variables
 
@@ -438,7 +438,7 @@ cannot alter the prepared roster, model, budget, platform or policy.
 The digest detects mixed or corrupt artifacts; it does not authenticate a writer
 that already controls a trusted job. Trusted CI delivery remains the boundary.
 
-## Next-major migration
+## Migrate to 3.0
 
 Remove the entire `critique` section (including
 `critique.allow_severity_downgrade`) and `posting.inline_multiline` from custom
@@ -450,13 +450,11 @@ Upgrade the canonical workflow/include and both images together and start a new
 run at prepare. Existing v3 configuration and old run artifacts are rejected.
 
 - Set `schema_version: review_config.v4`. Retain supported reviewer overrides,
-  resolution threshold, resource limits, state record cap, posting mode and
-  multiline preference. Sparse reviewer configuration now inherits image defaults;
+  resolution threshold, resource limits, state record cap and posting mode. Sparse reviewer configuration now inherits image defaults;
   use `effort: null` to clear a shipped effort in YAML.
 - Delete `critique.enabled`, `critique.blind_reviewer_identity`,
   `posting.v1_inline_sides`, `posting.stale_head_guard`, `posting.fyi_mode`, and
-  the `security` object. Their safe behavior is unconditional. Severity
-  downgrading remains a separate opt-in policy pending the S11 decision.
+  the `security` object. Their safe behavior is unconditional.
 - Delete `AI_REVIEW_CRITIQUE_ENABLED` from CI variables and custom rules. One
   blind critique round always runs. Unknown `AI_REVIEW_` variables fail prepare;
   older per-seat enable flags should be replaced by `AI_REVIEW_REVIEWERS`.

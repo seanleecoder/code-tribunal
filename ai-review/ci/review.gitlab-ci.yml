@@ -4,9 +4,9 @@
 variables:
   # Public GHCR images. Replace all three values together when bumping to a
   # newer published commit.
-  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:2.1-6ca538106d1eef7f449e5227408c99013c75aedc@sha256:d855b177b4bfcd109f7cf1c8d86908a98dc22e83c4fbce911fdad4a68ccdaa52"
-  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:2.1-6ca538106d1eef7f449e5227408c99013c75aedc@sha256:280c858d58ceee662c95f02455bb6da3846802a5d19234dc28872c02df8fa985"
-  AI_REVIEW_TRUSTED_IMAGE_SHA: "6ca538106d1eef7f449e5227408c99013c75aedc"
+  AI_REVIEW_BASE_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6"
+  AI_REVIEW_REVIEWER_IMAGE: "ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:6c4259eb7a3a95b3f2568033856c5c1e50aaefb181b0bcf76b5eb660af911e83"
+  AI_REVIEW_TRUSTED_IMAGE_SHA: "a9208beed5ef0244ebfad9602937c59469fcb944"
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
   # Prepare resolves model, effort, roster and posting-mode overrides once.

@@ -90,7 +90,7 @@ the composition is noticed without someone remembering to look.
 
 ### Migrate from the child pipeline
 
-The next major release removes the child wrapper and `parent_pipeline` rules.
+Version 3.0 removes the child wrapper and `parent_pipeline` rules.
 Before upgrading, protect the composition and restrict pipeline variables as
 described above. Replace the `ai_review` trigger job and its two nested includes
 with the top-level [direct include](examples/gitlab-direct.yml), pinned to the
@@ -176,8 +176,9 @@ prove protected-variable behavior in a particular GitLab deployment.
 
 Change the template SHA only after reviewing the target revision and its image
 pins. Read the
-[upgrade notes](../operations.md#next-major-upgrade) before moving from
-1.0.x to 2.0: remove custom jobs, `needs`, or rules that reference `ai_review_gate`. A rollback restores the previous
+[upgrade notes](../operations.md#upgrade-to-30) before upgrading; a 1.x
+deployment must first remove custom jobs, `needs`, or rules that reference
+`ai_review_gate`. A rollback restores the previous
 template SHA and reruns prepare; never feed artifacts created by one source or
 configuration into another.
 

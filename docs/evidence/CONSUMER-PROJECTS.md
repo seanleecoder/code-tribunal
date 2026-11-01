@@ -106,7 +106,13 @@ The posted-body refresh check needs a bot-authored thread created by an **older*
 image. Preserve GitHub comment `3650942127` on the 1.0.0 Chain B PR #6
 (created `2026-07-25 20:13:42`, `issue_id` shared with the GitLab note below). The
 1.0.1 image refreshed it to `render-body.v3` and the 2.0.0 candidate to
-`render-body.v4`. Run the next refresh with the
+`render-body.v4`. The 3.0 candidate at `e95335b` refreshed the same root in
+[run 41345703863](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41345703863)
+and skipped it as unchanged in
+[run 41345948621](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41345948621).
+The author, creation time and finding identity were preserved. State v2 now lives
+in summary comment `6276182501`; retain the original v1 exports for rollback.
+Run the next refresh with the
 [body-format refresh](RUNBOOK.md#body-format-refresh) procedure on
 `evidence/chain-b-88bc941`, after confirming its diff is still only the fixture.
 Closing the PR is fine; deleting the comment or the branch is not.
@@ -187,9 +193,9 @@ with `POST /projects/84667714/merge_requests/:iid/pipelines` — never pipeline
 before any Chain A run and after every Chain B campaign.
 
 Preserve GitLab note `3601861614` on MR `!11` (created `2026-07-25 20:47:29`, updated
-`20:59:24`) for the same body-refresh reason as the GitHub comment above. It was
-never refreshed, so it still carries the 1.0.0 body format and can prove the GitLab
-refresh surface.
+`20:59:24`) for the same body-refresh reason as the GitHub comment above. The 3.0
+candidate refreshed it in place; see the
+[preserved GitLab refresh fixture](#preserved-gitlab-refresh-fixture).
 
 ## Per-release setup checklist
 
@@ -221,3 +227,83 @@ refresh surface.
 6. Protect the new `evidence/chain-*` GitLab branches before opening their MRs.
 7. After any manual mock run, follow the
    [mock cleanup](RUNBOOK.md#the-deterministic-mock-reviewer).
+
+### Preserved GitLab refresh fixture
+
+MR `!11` retains root note `3601861614`, authored by bot `40508593` on
+2026-07-25. The 3.0 candidate at `e95335b` refreshed it in place in
+[pipeline 3015320769](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015320769),
+with one update, no creates and no warnings. Its
+[unchanged rerun](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015327225)
+made no thread edits. State v2 reuses note `3601861625`. The fixture is closed,
+its previous CI configuration is restored, and the temporary direct-include
+refresh template branch is deleted. Preserve the root, branch and v1 exports;
+adopt the current trusted topology before reopening the fixture again.
+
+### External reusable-workflow caller (3.0 candidate)
+
+[Demo PR #49](https://github.com/seanleecoder/code-tribunal-demo/pull/49) calls
+`seanleecoder/code-tribunal/.github/workflows/ai-review-reusable.yml` at
+`8092ea76fe7950e669781e75323dfafc709b620b`, using named secrets. GitHub's run
+metadata confirms that external workflow SHA. Both the
+[automatic run](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41346849838)
+and [manual run](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41347108804)
+completed review and critique on all four seats with full run health and a
+successful `ai-review / post`. The manual manifest and health rows captured a
+caller-only Codex `medium` effort override; the resting value was restored to
+`low`. Caller roster/model values matched the prepared configuration. The PR is
+closed without merging and the persistent deployment is unchanged.
+
+This evidence is for the `e95335b` image pair. The live fork-skip check is a
+[carried coverage gap](RUNBOOK.md#carried-coverage-gaps). The full release canary
+must also pass independently.
+
+### Exact-pair 3.0 cutover acceptance
+
+The final candidate runtime is `a9208beed5ef0244ebfad9602937c59469fcb944`;
+[image publication 41351512443](https://github.com/seanleecoder/code-tribunal/actions/runs/41351512443)
+built and attested both images. The release templates pin the base digest
+`sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6`
+and reviewer digest
+`sha256:6c4259eb7a3a95b3f2568033856c5c1e50aaefb181b0bcf76b5eb660af911e83`.
+The earlier candidate's failed full canary is not release assurance; the fresh
+[full canary 41353175842](https://github.com/seanleecoder/code-tribunal/actions/runs/41353175842)
+tests this pair with `panel,lifecycle,hostile`.
+
+With the preserved fixtures closed, acceptance repeated conversion from the
+retained original authenticated v1 exports, saved the current notes, applied the
+converted v2 bodies to the existing summary IDs, and verified exact readback.
+The earlier rehearsal had already removed the obsolete v1 note; no historical
+thread or human reply was deleted. Fresh prepare-through-post runs then used
+this exact image pair:
+
+- GitHub [automatic run 41353409925](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41353409925)
+  updated root `3650942127` once, created no threads and reported no warnings.
+  [Manual run 41353526257](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/41353526257)
+  skipped the unchanged thread with no edits or warnings. Both used an external
+  SHA-pinned reusable workflow at `299dbc59793b44afabf0278a95acd4d0dd8391dc`,
+  inherited secrets and temporary deterministic mock seats. The manual manifest
+  and health report captured the caller's Codex `medium` override; its repository
+  variable was restored to `low`. A queued event for the old fixture head failed
+  safely in prepare before diff collection; it is not an acceptance run.
+- GitLab [pipeline 3015434694](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015434694)
+  updated root `3601861614` once, created no threads and reported no warnings.
+  [Unchanged pipeline 3015438995](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3015438995)
+  skipped it without edits or warnings. Both used a protected direct include,
+  the candidate image pair and temporary deterministic mock seats.
+
+Both roots retained their original author, creation time and finding identity;
+the v2 records retained the human `reopen` disposition and original discussion
+IDs. GitHub summary `6276182501` and GitLab summary `3601861625` remain the state
+containers. Both fixtures were closed again, their previous CI files restored,
+and temporary workflow/template branches deleted. Original v1 exports remain
+outside version control for the paused-review
+[rollback procedure](../operations.md#state-v2-migration). Historical multiline
+reader behavior also remains covered by the regression suite; these preserved
+live roots have single-line positions.
+
+The real panel on both platforms completed all four review and critique seats
+with full health. Its prepared model and effort routes match the shipped
+defaults, so it supplies default-route evidence without a separate three-seat
+run. The temporary mock caller checks prove forwarding and state handling, not
+provider behavior for non-default efforts or the pending live fork skip.

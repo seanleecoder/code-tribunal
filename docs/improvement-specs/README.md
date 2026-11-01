@@ -50,8 +50,8 @@ SPEC-48). They are not on the roadmap.
 The [simplification audit](simplification-audit/README.md) records each
 recommendation's disposition.
 
-- **Done:** S01, S02, S03, S05 (unreleased, next major), S09 (unreleased), S10, S12 (unreleased), S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
-- **Done, unreleased for the next major:** S04 (resolved configuration v4 and invariant switches), N11 (`consensus.v3`), S14/N04/N14 (state v2 in the summary), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only; external-caller verification and direct-include hostile evidence required before release), S06 (complete reviewer outcomes; status JSON mirrors removed), S11 (severity policy removal; suggestions remain informational), S15 (single-line inline posting and COMPAT-008 writer removal; historical multiline threads and old markers remain readable).
+- **Done:** S01, S02, S03, S10, S17, N01, N05, N06, N07, N08, N09, N12, N13, N15, N16, N17, N18, N19, N20.
+- **Done in 3.0.0:** S04 (resolved configuration v4 and invariant switches), S05, S06 (complete reviewer outcomes; status JSON mirrors removed), S09, S11 (severity policy removal; suggestions remain informational), S12, S14/N04/N14 (state v2 in the summary), S15 (single-line inline posting and COMPAT-008 writer removal; historical multiline threads and old markers remain readable), N11 (`consensus.v3`), S16/N03/N02 (GitHub reusable workflow and GitLab direct include only).
 - **Partial:** S08 (per-seat codecs and Cursor final-answer transport; further deletion awaits current CLI traces), S18, S19.
 - **Closed as bounded cleanup:** S07; the remaining shells only check prerequisites
   and invoke Python-built commands. No further launcher rewrite is planned.
@@ -80,8 +80,8 @@ recommendation's disposition.
 | SPEC-46 | Archive as a short plan | The full text is in git history. |
 | SPEC-43 drift marker | Rejected | Documentation only. A hostile CI author can drop the marker check; reconsider only after a pin-drift incident the auditor would have missed. |
 | 2.0.3 scope (2026-10-14) | One 2.0.3 carrying all of step 1 | One canary run. |
-| GitLab integration modes (2026-10-14) | Direct include only | Child mode is deprecated in 2.0.3 and deleted in the next major release (N02). |
-| GitHub installation (2026-10-14) | Reusable workflow | Decided in ADR-0004; ships in the next major release (N03). |
+| GitLab integration modes (2026-10-14) | Direct include only | Child mode is deprecated in 2.0.3 and deleted in 3.0.0 (N02). |
+| GitHub installation (2026-10-14) | Reusable workflow | Decided in ADR-0004; ships in 3.0.0 (N03). |
 | Bot comments per merge request (2026-10-14) | One: state moves inside the summary | SPEC-66 reserves the space; implemented with S14 (N04). |
 | Supply-chain pins (2026-10-14) | Renovate plus zizmor | Ships in 2.1.0 with S01 (N01). |
 | S03 mock fallback (2026-10-14) | Cheap variant: one Python mock switch | 2.1.x; the canary keeps working unchanged. |
@@ -105,7 +105,7 @@ recommendation's disposition.
 | Canary citation (2026-10-18) | A `Canary-run: <run id>` trailer in the signed tag | Publication verifies exactly the cited run against P's pins, so retries are deterministic and the signature covers the choice. It takes the place of `Release-manifest-sha256`. |
 | N12 consensus `group.body_hash` (2026-10-19) | A zero placeholder until `consensus.v3` | Posting re-renders and hashes every body itself, and nothing reads the consensus field. Consensus stops rendering, so render changes stop touching the consensus goldens. Registered as a compatibility row. |
 | N12 thread refresh (2026-10-19) | Accept one in-place edit per surfaced thread | The stored hashes change once, so each existing bot thread is updated on its next surfaced run. Noted in the changelog; no old-formula dual path. |
-| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until the next major | Threads that are never refreshed keep `source=` indefinitely. 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so dropping it would break their commands after a rollback. |
+| N12 marker `source=` (2026-10-19) | Permanently optional in the marker grammar; written as zeros until 3.0.0 | Threads that are never refreshed keep `source=` indefinitely. 2.0.3 requires the attribute and never re-renders `wontfix` or resolved threads, so dropping it would break their commands after a rollback. |
 | N15 seat usability (2026-10-19) | Trust the runner's `usable_for_resolution` | Consensus deletes the quality-count and usability re-check and the model check. The adapter runner is the only writer and computes the flag with `batch_quality_fields`; the schema still bounds the counts, which feed only `run_health`. The config-digest binding covers the model. |
 | N15 unknown `duplicate_of` (2026-10-19) | A dispute, not a fatal error | Validation stops checking critique targets and links. `critique.py` keeps the unknown-target error and already turns every unusable duplicate link into `dispute`. One `Changed` changelog line covers N15. |
 | Dependency release age (2026-10-19) | No minimum release age | Renovate opens an update as soon as it is released, and manual refreshes take the latest release, including the `.pin` files. |
@@ -115,7 +115,7 @@ recommendation's disposition.
 | N18 staging (2026-10-19) | Two pull requests: a behaviour-preserving move, then the deduplication | The move (about −60 lines, #220) puts one CLI, `scripts/canary.py <platform> <campaign> <action>`, in front of `canary_github.py` and `canary_gitlab.py`; the deduplication (about −280) shares the lifecycle steps and the polling helpers. `validate_candidate_*` and `demo_preflight.py` change only their imports. Artifact names, summary schemas, and step names and counts stay byte-stable, because publication and release bodies read them. |
 | N18 validation (2026-10-19) | `lifecycle,hostile` on the 2.1.0 candidate after each merge | Neither campaign spends model tokens. The step names and counts are compared with run `39315351495`. The panel is first exercised by the next release's canary, which is also verified locally against `check_release`. |
 | N18 polling retries (2026-10-19) | One GitLab polling helper with transient-error tolerance | The lifecycle and hostile loops gain the panel's retries in the deduplication pull request. Publication accepts only a first-attempt run, so a transient API error no longer costs a fresh dispatch. |
-| N18 estimate (2026-10-19) | About −350 lines, not −950 | The shared layer already exists in `candidate_canary_common.py`: the move nets about −60 and the deduplication about −280. N18 does not trim the hostile campaign; N02 rewrites its composition in the next major release. |
+| N18 estimate (2026-10-19) | About −350 lines, not −950 | The shared layer already exists in `candidate_canary_common.py`: the move nets about −60 and the deduplication about −280. N18 does not trim the hostile campaign; N02 rewrites its composition in 3.0.0. |
 | S14 `remap_status` (2026-10-26) | Drop it from state v2 | N14 deleted remapping and nothing read the field. v2 is unreleased, so no v3 is needed; the offline migration drops it. |
 | S14 ledger budget (2026-10-26) | Remove `state.retention.max_state_bytes` | The platform comment limit, checked during planning with reserved thread IDs, is the only size bound. `max_records` stays. |
 | S14 change binding (2026-10-26) | Keep the GitHub/GitLab asymmetry; callers pass `bind_project_id` | `memory` no longer branches on posting-mode names. Behavior is unchanged. |
@@ -143,44 +143,16 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 7. Done: per-seat output codecs (N06) and OpenCode launched from Python (N07).
 8. Done: the S03 Python mock switch and seat setup in the registry (N08).
 9. Done: the frozen typed configuration object and centralized defaults (N05).
-   S04 completes prepare-only resolution and knob removal in the next major release.
+   S04 completes prepare-only resolution and knob removal in 3.0.0.
 10. Done: the `input_bundle` revision cleanup (N17): platform-owned GitHub
     metadata, initial/final revision checks, no JavaScript resolver or unread
     diff/snapshot digests.
-    Also done, unreleased: private file-backed adapter capture and removal of the optional
+    Also done in 3.0.0: private file-backed adapter capture and removal of the optional
     live log-mirroring path (S09).
 
-**Step 4 — next major release: one consensus, state, and consumer cutover.**
-
-11. Done, unreleased: S05 restores `resolve_location`, removes `confidence`, and
-    binds short critique IDs to the trusted pool. Finding and critique batches
-    move to v2; consensus and persisted state retain their current formats.
-12. Done, unreleased: consensus is state-free (N11). `consensus.v3` drops
-    `issue_id_source`, `state_match`, `group.body_hash`, the `drop` decision and
-    `summary.drop_count`, and requires `run_health`. Posting alone matches the
-    latest state and preserves thread identity; prepare no longer writes the
-    state-alias artifact. COMPAT-003, COMPAT-006 and COMPAT-007 are removed.
-13. Done, unreleased: S14 state v2 moves state into the summary (N04), uses
-    current group anchors and context aliases (N14), and provides an explicit
-    offline v1 migration. COMPAT-005 is removed; COMPAT-009 tracks the offline
-    converter. Corrupt or inaccessible state fails closed.
-14. Consumer-visible changes:
-    - Done, unreleased: the GitHub reusable workflow (N03). The copied template
-      and sync tooling are deleted; COMPAT-010 covers historical release retries.
-      Verify an external SHA-pinned caller before release, per the release checklist;
-    - Done, unreleased: GitLab direct include only (N02). The child wrapper,
-      `parent_pipeline` rules, auditor mode switch and child polling are removed.
-      All three canaries use the MR pipeline; run the direct-include hostile
-      campaign before release. COMPAT-004 is removed;
-    - Done, unreleased: S04 resolves configuration once in prepare and carries
-      `review_config.v4` in the manifest. Downstream environment overrides and
-      YAML reloads are removed; sparse reviewer settings inherit image defaults.
-      Critique enablement/blinding, inline sides, stale-head and fork-secret
-      switches are deleted. COMPAT-001/002 are removed. Severity downgrading is
-      retained pending S11's separate policy decision; S13 is unchanged.
-15. Done, unreleased: S06 consolidates each reviewer/stage into one complete
-    outcome. Pooling and consensus share admission; health derives metadata and
-    counts from outcomes. Status JSON mirrors and `--status-dir` are removed.
+**Step 4 — 3.0.0, one consensus, state, and consumer cutover.** Done: released
+on 2026-11-01 with S04, S05, S06, S11, S14/N04/N14, S15 and S16/N03/N02; see the
+[3.0.0 changelog](../../CHANGELOG.md#300---2026-11-01).
 
 **Rejected:** structured-output-only seats, thread-only state, merged prompts,
 dropping effort settings, and a single cross-platform canary.
@@ -193,9 +165,11 @@ dropping effort settings, and a single cross-platform canary.
 - Use single-line new comments with range context; retain historical readers and commands.
 - Retain absence-based resolution pending health evidence; no S13 policy change.
 - Keep S08 fallback deletion dependent on current pinned-CLI traces, not S05 alone.
-- Stop implementation before freezing `R` for code reviews. Live migration/caller,
-  direct-include hostile, body-refresh and exact-image canary checks remain pending
-  in the [release checklist](../development/release-process.md#release-pull-request-checklist).
+- Stop implementation before freezing `R` for code reviews.
+- Ship 3.0.0 with the live GitHub fork-skip check pending: no separate authorized
+  namespace was available for a fork. It is a CHANGELOG known limitation and a
+  [carried coverage gap](../evidence/RUNBOOK.md#carried-coverage-gaps), not a waiver;
+  regression coverage still checks the guard.
 
 ## Standing obligations
 
