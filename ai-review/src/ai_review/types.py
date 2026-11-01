@@ -1,3 +1,11 @@
+"""Internal annotations for planning, policy and publication.
+
+The shipped JSON schemas own wire contracts and runtime validation. These types
+describe the objects used by Python consumers; they are not a second schema and
+need not mirror every wire field. Exercise producers and admission boundaries
+with concrete artifacts rather than comparing annotations to schema structure.
+"""
+
 from typing import Literal, NotRequired, TypedDict
 
 # JSON helper aliases for extension points whose schemas intentionally allow any

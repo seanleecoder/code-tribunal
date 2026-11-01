@@ -35,6 +35,13 @@ instead of preserving wrappers for them.
 
 ## Module ownership
 
+JSON schemas own artifact shapes at model, file and platform-state boundaries.
+`types.py` supplies internal annotations for Python consumers, not an independent
+wire contract: annotations need not enumerate every schema field. Producer tests
+validate concrete output against the shipped schemas; admission tests reject
+malformed transported artifacts, and state tests exercise encoding and decoding.
+Do not add a reflection-based schema/type parity checker.
+
 Dependencies point from platform transport into orchestration and then into pure
 planning and policy modules. Guidance, not a checked contract — there are
 deliberately no line-count assertions. What *is* enforced lives in

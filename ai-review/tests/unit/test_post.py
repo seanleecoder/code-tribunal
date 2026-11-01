@@ -121,12 +121,40 @@ class PostTests(PostCase):
         )
         validate_instance(result, "post_result.schema.json")
 
+    def test_post_result_wire_validation_rejects_malformed_publication_fields(self) -> None:
+        result = _initial_post_result(
+            consensus=self._consensus(),
+            manifest=self._manifest("head"),
+            current_head_sha="head",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "post-result.json"
+            write_canonical_json(path, result)
+            restored = load_json_file(path)
+        self.assertEqual(restored, result)
+        validate_instance(restored, "post_result.schema.json")
+
+        for changes in (
+            {"created_discussions": "0"},
+            {"warnings": [123]},
+            {"summary_comment": {**restored["summary_comment"], "action": "unknown"}},
+            {"posted_discussions": [{
+                "issue_id": "a" * 64, "action": "created",
+                "discussion_id": "thread", "root_note_id": "123",
+            }]},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(SchemaValidationError):
+                validate_instance({**restored, **changes}, "post_result.schema.json")
+
     def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
 
         for field, invalid_value in (
             ("category", "correctness **injected**"),
             ("decision", "**injected**"),
             ("final_severity", "critical"),
+            ("support_count", "2"),
+            ("source_finding_ids", [123]),
+            ("critique_summary", {"agree": "1", "dispute": 0, "noise": 0, "duplicate": 0}),
         ):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -140,7 +168,7 @@ class PostTests(PostCase):
                 output_path = root / "post-result.json"
 
                 with patch("ai_review.post.create_runtime_platform") as factory:
-                    with self.assertRaisesRegex(ValueError, "critical|injected|category"):
+                    with self.assertRaises(SchemaValidationError):
                         post_module.cli(
                             [
                                 "--inputs",

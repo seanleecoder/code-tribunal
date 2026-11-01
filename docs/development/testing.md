@@ -19,6 +19,14 @@ When behavior changes, update the smallest relevant test and any schema-backed
 golden file. Run `make update-golden` only for an intentional reducer contract
 change and review the generated diff.
 
+Artifact tests exercise producers and admission against the shipped JSON schemas.
+Consensus goldens and publication integration tests validate produced artifacts;
+posting admission rejects malformed consensus before constructing a platform
+client. State tests cover schema validation on both encoding and decoding, even
+when a malformed persisted record has a valid checksum. Internal type annotations
+are checked by mypy, without a second schema interpreter or structural parity
+tests.
+
 `make test` invokes pytest directly with coverage. `make docs-check` uses the
 pinned native Lychee binary to check local Markdown links and anchors. The
 historical `release/<version>.md` notes are frozen and not link-checked. GitLab
