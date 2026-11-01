@@ -121,30 +121,31 @@ class PostTests(PostCase):
         )
         validate_instance(result, "post_result.schema.json")
 
-    def test_post_result_wire_validation_rejects_malformed_publication_fields(self) -> None:
+    def test_cli_refuses_to_write_a_malformed_post_result(self) -> None:
         result = _initial_post_result(
             consensus=self._consensus(),
             manifest=self._manifest("head"),
             current_head_sha="head",
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "post-result.json"
-            write_canonical_json(path, result)
-            restored = load_json_file(path)
-        self.assertEqual(restored, result)
-        validate_instance(restored, "post_result.schema.json")
-
         for changes in (
             {"created_discussions": "0"},
             {"warnings": [123]},
-            {"summary_comment": {**restored["summary_comment"], "action": "unknown"}},
+            {"summary_comment": {**result["summary_comment"], "action": "unknown"}},
             {"posted_discussions": [{
                 "issue_id": "a" * 64, "action": "created",
                 "discussion_id": "thread", "root_note_id": "123",
             }]},
         ):
-            with self.subTest(changes=changes), self.assertRaises(SchemaValidationError):
-                validate_instance({**restored, **changes}, "post_result.schema.json")
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
+                with (
+                    patch("ai_review.post.create_runtime_platform"),
+                    patch("ai_review.post.post_consensus", return_value={**result, **changes}),
+                    self.assertRaises(SchemaValidationError),
+                ):
+                    post_module.cli(argv)
+                self.assertFalse((root / "post-result.json").exists())
 
     def test_posting_cli_rejects_schema_invalid_consensus_before_client_construction(self) -> None:
 

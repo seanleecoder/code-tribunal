@@ -1,9 +1,6 @@
-"""Internal annotations for planning, policy and publication.
+"""Internal annotations; the shipped JSON schemas own wire contracts.
 
-The shipped JSON schemas own wire contracts and runtime validation. These types
-describe the objects used by Python consumers; they are not a second schema and
-need not mirror every wire field. Exercise producers and admission boundaries
-with concrete artifacts rather than comparing annotations to schema structure.
+See docs/development/architecture.md#module-ownership.
 """
 
 from typing import Literal, NotRequired, TypedDict

@@ -17,6 +17,13 @@ from ai_review.memory import (
 from ai_review.schema import SchemaValidationError
 
 
+def _unvalidated_state_note(state: dict) -> str:
+    """Encode a state note as the writer does, but without schema or hash checks."""
+    payload = canonical_json_text(state).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    return f"<!-- ai-review-state:v2 {encoded} -->"
+
+
 class StateHashTests(unittest.TestCase):
     def test_state_hash_covers_state_except_hash_field(self) -> None:
         state = attach_state_hash(
@@ -65,11 +72,8 @@ class StateHashTests(unittest.TestCase):
             }
         )
         bad_state = dict(state, state_hash="0" * 64)
-        payload = canonical_json_text(bad_state)
-        encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
-        body = f"<!-- ai-review-state:v2 {encoded} -->"
         with self.assertRaisesRegex(ValueError, "state hash"):
-            decode_state_note_body(body)
+            decode_state_note_body(_unvalidated_state_note(bad_state))
 
     def test_duplicate_or_corrupt_state_requires_repair(self) -> None:
         old = attach_state_hash(
@@ -215,10 +219,8 @@ class StateHashTests(unittest.TestCase):
                     encode_state_note(malformed)
                 # Bypass the writer to exercise admission of persisted data with
                 # a valid checksum but an invalid nested record.
-                payload = canonical_json_text(malformed).encode("utf-8")
-                encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
                 with self.assertRaises(SchemaValidationError):
-                    decode_state_note_body(f"<!-- ai-review-state:v2 {encoded} -->")
+                    decode_state_note_body(_unvalidated_state_note(malformed))
 
     def test_change_binding_rejects_wrong_change_and_gitlab_project(self) -> None:
         state = empty_state(project_id="1", merge_request_iid="2", head_sha="head")

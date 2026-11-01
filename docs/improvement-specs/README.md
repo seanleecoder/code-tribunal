@@ -180,9 +180,6 @@ see [`release/2.0.3.md`](../../release/2.0.3.md).
 15. Done, unreleased: S06 consolidates each reviewer/stage into one complete
     outcome. Pooling and consensus share admission; health derives metadata and
     counts from outcomes. Status JSON mirrors and `--status-dir` are removed.
-    Done, unreleased: S12 removes the reflection checker; concrete producer and
-    admission tests protect the schema-owned wire contracts, while mypy checks
-    internal annotations.
 
 **Rejected:** structured-output-only seats, thread-only state, merged prompts,
 dropping effort settings, and a single cross-platform canary.
