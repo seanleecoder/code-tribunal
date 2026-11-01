@@ -3,7 +3,7 @@
 pip==26.2.1
 PyYAML==6.0.3
 attrs==26.1.0
-certifi==2026.10.18
+certifi==2026.10.23
 charset-normalizer==3.5.2
 idna==3.20
 jsonschema-specifications==2025.9.1
