@@ -29,7 +29,7 @@ RUN set -eu; \
 # checks, placeholder rejection, pinned URL, checksum, extract). The two stay
 # duplicated rather than sharing a base stage so a change to one pinned artifact's
 # verification cannot silently alter the other's.
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS cursor-cli
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS cursor-cli
 
 WORKDIR /opt/cursor-agent-src
 COPY ai-review/images/cursor-agent.pin ./cursor-agent.pin
@@ -66,7 +66,7 @@ RUN set -eu; \
 
 # Deliberately parallel to the cursor-cli stage above; see the comment there for why
 # the verification bodies are not shared.
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS ripgrep-bin
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS ripgrep-bin
 
 WORKDIR /opt/ripgrep-src
 COPY ai-review/images/ripgrep.pin ./ripgrep.pin
