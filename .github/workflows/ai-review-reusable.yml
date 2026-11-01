@@ -172,7 +172,7 @@ jobs:
           path: |
             out/critiques/${{ matrix.reviewer }}.json
             out/pooled_findings/${{ matrix.reviewer }}.json
-            out/status/critique-${{ matrix.reviewer }}.json
+            out/status/critique-${{ matrix.reviewer }}-*.txt
 
   consensus:
     needs: [prepare, review, critique]
@@ -201,7 +201,7 @@ jobs:
         if: steps.download-critiques.outcome == 'failure'
         run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
       - name: Build consensus
-        run: python -m ai_review.consensus --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --status-dir reviewer-artifacts/status --out out/consensus/consensus.json
+        run: python -m ai_review.consensus --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-review-consensus

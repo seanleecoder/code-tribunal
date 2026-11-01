@@ -79,7 +79,7 @@ def _retry_after(value: str | None, backoff: int) -> float:
         if deadline.tzinfo is None:
             deadline = deadline.replace(tzinfo=UTC)
         return max(0, min(deadline.timestamp() - time.time(), 30))
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         return backoff
 
 
@@ -290,8 +290,13 @@ def _await_protection(branch: str, timeout_seconds: int = 120) -> None:
         status = _request("GET", f"projects/{DEMO_PROJECT}/repository/branches/{encoded}")
         return True if status.get("protected") is True else None
 
-    poll(step, error=GitLabCanaryError, deadline=deadline, interval=2,
-          timeout_message=f"demo branch {branch} never reported as protected")
+    poll(
+        step,
+        error=GitLabCanaryError,
+        deadline=deadline,
+        interval=2,
+        timeout_message=f"demo branch {branch} never reported as protected",
+    )
 
 
 def _first_pipeline(mr: str, deadline: float) -> int:
@@ -301,8 +306,13 @@ def _first_pipeline(mr: str, deadline: float) -> int:
         pipelines = _request("GET", f"projects/{DEMO_PROJECT}/merge_requests/{mr}/pipelines")
         return int(pipelines[-1]["id"]) if pipelines else None
 
-    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=5,
-                 timeout_message=f"merge request {mr} started no pipeline")
+    return poll(
+        step,
+        error=GitLabCanaryError,
+        deadline=deadline,
+        interval=5,
+        timeout_message=f"merge request {mr} started no pipeline",
+    )
 
 
 def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
@@ -310,8 +320,13 @@ def _settled(pipeline: int, deadline: float) -> dict[str, Any]:
         current = _request("GET", f"projects/{DEMO_PROJECT}/pipelines/{pipeline}")
         return current if current.get("status") in SETTLED_STATUSES else None
 
-    return poll(step, error=GitLabCanaryError, deadline=deadline, interval=15,
-                 timeout_message=f"timed out waiting for GitLab pipeline {pipeline}")
+    return poll(
+        step,
+        error=GitLabCanaryError,
+        deadline=deadline,
+        interval=15,
+        timeout_message=f"timed out waiting for GitLab pipeline {pipeline}",
+    )
 
 
 def _succeeded(pipeline: int, deadline: float) -> dict[str, Any]:
@@ -505,22 +520,22 @@ class GitLabLifecycle(Lifecycle):
         return run, self._post_result(run)
 
     def reviewer_results(self, run: int) -> dict[str, Any]:
-        loaded: dict[str, dict[str, Any]] = {"findings": {}, "status": {}}
+        findings: dict[str, Any] = {}
         for archive in self._archives(run, "AI review"):
             for name in archive.namelist():
                 parts = name.split("/")
-                if len(parts) != 3 or parts[0] != "out" or not name.endswith(".json"):
+                if parts[:2] != ["out", "findings"] or len(parts) != 3:
                     continue
-                directory, reviewer = parts[1], parts[2].removesuffix(".json")
-                if directory not in loaded:
+                if not name.endswith(".json"):
                     continue
-                if reviewer in loaded[directory]:
-                    raise LifecycleFailure(f"duplicate {directory} artifact for {reviewer}")
+                reviewer = parts[2].removesuffix(".json")
+                if reviewer in findings:
+                    raise LifecycleFailure(f"duplicate findings artifact for {reviewer}")
                 try:
-                    loaded[directory][reviewer] = json.loads(archive.read(name))
+                    findings[reviewer] = json.loads(archive.read(name))
                 except json.JSONDecodeError, UnicodeDecodeError:
-                    raise LifecycleFailure(f"unreadable {directory} review artifact") from None
-        return lifecycle_reviewer_results(loaded["findings"], loaded["status"])
+                    raise LifecycleFailure("unreadable findings review artifact") from None
+        return lifecycle_reviewer_results(findings)
 
     def threads(self) -> list[dict[str, Any]]:
         discussions = _request(

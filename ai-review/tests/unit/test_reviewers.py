@@ -295,15 +295,8 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         bundle: bool,
         manifest: bool = True,
         expected_exit: int = 0,
-    ) -> tuple[dict[str, object] | None, dict[str, object]]:
-        """Run one seat and stage in a sandbox, returning its batch and status.
-
-        Without ``bundle`` the input directory holds only a manifest, or nothing
-        at all without ``manifest``. The batch is ``None`` when the runner
-        deliberately wrote none: a failure it cannot stamp an effective-config
-        digest onto emits a status without a batch, so consensus does not consume
-        a placeholder.
-        """
+    ) -> dict:
+        """Run one seat and return its complete outcome."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "inputs"
@@ -337,12 +330,9 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                 # a developer machine that happens to have one installed.
                 self.assertEqual(run_prepared_adapter(reviewer, stage), expected_exit)
             stage_dir = "findings" if stage == "review" else "critiques"
-            status_stem = reviewer if stage == "review" else f"critique-{reviewer}"
             batch_path = output_dir / stage_dir / f"{reviewer}.json"
-            return (
-                load_json_file(batch_path) if batch_path.exists() else None,
-                load_json_file(output_dir / "status" / f"{status_stem}.json"),
-            )
+            self.assertFalse(list((output_dir / "status").glob("*.json")))
+            return load_json_file(batch_path)
 
     def test_every_seat_runs_mock_with_its_codec_without_a_cli(self) -> None:
         """Each mock emits its seat's transport and the active stage's root.
@@ -353,11 +343,14 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         """
         for reviewer in sorted(REVIEWER_IDS):
             for stage, identity_field in (("review", "reviewer"), ("critique", "critic")):
-                with self.subTest(reviewer=reviewer, stage=stage), mock.patch(
-                    "ai_review.adapter_runner.adapter_command",
-                    side_effect=AssertionError("mock must bypass the real adapter"),
+                with (
+                    self.subTest(reviewer=reviewer, stage=stage),
+                    mock.patch(
+                        "ai_review.adapter_runner.adapter_command",
+                        side_effect=AssertionError("mock must bypass the real adapter"),
+                    ),
                 ):
-                    batch, status = self._run_seat(
+                    batch = self._run_seat(
                         reviewer,
                         stage,
                         env={
@@ -372,7 +365,6 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                     )
                     self.assertEqual(batch["adapter_status"], "success")
                     self.assertEqual(batch[identity_field], reviewer)
-                    self.assertEqual(status["status"], "success")
                     if stage == "review":
                         self.assertEqual(
                             batch["findings"][0]["title"], "Deterministic mock blocking finding"
@@ -395,10 +387,13 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                 ),
                 mock.patch("ai_review.adapter_runner._run_adapter_process", return_value=result),
             ):
-                batch, status = self._run_seat(
-                    "codex", "review", env={}, bundle=True, expected_exit=expected_exit,
+                batch = self._run_seat(
+                    "codex",
+                    "review",
+                    env={},
+                    bundle=True,
+                    expected_exit=expected_exit,
                 )
-            self.assertEqual(status["status"], expected_status)
             self.assertEqual(batch["adapter_status"], expected_status)
 
     def test_disabled_seat_writes_a_skipped_artifact_without_spawning_a_cli(self) -> None:
@@ -417,11 +412,14 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                 ("review", "finding_batch.v2"),
                 ("critique", "critique_batch.v2"),
             ):
-                with self.subTest(reviewer=reviewer, stage=stage), mock.patch(
-                    "ai_review.adapter_runner._run_adapter_process",
-                    side_effect=AssertionError("a disabled seat must not spawn an adapter"),
+                with (
+                    self.subTest(reviewer=reviewer, stage=stage),
+                    mock.patch(
+                        "ai_review.adapter_runner._run_adapter_process",
+                        side_effect=AssertionError("a disabled seat must not spawn an adapter"),
+                    ),
                 ):
-                    batch, status = self._run_seat(
+                    batch = self._run_seat(
                         reviewer,
                         stage,
                         env={"AI_REVIEW_REVIEWERS": _roster_disabling(reviewer)},
@@ -430,8 +428,6 @@ class ReviewerAdapterContractTests(unittest.TestCase):
 
                 self.assertEqual(batch["adapter_status"], "skipped")
                 self.assertEqual(batch["schema_version"], schema_version)
-                self.assertEqual(status["status"], "skipped")
-                self.assertIs(status["usable_for_resolution"], False)
 
     def test_unsupported_stage_is_refused_from_the_registry(self) -> None:
         """One registry-level case, not a matrix: the path is unreachable per seat.
@@ -443,34 +439,27 @@ class ReviewerAdapterContractTests(unittest.TestCase):
         restricted stage set would take.
         """
         narrowed = dict(REVIEWERS)
-        narrowed["codex"] = replace(
-            REVIEWERS["codex"], supported_stages=frozenset({"review"})
-        )
-        with mock.patch(
-            "ai_review.reviewers.REVIEWERS", MappingProxyType(narrowed)
-        ), mock.patch(
-            "ai_review.adapter_runner._run_adapter_process",
-            side_effect=AssertionError("an unsupported stage must not spawn an adapter"),
+        narrowed["codex"] = replace(REVIEWERS["codex"], supported_stages=frozenset({"review"}))
+        with (
+            mock.patch("ai_review.reviewers.REVIEWERS", MappingProxyType(narrowed)),
+            mock.patch(
+                "ai_review.adapter_runner._run_adapter_process",
+                side_effect=AssertionError("an unsupported stage must not spawn an adapter"),
+            ),
         ):
-            batch, status = self._run_seat(
+            batch = self._run_seat(
                 "codex",
                 "critique",
                 env={},
                 bundle=False,
-                manifest=False,
+                manifest=True,
                 expected_exit=_EXIT_ERROR,
             )
 
-        self.assertEqual(status["status"], "config_error")
-        self.assertEqual(status["error_class"], "ConfigError")
-        self.assertIn(
-            "does not support stage critique", str(status["error_message_redacted"])
-        )
-        # The refusal precedes the config load and there is no manifest, so no
-        # effective-config digest exists to stamp a batch with; a status alone is
-        # what keeps consensus from reading a placeholder batch as a real (empty)
-        # result.
-        self.assertIsNone(batch)
+        self.assertEqual(batch["error_class"], "ConfigError")
+        self.assertIn("does not support stage critique", str(batch["error_message_redacted"]))
+        self.assertEqual(batch["adapter_status"], "config_error")
+        self.assertEqual(batch["critiques"], [])
 
 
 def _roster_enabling(reviewer: str) -> str:

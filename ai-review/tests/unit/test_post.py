@@ -43,7 +43,7 @@ from ai_review.schema import (
 )
 from ai_review.state_plan import plan_state
 
-from .test_consensus_groups import _batch, _empty_batch, _finding, _manifest
+from .test_consensus_groups import _batch, _critique_batch, _empty_batch, _finding, _manifest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.config_yaml import runtime_config  # noqa: E402
@@ -265,11 +265,14 @@ class PostTests(PostCase):
             root = Path(tmp)
             argv = _write_post_cli_run(root, load_json_file(_GOLDEN_CONSENSUS))
             with (
-                patch.dict("os.environ", {
-                    "AI_REVIEW_POSTING_MODE": "github_reviews",
-                    "AI_REVIEW_REVIEWERS": "cursor",
-                    "AI_REVIEW_CONFIG": "/missing/config",
-                }),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "AI_REVIEW_POSTING_MODE": "github_reviews",
+                        "AI_REVIEW_REVIEWERS": "cursor",
+                        "AI_REVIEW_CONFIG": "/missing/config",
+                    },
+                ),
                 patch("ai_review.post.create_runtime_platform") as factory,
                 patch("ai_review.post.post_consensus") as post,
                 patch("ai_review.post.validate_instance"),
@@ -325,8 +328,7 @@ class PostTests(PostCase):
             + [rejected],
             config,
             critique_batches=[
-                {"critic": name, "adapter_status": "success", "critiques": []}
-                for name in ("claude", "codex", "opencode", "cursor")
+                _critique_batch(name, []) for name in ("claude", "codex", "opencode", "cursor")
             ],
         )
         validate_instance(consensus, "consensus.schema.json")
@@ -343,7 +345,8 @@ class PostTests(PostCase):
         body = client.summary_notes[0]["body"]
         self.assertIn("**Review health: degraded — re-run optional.**", body)
         self.assertIn(
-            "- `opencode` review: every reported finding was rejected during normalization.",
+            "- `opencode` review: every reported finding was rejected during normalization "
+            "(0m00s of 0m30s limit).",
             body,
         )
         self.assertIn("Findings: 6 raw, 3 accepted, 3 dropped", body)
@@ -1397,7 +1400,7 @@ class PostTests(PostCase):
         # findings at 10 and 100 share a signature, so both groups have one ID.
         claude = _batch("claude", _finding("claude", "1" * 64, line=10))
         claude["findings"].append(_finding("claude", "3" * 64, line=100))
-        claude.update(raw_finding_count=2, accepted_finding_count=2)
+        claude.update(raw_finding_count=2)
         consensus = build_consensus(
             self._manifest("head"),
             [

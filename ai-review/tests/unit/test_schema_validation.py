@@ -14,6 +14,7 @@ from unittest import mock
 from ai_review.adapter_runner import _EXIT_ERROR
 from ai_review.schema import (
     SchemaValidationError,
+    batch_quality_fields,
     empty_critique_batch,
     empty_finding_batch,
     finalize_critique_batch,
@@ -259,7 +260,7 @@ class SchemaValidationTests(unittest.TestCase):
                     effective_config_sha256="0" * 64,
                     input_dir=tmp,
                 )
-                self.assertEqual(batch["accepted_finding_count"], 1)
+                self.assertEqual(len(batch["findings"]), 1)
                 finalized = batch["findings"][0]
                 anchor = finalized["anchor"]
                 self.assertEqual(anchor["start"]["old_line"], old_line)
@@ -307,9 +308,7 @@ class SchemaValidationTests(unittest.TestCase):
                         effective_config_sha256="0" * 64,
                         input_dir=tmp,
                     )
-                self.assertEqual(
-                    (batch["accepted_finding_count"], batch["dropped_finding_count"]), (1, 1)
-                )
+                self.assertEqual((len(batch["findings"]), batch["dropped_finding_count"]), (1, 1))
 
     def test_ambiguous_and_cross_hunk_ranges_are_rejected(self) -> None:
         from .test_finding_cap import _finding
@@ -336,7 +335,7 @@ class SchemaValidationTests(unittest.TestCase):
                         input_dir=tmp,
                     )
                 self.assertEqual(batch["dropped_finding_count"], 1)
-                self.assertFalse(batch["usable_for_resolution"])
+                self.assertFalse(batch_quality_fields(batch)["usable_for_resolution"])
 
     def test_critique_batch_rejects_whitespace_only_identity_and_rationale(self) -> None:
         batch = empty_critique_batch(
@@ -429,7 +428,7 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertEqual(
             (
                 batch["raw_finding_count"],
-                batch["accepted_finding_count"],
+                len(batch["findings"]),
                 batch["dropped_finding_count"],
             ),
             (3, 1, 2),

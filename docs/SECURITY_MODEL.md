@@ -144,22 +144,27 @@ authenticated state; ambiguous or already-claimed matches use summary fallback
 and protect candidate threads from automatic resolution. Authorized commands
 naming a candidate still apply.
 
-Adapter status files (`out/status/`) are untrusted input to consensus. The
-trusted runner writes them, but in a job that also runs model CLIs with tool
-access. Consensus uses a status file only if it passes its schema, names the
-seat and stage its filename names, and carries the manifest's `run_id`. Anything
-else counts as absent. Status files feed only the observational `run_health`
-record. Finding and critique batches remain the only decision input, so a forged
-status file can mislead only the health section of the summary comment. Every
-model ID, reviewer ID and error message in that section is rendered literally.
-Consensus redacts error text itself before truncating it, because a rewritten
-status file need not honor its `error_message_redacted` field name. Text over
-8192 characters is omitted rather than cut, since a cut can split a secret past
-recognition. A status file
-with text that cannot be encoded as UTF-8 counts as absent. The consensus job log
-prints each value on one line after renderer-owned text and breaks up GitHub's
-legacy `##[` command prefix, so status text cannot run a workflow command in the
-trusted job.
+Review and critique outcomes are untrusted input to pooling and consensus. The
+trusted runner writes them in jobs that also run model CLIs with tool access.
+One admission path validates the stage schema and count arithmetic, binds the
+filename to a trusted registry identity, and checks exact manifest run/config
+bindings on every delivered outcome, including failures and skipped seats.
+Duplicate identities, malformed files and non-skipped results for disabled seats
+fail integrity validation. Missing files degrade execution health; they never
+become successful empty evidence. These checks detect mixed or invalid transport,
+not malicious rewriting by an actor who can also supply valid bindings.
+
+Models do not author execution metadata or quality accounting. Eligibility and
+accepted/omitted counts are derived from the admitted payload. Diagnostic fields
+feed only observational `run_health`, never support, decisions or resolution
+quorum. Health redacts the text again before truncation: a rewritten outcome
+need not honor its `error_message_redacted` field name. Text over 8192 characters
+is omitted rather than cut, since a cut can split a secret past recognition.
+An outcome that cannot be encoded as UTF-8 fails admission. The consensus job log
+prints each value after renderer-owned text on one line and breaks up GitHub's
+legacy `##[` command prefix, so diagnostic text cannot run a workflow command.
+Redacted parse/timeout files under `out/status/` and on-disk critique pools are
+operator diagnostics and are never read back as evidence.
 
 Author and hostile-state behavior is covered by
 [`test_state_note_authenticity.py`](../ai-review/tests/security/test_state_note_authenticity.py)

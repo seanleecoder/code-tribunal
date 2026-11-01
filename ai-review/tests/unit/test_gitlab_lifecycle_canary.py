@@ -119,9 +119,10 @@ class LifecycleStepTests(unittest.TestCase):
             mock.patch.object(driver, "_post_result", side_effect=post_result),
         ):
             self.assertEqual(driver.complete(9), (9, post))
-        self.assertEqual(request.call_args_list, [
-            mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/9")
-        ] * 2)
+        self.assertEqual(
+            request.call_args_list,
+            [mock.call("GET", f"projects/{lifecycle.DEMO_PROJECT}/pipelines/9")] * 2,
+        )
         sleep.assert_called_once_with(15)
 
     def test_complete_rejects_unsuccessful_pipeline_before_reading_artifacts(self) -> None:
@@ -224,7 +225,6 @@ class LifecycleStepTests(unittest.TestCase):
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as zipped:
             zipped.writestr("out/findings/claude.json", json.dumps({"reviewer": "claude"}))
-            zipped.writestr("out/status/claude.json", json.dumps({"reviewer": "claude"}))
             zipped.writestr("inputs/manifest.json", "{}")
         archive.seek(0)
         with (
@@ -234,9 +234,8 @@ class LifecycleStepTests(unittest.TestCase):
             ) as shared,
         ):
             self.assertEqual(driver.reviewer_results(4), {"claude": {}})
-        findings, statuses = shared.call_args.args
+        (findings,) = shared.call_args.args
         self.assertEqual(set(findings), {"claude"})
-        self.assertEqual(set(statuses), {"claude"})
 
     def test_a_shared_validation_failure_becomes_a_step_failure(self) -> None:
         driver = self._driver()
@@ -247,7 +246,7 @@ class LifecycleStepTests(unittest.TestCase):
             driver.reviewer_results(4)
 
     def test_malformed_reviewer_artifacts_produce_a_redacted_failed_summary(self) -> None:
-        for directory in ("findings", "status"):
+        for directory in ("findings",):
             for content in (
                 b'{"secret":"private reviewer output",',
                 b'{"secret":"private reviewer output\xff"}',

@@ -497,7 +497,7 @@ class RunHealthRenderTests(PostCase):
         )
         self.assertIn("- `opencode` review: timed out after 29m55s (limit 30m00s).", section)
         self.assertIn(
-            "- `opencode` critique: no status recorded; the job was likely cancelled or "
+            "- `opencode` critique: no outcome delivered; the job was likely cancelled or "
             "killed by the CI job ceiling.",
             section,
         )

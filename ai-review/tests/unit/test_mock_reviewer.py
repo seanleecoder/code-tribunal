@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from ai_review.mock_reviewer import _find_indexing_candidate, cli, review_batch
-from ai_review.schema import finalize_finding_batch
+from ai_review.schema import batch_quality_fields, finalize_finding_batch
 
 
 def _diff(last_line: str) -> str:
@@ -174,8 +174,8 @@ class MockScenarioTests(unittest.TestCase):
                         input_dir=tmp,
                     )
                 self.assertEqual(finalized["raw_finding_count"], 1)
-                self.assertEqual(finalized["accepted_finding_count"], 1)
-                self.assertTrue(finalized["usable_for_resolution"])
+                self.assertEqual(len(finalized["findings"]), 1)
+                self.assertTrue(batch_quality_fields(finalized)["usable_for_resolution"])
 
     def test_unknown_scenario_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown AI_REVIEW_MOCK_SCENARIO"):

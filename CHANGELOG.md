@@ -9,6 +9,18 @@ versioning.
 
 ### Changed
 
+- Breaking, for the next major release: each `finding_batch.v2` and
+  `critique_batch.v2` is the complete execution outcome (S06), with timing and
+  bounded redacted diagnostics. Status JSON mirrors, `adapter_status.v1` and
+  consensus `--status-dir` are removed; `out/status/` keeps only diagnostic text.
+  Accepted counts and review eligibility are derived from the payload rather
+  than stored. Pooling and consensus share admission that binds every present
+  outcome, including failures, to its filename, registry seat and exact run/config.
+  Missing outcomes degrade health; malformed or misbound present outcomes fail
+  integrity validation. `batch_missing` is removed from unreleased `consensus.v3`.
+  Upgrade both images and canonical invocations together and generate fresh
+  artifacts from prepare. Publication/state and eligibility policy are unchanged.
+
 - Breaking, for the next major release: configuration moves to `review_config.v4`
   (S04). Prepare resolves shipped defaults, sparse custom reviewer settings and
   operator overrides once; downstream stages validate the complete manifest

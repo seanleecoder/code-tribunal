@@ -9,7 +9,12 @@
     "critic",
     "adapter_status",
     "effective_config_sha256",
-    "critiques"
+    "critiques",
+    "started_at",
+    "completed_at",
+    "duration_ms",
+    "error_class",
+    "error_message_redacted"
   ],
   "properties": {
     "schema_version": {
@@ -100,6 +105,77 @@
           }
         }
       }
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completed_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error_message_redacted": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "adapter_status": {
+            "const": "success"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error_class": {
+            "type": "null"
+          },
+          "error_message_redacted": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "critiques": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "adapter_status": {
+            "const": "skipped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error_class": {
+            "type": "null"
+          },
+          "error_message_redacted": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
 }

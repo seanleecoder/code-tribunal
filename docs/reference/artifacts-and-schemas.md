@@ -9,10 +9,8 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `inputs/mr.diff` | prepare | prompt rendering, anchoring | complete bounded diff for one verified revision; no standalone schema |
 | `inputs/repo_snapshot/` | prepare | reviewers | contained regular files/directories; no symlinks or special files |
 | `inputs/prior_decisions.json` | prepare | prompt rendering | compact settled/open history derived from authenticated state; `prior_decisions.v1` inline contract |
-| `out/status/<reviewer>.json` | reviewer adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
-| `out/status/critique-<reviewer>.json` | critic adapter | consensus/operator | [`adapter_status.schema.json`](../../ai-review/schemas/adapter_status.schema.json) |
-| `out/status/<stage>-<reviewer>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
-| `out/status/<stage>-<reviewer>-parse-raw-stdout.txt` | adapter runner on parse/validation failure | operator | complete redacted adapter stdout, bounded at 2 MiB with an explicit truncation marker; diagnostic text, no schema |
+| `out/status/<stem>-parse-debug.txt` | adapter runner on parse/validation failure | operator | redacted bounded head/tail previews, newline structure preserved; diagnostic text, no schema |
+| `out/status/<stem>-parse-raw-stdout.txt` | adapter runner on parse/validation failure | operator | complete redacted adapter stdout, bounded at 2 MiB with an explicit truncation marker; diagnostic text, no schema |
 | `out/findings/<reviewer>.json` | reviewer adapter | consensus/critique | [`finding_batch.schema.json`](../../ai-review/schemas/finding_batch.schema.json) |
 | `out/pooled_findings/<reviewer>.json` | critique preparation | operator | [`pooled_findings.schema.json`](../../ai-review/schemas/pooled_findings.schema.json); audit copy of the pool and short-ID mapping held in runner memory |
 | `out/critiques/<reviewer>.json` | critic adapter | consensus | [`critique_batch.schema.json`](../../ai-review/schemas/critique_batch.schema.json) |
@@ -31,8 +29,8 @@ environment cannot reinterpret this run's policy.
 job row per enabled review and critique seat, with
 model, effort, stage timeout, outcome, duration, finding counts and the redacted
 error, plus a `full`, `degraded` or `rerun_recommended` grade. Consensus builds
-it from the finding and critique batches and the status files it is given with
-`--status-dir`. It never changes a group decision, `panel_status`,
+it from the admitted finding and critique outcomes. It never changes a group
+decision, `panel_status`,
 `failed_reviewers`, resolution eligibility, or an exit code. Post renders it as
 the first section of the summary comment and refuses an artifact without it.
 
@@ -69,7 +67,22 @@ The audit file is never reloaded after the model runs. An unknown target or
 duplicate reference fails the critique batch. Version 1 finding/critique batches
 are rejected; run every stage from one image pair and generate fresh artifacts.
 Schema validity alone does not make a reviewer resolution-eligible: consensus
-uses the runner's batch-quality flag and validates the effective-config binding.
+derives eligibility from success status and the payload: a zero-raw empty
+review or at least one accepted finding is eligible. Accepted count is
+`len(findings)`; cap omissions are raw minus accepted minus dropped.
+
+Each review/critique batch is the complete execution outcome, including
+`started_at`, `completed_at`, monotonic `duration_ms` and nullable redacted
+`error_class`/`error_message_redacted`. Failure and skipped outcomes contain no
+evidence and zero review counts; success has null errors. Every present file
+must pass the stage schema, count arithmetic, filename/registry identity and
+exact run/config bindings, including failures. Missing outcomes remain missing
+and degrade health; malformed present outcomes fail integrity validation. There
+are no status JSON mirrors or persisted eligibility flags. If the runner cannot
+admit the manifest binding, it emits a bounded diagnostic and no outcome.
+`out/status/` contains only redacted parse/timeout text diagnostics, which are
+never reloaded as evidence. The diagnostic stem is the reviewer ID for review
+and `critique-<reviewer>` for critique; timeouts use `timeout` instead of `parse`.
 
 In the canonical GitLab template, prepare/review/critique artifacts expire after
 seven days; consensus/post evidence expires after 30 days. GitHub retention

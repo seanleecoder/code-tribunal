@@ -28,12 +28,12 @@ class GoldenConsensusContractTests(unittest.TestCase):
                 )
 
     def test_run_health_golden_is_stable_under_file_order_permutation(self) -> None:
-        batches, critiques, statuses = degraded_run_health_inputs()
+        batches, critiques = degraded_run_health_inputs()
         golden = load_json_file(_FIXTURE_DIR / "degraded_run_health_consensus.json")
         expected = canonical_json(golden)
         for label, inputs in (
-            ("reversed", (batches[::-1], critiques[::-1], dict(reversed(statuses.items())))),
-            ("rotated", (batches[1:] + batches[:1], critiques, statuses)),
+            ("reversed", (batches[::-1], critiques[::-1])),
+            ("rotated", (batches[1:] + batches[:1], critiques)),
         ):
             with self.subTest(label):
                 consensus = degraded_run_health_consensus(inputs)

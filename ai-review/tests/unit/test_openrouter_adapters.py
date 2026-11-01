@@ -167,8 +167,8 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 msg=f"stdout={completed.stdout!r} stderr={completed.stderr!r}",
             )
             self.assertIn("claude CLI is required", completed.stderr)
-            status = load_json_file(output_dir / "status" / "claude.json")
-            self.assertEqual(status["status"], "model_error")
+            status = load_json_file(output_dir / "findings" / "claude.json")
+            self.assertEqual(status["adapter_status"], "model_error")
             self.assertEqual(status["error_class"], "AdapterExit")
             batch = load_json_file(output_dir / "findings" / "claude.json")
             self.assertEqual(batch["adapter_status"], "model_error")
@@ -220,9 +220,9 @@ PY
                 # Emit stage-appropriate output so critique runs exercise the
                 # critique parse/finalize path, not a finding-shaped fallback.
                 'if [ "$AI_REVIEW_STAGE" = critique ]; then\n'
-                "  printf '{\"type\":\"result\",\"structured_output\":{\"critiques\":[]}}'\n"
+                '  printf \'{"type":"result","structured_output":{"critiques":[]}}\'\n'
                 "else\n"
-                "  printf '{\"type\":\"result\",\"structured_output\":{\"findings\":[]}}'\n"
+                '  printf \'{"type":"result","structured_output":{"findings":[]}}\'\n'
                 "fi\n",
                 encoding="utf-8",
             )
@@ -781,7 +781,7 @@ PY
                     cli,
                     payload={"findings": [finding]},
                 )
-                self.assertEqual(batch["accepted_finding_count"], 1)
+                self.assertEqual(len(batch["findings"]), 1)
                 self.assertNotIn("confidence", batch["findings"][0])
                 critique, _args, _env, _meta = self._run_with_fake_cli(
                     seat,

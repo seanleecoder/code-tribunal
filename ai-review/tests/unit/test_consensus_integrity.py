@@ -14,9 +14,10 @@ from ai_review.config import effective_config_digest, load_config
 from ai_review.consensus import (
     ConsensusIntegrityError,
     cli,
-    validate_consensus_inputs,
 )
 from ai_review.schema import empty_critique_batch, empty_finding_batch, write_canonical_json
+
+from tests.support.outcomes import admit_batches
 
 from .test_consensus_cli import _manifest_for_config
 from .test_consensus_groups import _batch, _finding
@@ -80,7 +81,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             for label, (batch, needle) in cases.items():
                 with self.subTest(label=label):
                     with self.assertRaises(ConsensusIntegrityError) as ctx:
-                        validate_consensus_inputs(
+                        admit_batches(
                             config=config,
                             manifest=manifest,
                             finding_batches=[batch],
@@ -89,15 +90,15 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     self.assertIn(needle, str(ctx.exception))
 
             with self.assertRaises(ConsensusIntegrityError) as ctx:
-                validate_consensus_inputs(
+                admit_batches(
                     config=config,
                     manifest=manifest,
                     finding_batches=[good, copy.deepcopy(good)],
                     critique_batches=[],
                 )
-            self.assertIn("duplicate finding batch", str(ctx.exception))
+            self.assertIn("duplicate review outcome", str(ctx.exception))
 
-    def test_non_success_wrong_digest_does_not_hard_fail(self) -> None:
+    def test_non_success_wrong_digest_fails_integrity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config = load_config(self._mini_config(root))
@@ -111,13 +112,12 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 started_at="2026-06-29T00:00:00Z",
                 effective_config_sha256="c" * 64,
             )
-            # Should validate: non-success digest is ignored for hard-fail.
-            validate_consensus_inputs(
-                config=config,
-                manifest=manifest,
-                finding_batches=[timeout],
-                critique_batches=[],
-            )
+            with self.assertRaisesRegex(
+                ConsensusIntegrityError, "effective_config_sha256 mismatch"
+            ):
+                admit_batches(
+                    config=config, manifest=manifest, finding_batches=[timeout], critique_batches=[]
+                )
             self.assertNotEqual(timeout["effective_config_sha256"], digest)
 
     def test_manifest_missing_digest_fails(self) -> None:
@@ -127,7 +127,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
             manifest = _manifest_for_config(config, run_id="run-1")
             del manifest["effective_config_sha256"]
             with self.assertRaises(ConsensusIntegrityError) as ctx:
-                validate_consensus_inputs(
+                admit_batches(
                     config=config,
                     manifest=manifest,
                     finding_batches=[],
@@ -158,6 +158,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 critiques_dir / "claude.json",
                 {
                     "schema_version": "critique_batch.v2",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "duration_ms": 0,
+                    "error_class": None,
+                    "error_message_redacted": None,
                     "run_id": "wrong-run",
                     "critic": "claude",
                     "adapter_status": "success",
@@ -211,6 +216,9 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 findings_dir / "claude.json",
                 {
                     "schema_version": "finding_batch.v2",
+                    "duration_ms": 0,
+                    "error_class": None,
+                    "error_message_redacted": None,
                     "run_id": "run-1",
                     "reviewer": "claude",
                     "adapter_status": "success",
@@ -234,7 +242,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code, 3)
-            self.assertIn("malformed consensus input artifact", stderr.getvalue())
+            self.assertIn("malformed review outcome", stderr.getvalue())
             self.assertFalse(out_path.exists())
 
     def test_reordered_finding_files_produce_identical_consensus(self) -> None:
@@ -313,7 +321,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     else:
                         manifest["run_id"] = run_id
                     with self.assertRaises(ConsensusIntegrityError) as ctx:
-                        validate_consensus_inputs(
+                        admit_batches(
                             config=config,
                             manifest=manifest,
                             finding_batches=[],
@@ -332,6 +340,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
             batch["run_id"] = "run-1"
             critique = {
                 "schema_version": "critique_batch.v2",
+                "started_at": "2026-06-29T00:00:00Z",
+                "completed_at": "2026-06-29T00:00:01Z",
+                "duration_ms": 0,
+                "error_class": None,
+                "error_message_redacted": None,
                 "run_id": "run-1",
                 "critic": "claude",
                 "adapter_status": "success",
@@ -339,7 +352,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 "critiques": [],
             }
             with self.assertRaises(ConsensusIntegrityError) as ctx:
-                validate_consensus_inputs(
+                admit_batches(
                     config=config,
                     manifest=manifest,
                     finding_batches=[batch],
@@ -348,12 +361,12 @@ class ConsensusIntegrityTests(unittest.TestCase):
                         ("claude", copy.deepcopy(critique)),
                     ],
                 )
-            self.assertIn("duplicate critique batch", str(ctx.exception))
+            self.assertIn("duplicate critique outcome", str(ctx.exception))
 
             mismatched = copy.deepcopy(critique)
             mismatched["critic"] = "codex"
             with self.assertRaises(ConsensusIntegrityError) as ctx:
-                validate_consensus_inputs(
+                admit_batches(
                     config=config,
                     manifest=manifest,
                     finding_batches=[batch],
@@ -384,6 +397,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 critiques_dir / "codex.json",
                 {
                     "schema_version": "critique_batch.v2",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "duration_ms": 0,
+                    "error_class": None,
+                    "error_message_redacted": None,
                     "run_id": "run-1",
                     "critic": "codex",
                     "adapter_status": "success",
@@ -406,7 +424,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code, 3)
-            self.assertIn("disabled critic", stderr.getvalue())
+            self.assertIn("disabled reviewer", stderr.getvalue())
 
     def test_cli_allows_skipped_critique_from_disabled_critic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -474,6 +492,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 critiques_dir / "claude.json",
                 {
                     "schema_version": "critique_batch.v2",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "duration_ms": 0,
+                    "error_class": None,
+                    "error_message_redacted": None,
                     "run_id": "run-1",
                     "critic": "spoofed",
                     "adapter_status": "success",
@@ -521,6 +544,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                 critiques_dir / "claude.json",
                 {
                     "schema_version": "critique_batch.v2",
+                    "started_at": "2026-06-29T00:00:00Z",
+                    "completed_at": "2026-06-29T00:00:01Z",
+                    "duration_ms": 0,
+                    "error_class": None,
+                    "error_message_redacted": None,
                     "run_id": "run-1",
                     "critic": "claude",
                     "adapter_status": "success",
@@ -582,6 +610,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                         critiques_dir / "claude.json",
                         {
                             "schema_version": "critique_batch.v2",
+                            "started_at": "2026-06-29T00:00:00Z",
+                            "completed_at": "2026-06-29T00:00:01Z",
+                            "duration_ms": 0,
+                            "error_class": None,
+                            "error_message_redacted": None,
                             "run_id": "run-1",
                             "critic": "claude",
                             "adapter_status": "success",
@@ -610,7 +643,7 @@ class ConsensusIntegrityTests(unittest.TestCase):
                             ]
                         )
                     self.assertEqual(code, 3)
-                    self.assertIn("cannot read artifact", stderr.getvalue())
+                    self.assertIn("ai-review consensus:", stderr.getvalue())
 
     def test_cli_rejects_missing_top_level_and_per_entry_critic_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -623,6 +656,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "missing_top_level",
                     {
                         "schema_version": "critique_batch.v2",
+                        "started_at": "2026-06-29T00:00:00Z",
+                        "completed_at": "2026-06-29T00:00:01Z",
+                        "duration_ms": 0,
+                        "error_class": None,
+                        "error_message_redacted": None,
                         "run_id": "run-1",
                         "adapter_status": "success",
                         "effective_config_sha256": digest,
@@ -633,6 +671,11 @@ class ConsensusIntegrityTests(unittest.TestCase):
                     "missing_per_entry",
                     {
                         "schema_version": "critique_batch.v2",
+                        "started_at": "2026-06-29T00:00:00Z",
+                        "completed_at": "2026-06-29T00:00:01Z",
+                        "duration_ms": 0,
+                        "error_class": None,
+                        "error_message_redacted": None,
                         "run_id": "run-1",
                         "critic": "claude",
                         "adapter_status": "success",

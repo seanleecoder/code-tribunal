@@ -311,7 +311,7 @@ def effective_config_binding(config: ReviewConfig) -> dict[str, Any]:
     }
 
 
-def recorded_effective_config_digest(manifest: Any) -> str | None:
+def _recorded_effective_config_digest(manifest: Any) -> str | None:
     """Prepare's effective-config digest from a manifest, or None if absent."""
     digest = manifest.get("effective_config_sha256") if isinstance(manifest, dict) else None
     return str(digest) if is_sha256(digest) else None
@@ -319,7 +319,7 @@ def recorded_effective_config_digest(manifest: Any) -> str | None:
 
 def _recorded_effective_config(manifest: Any) -> tuple[dict[str, Any], str]:
     """Prepare's recorded configuration document and the digest it matches."""
-    digest = recorded_effective_config_digest(manifest)
+    digest = _recorded_effective_config_digest(manifest)
     if digest is None:
         raise EffectiveConfigMismatch("manifest missing effective_config_sha256; re-run prepare")
     document = manifest.get("effective_config")

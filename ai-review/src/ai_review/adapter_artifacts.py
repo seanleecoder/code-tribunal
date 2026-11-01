@@ -1,30 +1,13 @@
-"""Status and debug artifact writing.
-
-Every filesystem write the adapter runner makes outside the reviewer batch
-itself: status artifacts, empty batches, and the parse-failure debug pair.
-
-Keeping these out of adapter_output is the point of the split — it is what
-stops filesystem I/O leaking into the parsing module.
-"""
+"""Redacted parse and timeout diagnostics, never authoritative evidence."""
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
 from .adapter_output import _head_tail_preview
 from .redact import redact_text
-from .schema import (
-    adapter_status_artifact,
-    empty_critique_batch,
-    empty_finding_batch,
-    load_json_file,
-    now_iso,
-    status_file_stem,
-    validate_instance,
-    write_canonical_json,
-)
+from .schema import load_json_file
 
 _RAW_STDOUT_ARTIFACT_LIMIT = 2 * 1024 * 1024
 
@@ -44,81 +27,6 @@ def _output_file(stage: str, reviewer: str) -> Path:
     return Path("critiques") / f"{reviewer}.json"
 
 
-def _write_status(
-    output_dir: Path,
-    reviewer: str,
-    stage: str,
-    status: str,
-    started_at: str,
-    started_monotonic: float,
-    output_file: Path,
-    *,
-    error_class: str | None = None,
-    error_message: str | None = None,
-    run_id: str | None = None,
-    effective_config_sha256: str | None = None,
-    raw_finding_count: int | None = None,
-    accepted_finding_count: int | None = None,
-    dropped_finding_count: int | None = None,
-    usable_for_resolution: bool | None = None,
-) -> None:
-    completed = now_iso()
-    artifact = adapter_status_artifact(
-        reviewer,
-        stage,
-        status,
-        started_at,
-        completed,
-        int((time.monotonic() - started_monotonic) * 1000),
-        output_file.as_posix(),
-        error_class=error_class,
-        error_message_redacted=redact_text(error_message) if error_message else None,
-        run_id=run_id,
-        effective_config_sha256=effective_config_sha256,
-        raw_finding_count=raw_finding_count,
-        accepted_finding_count=accepted_finding_count,
-        dropped_finding_count=dropped_finding_count,
-        usable_for_resolution=usable_for_resolution,
-    )
-    validate_instance(artifact, "adapter_status.schema.json")
-    status_path = output_dir / "status" / f"{status_file_stem(stage, reviewer)}.json"
-    write_canonical_json(status_path, artifact)
-
-
-def _write_empty(
-    output_dir: Path,
-    output_file: Path,
-    reviewer: str,
-    stage: str,
-    status: str,
-    run_id: str,
-    model: str,
-    started_at: str,
-    *,
-    effective_config_sha256: str,
-) -> None:
-    if stage == "review":
-        batch = empty_finding_batch(
-            reviewer,
-            status,
-            run_id=run_id,
-            model=model,
-            started_at=started_at,
-            effective_config_sha256=effective_config_sha256,
-        )
-        validate_instance(batch, "finding_batch.schema.json")
-    else:
-        batch = empty_critique_batch(
-            reviewer,
-            status,
-            run_id=run_id,
-            started_at=started_at,
-            effective_config_sha256=effective_config_sha256,
-        )
-        validate_instance(batch, "critique_batch.schema.json")
-    write_canonical_json(output_dir / output_file, batch)
-
-
 def _write_parse_debug(
     output_dir: Path,
     reviewer: str,
@@ -135,7 +43,7 @@ def _write_parse_debug(
     # Redact complete spans before a preview or artifact limit can split them.
     stdout = redact_text(stdout)
     stderr = redact_text(stderr)
-    stem = status_file_stem(stage, reviewer)
+    stem = f"critique-{reviewer}" if stage == "critique" else reviewer
     debug_path = output_dir / "status" / f"{stem}-{kind}-debug.txt"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(

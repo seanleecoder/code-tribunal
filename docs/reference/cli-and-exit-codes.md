@@ -8,8 +8,8 @@ importable Python functions are not a public API.
 |---|---|---:|---|
 | `python -m ai_review.input_bundle local --config PATH --diff PATH --repo PATH --out DIR` | Build a local fixture bundle | 0 | 1 for bundle/config/runtime failure; argparse uses 2 |
 | `python -m ai_review.input_bundle prepare --config PATH --out DIR` | Build a platform-bound bundle | 0 | 1 for bundle/platform/config failure; argparse uses 2 |
-| `python -m ai_review.adapter_runner REVIEWER STAGE` | Run and validate a reviewer or critique | 0 | 1 after writing a structured failed status; argparse uses 2 |
-| `python -m ai_review.consensus --inputs DIR --out PATH` | Validate evidence and reduce consensus; findings/critiques/status paths are optional | 0 | 3 for no usable panel or artifact/config integrity failure; argparse uses 2 |
+| `python -m ai_review.adapter_runner REVIEWER STAGE` | Run and validate a reviewer or critique | 0 | 1 after writing a failed outcome when manifest binding is valid; otherwise a bounded diagnostic; argparse uses 2 |
+| `python -m ai_review.consensus --inputs DIR --out PATH` | Validate evidence and reduce consensus; `--findings-dir` and `--critiques-dir` are optional | 0 | 3 for no usable panel or artifact/config integrity failure; argparse uses 2 |
 | `python -m ai_review.post --inputs DIR --consensus PATH --out PATH` | Publish the review: reconcile state, post threads and the summary; `--dry-run` is optional | 0 for `success` and `stale_head` | 1 for `failed`, `partial_failed`, `state_overflow`, or any unrecognized status, and for unhandled CLI/platform/config failure; argparse uses 2 |
 | `python -m ai_review.schema validate --schema NAME --input PATH` | Validate one JSON artifact | 0 | 1 for invalid input/schema; argparse uses 2 |
 | `python scripts/pipeline_trust.py PATH --template-project PROJECT --template-sha SHA` | Audit a GitLab consumer composition; repository-only, not shipped in the images | 0 | 1 for trust violations, 2 for malformed input/arguments |
