@@ -1,6 +1,6 @@
 # Fully pinned Python inputs for ai-review/images/base.Dockerfile.
 # Refresh from a clean resolver, then run image tests.
-pip==26.2.2
+pip==26.3
 PyYAML==6.0.3
 attrs==26.1.0
 certifi==2026.10.23
