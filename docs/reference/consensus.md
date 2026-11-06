@@ -14,10 +14,11 @@ a candidate still apply.
 
 ## Inputs and eligibility
 
-Each successful finding batch identifies its reviewer/model, run ID,
-effective-config digest, accepted and dropped finding counts, and whether the
-batch is usable for absence-based resolution. Consensus rejects wrong-run,
-duplicate, disabled, malformed, or identity-spoofed evidence. A syntactically
+Each finding batch is bound to its reviewer seat, run and effective
+configuration; see [artifacts and schemas](artifacts-and-schemas.md) for its
+fields. Consensus derives accepted counts and absence-based resolution eligibility from
+the admitted payload. It rejects wrong-run, duplicate, malformed, or identity-spoofed evidence,
+and non-skipped outcomes from disabled seats. A syntactically
 successful batch whose findings were all dropped is not an operational panel
 seat and cannot resolve an older finding.
 

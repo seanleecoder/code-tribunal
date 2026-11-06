@@ -142,6 +142,12 @@ release instead.
 
 ## Release pull-request checklist
 
+The one-time 3.0.0 cutovers are recorded in the retained
+[exact-pair acceptance](../evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance);
+upgrades from older releases follow the
+[state migration](../operations.md#state-v2-migration) and platform installation
+guides.
+
 Copy this into the release pull-request description. Each item records whether it
 applied, and the review checks the evidence it cites.
 
@@ -149,15 +155,6 @@ applied, and the review checks the evidence it cites.
   [target audit](temporary-compatibility.md#next-major-target-audit-2026-11-01).
   Record why COMPAT-009/010/011 remain or have reached their deletion criteria
   before freezing `R`.
-- [ ] **State v2 cutover:** for the first S14 release, rehearse the
-  [migration](../operations.md#state-v2-migration) on both GitHub and GitLab.
-  Pause reviews; export all authenticated notes with IDs/authors; retain exports;
-  convert and inspect; update the target and read it back; delete only obsolete
-  notes; resume on the exact candidate images and rerun from prepare. Verify
-  thread IDs, human dispositions and historical multiline threads survive, and
-  record the paused-review rollback procedure using the v1 exports. Preserve
-  older-format inline fixtures for the separate body-refresh check. Preliminary
-  rehearsals can find bugs before `R`; repeat acceptance on its exact image pair.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`
@@ -174,19 +171,6 @@ applied, and the review checks the evidence it cites.
 - [ ] **Three-seat default smoke:** when the default roster or a default model
   changes, one smoke run on the exact default roster, unless the canary panel's
   model and effort routes already match it.
-- [ ] **GitHub reusable-workflow cutover:** for the first N03 release, run an
-  external caller pinned to the release candidate's workflow commit. Confirm
-  caller model/effort/roster variables in the prepared manifest and health rows,
-  inherited or named secrets, automatic and manual review, fork skipping, and
-  the new `ai-review / post` check name. The local-copy canary exercises the call
-  structure but does not prove external SHA lookup and cross-repository scope.
-- [ ] **GitLab direct-include cutover:** for the first N02 release, confirm the
-  demo allows MR pipelines to access protected variables/runners, with protected
-  source and target branches for panel/lifecycle. Run `hostile` with the direct
-  include on an unprotected source; earlier child-topology evidence does not
-  prove this composition. The persistent consumer must follow the
-  [GitLab migration guide](../getting-started/gitlab.md#migrate-from-the-child-pipeline)
-  before adoption.
 - [ ] **Known limitations:** update the
   [carried coverage gaps](../evidence/RUNBOOK.md#carried-coverage-gaps), removing
   what this release closed and adding what it found, and write any gap that limits

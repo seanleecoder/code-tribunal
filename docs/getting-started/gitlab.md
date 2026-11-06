@@ -165,8 +165,10 @@ Open a small merge request and verify:
 
 Every published run creates or refreshes one summary note, headed by the review
 health. Seeing a green pipeline with a summary note and no discussions is
-normal: it means no finding reached two independent supporters. Check the
-health headline to tell a clean change from a panel that lost seats.
+normal: findings may all be FYI, or a surfaced finding may use summary fallback
+when a discussion cannot be posted. See the
+[surfacing rule](../reference/consensus.md#grouping-and-independent-support).
+Check the health headline to tell a clean change from a panel that lost seats.
 
 Before a production rollout, execute the hostile-MR checklist in the
 [evidence runbook](../evidence/RUNBOOK.md#gitlab-hostile-mr-checklist). Repository-only tests do not

@@ -11,7 +11,7 @@ deleted rather than archived. `git log` holds them, and a completed spec
 describes work already visible in the code, tests, and
 [`CHANGELOG.md`](../../CHANGELOG.md). Read those for current behavior.
 
-Last reviewed against main at `40ec9da` on 2026-11-01. Historical maintainer
+Last reviewed against main at `f45eb7d` on 2026-11-06. Historical maintainer
 decisions are recorded below.
 
 ## Open specifications

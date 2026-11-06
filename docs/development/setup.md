@@ -1,6 +1,6 @@
 # Contributor setup
 
-Use Python 3.14 from the repository root:
+Use Python 3.15, matching CI and the container runtime, from the repository root:
 
 ```bash
 python3 -m venv .venv

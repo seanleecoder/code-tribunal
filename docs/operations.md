@@ -35,7 +35,7 @@ state uses version 2 inside the summary comment; see the migration below.
 
 | Failure class | Behavior | Operator action |
 |---|---|---|
-| One reviewer/provider fails | Panel degrades; other trustworthy evidence may proceed | Inspect `out/status/`; retry or fix credential/model |
+| One reviewer/provider fails | Panel degrades; other trustworthy evidence may proceed | Inspect the finding/critique outcome and job log, plus `out/status/` for parse/timeout diagnostics; retry or fix credential/model |
 | All findings from a seat are malformed | Seat is not resolution-eligible or operationally successful | Fix model/schema compatibility; do not lower thresholds reflexively |
 | Critique evidence absent | Consensus uses valid reviewer evidence and reports missing critique jobs in run health | Restore critique execution or retry |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
@@ -183,7 +183,7 @@ health. Its headline names the grade:
   findings could still reach two independent supporters. Re-running is
   optional.
 - **re-run recommended**: the panel failed, no finding could reach two
-  independent supporters, or critique was enabled and no critic succeeded.
+  independent supporters, or no enabled critic succeeded.
 - **configuration error**: a seat failed on its configuration, such as an
   invalid model ID. Fix the configuration; re-running unchanged fails the same
   way.
@@ -196,7 +196,9 @@ individual jobs or mix artifacts. A failed panel is not published: the
 consensus check turns red and the consensus job log prints the same health
 report.
 
-Start with `out/status/`, then the consensus and post artifacts. Record run
+Start with the health report, which names failed seats, then that seat's
+finding/critique outcome, job log and any `out/status/` diagnostics, then the
+consensus and post artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
 resolution-eligible reviewers, post status, and `post_result.warnings`. Export
 sanitized evidence before the artifacts
@@ -207,10 +209,10 @@ source beyond policy, or unnecessary model-authored content in evidence.
 
 ## Cost controls
 
-Control cost by selecting models, disabling unused seats, setting reviewer
-timeouts and finding caps, bounding diff/files/prompt size, and optionally
-disabling critique (critique is a second model pass, so disabling it roughly
-halves reviewer calls). Validate panel thresholds after changing seats. The
+Control cost by selecting models and [panel size](configuration.md#choosing-the-panel),
+setting reviewer timeouts and finding caps, and bounding diff/files/prompt size.
+Every enabled seat runs one review and one critique round; critique cannot be
+disabled. The
 product does not currently provide the proposed per-reviewer token/cost
 accounting, so provider billing remains the authoritative cost source;
 record it per run when collecting live evidence.
@@ -225,9 +227,9 @@ for the allow flag's limits. Production templates set `AI_REVIEW_LOCAL_MOCK=0`;
 without an explicit mock selection, a missing CLI or credential always fails.
 These runner controls affect only review/critique
 behavior and are not part of the effective-config digest, so set them
-consistently on the review and critique jobs. Config-affecting overrides
-(critique/reviewer/panel) do feed the digest, so scope any of those consistently
-across all jobs or the first stage to see the divergence fails.
+consistently on the review and critique jobs. Set configuration overrides where
+prepare receives them; see
+[stage visibility and integrity](configuration.md#stage-visibility-and-integrity).
 
 ## Image pin rotation
 

@@ -12,8 +12,8 @@ credentials or sensitive model content into issues.
 | `post` exits nonzero | Publication or state persistence failed (`failed`, `partial_failed`, `state_overflow`) — findings never affect the exit status | `out/post/post_result.json` `status` and `warnings` | Repair platform API/state capacity and rerun post |
 | Pipeline is green but no comments appear | Stale head: a newer revision superseded the run, so post made no mutation | `post_result.json` `status: stale_head` | Let the newer revision's run publish |
 | Summary says `re-run recommended` or `degraded` | A seat or critic failed, or findings were dropped or capped | The summary's problem list and run details; review/critique outcomes and the consensus job log | Follow the action line; re-run from prepare, never individual jobs |
-| Pipeline is green, a summary comment exists, but no threads were posted | No finding had two independent supporters: either nothing was found, or every finding is FYI. This is expected, not a fault | The summary's review health headline and FYI list; consensus `summary.surface_count` is 0 | Investigate only if the health grade is not `full`: a lost seat lowers what can reach two supporters |
-| A finding you expected is only FYI | Only one reviewer identity supported it; severity does not promote it | Group `support_count`, `contributing_reviewers`, `agreeing_critics` | Expected: two independent identities are required to surface. Check for a failed or silently empty seat |
+| Pipeline is green, a summary comment exists, but no threads were posted | Nothing was found, all findings are FYI, or surfaced findings used summary fallback | The summary's health, FYI and surfaced entries; consensus `summary.surface_count` and post warnings | Check health for lost seats and the summary for fallback reasons; no threads alone does not establish a clean review |
+| A finding you expected is only FYI | It did not meet the [ordered decision rule](reference/consensus.md#grouping-and-independent-support); severity does not promote it | Group `support_count`, `contributing_reviewers`, `agreeing_critics` and noise votes | Inspect lost seats or noise rationales as applicable |
 | Duplicate-looking discussion | Lost/untrusted state, changed bot identity, conservative rematch, or different category | Issue markers, state author, `issue_id`, record status | Restore bot/state ownership; distinguish a true duplicate from a new identity |
 | `/ai-review` command ignored | Wrong thread, syntax, insufficient access, or collaborator permission could not be verified | Root finding marker, author permission, and `post_result.json` warnings naming the note and author | Reply in the finding thread with one exact command line ([syntax and access](reference/revision-lifecycle.md#human-dispositions)); on GitHub organization repositories configure the fine-grained resolve token |
 | Thread resolution or reopening fails | Platform token cannot mutate the thread or its root comment was deleted; `post` reports `partial_failed` and exits nonzero | `post_result.json` warnings and platform API error | Repair the token or thread access and rerun; on GitHub add a fine-grained resolve token and preserve root comments |
@@ -25,7 +25,7 @@ credentials or sensitive model content into issues.
 | GitLab trust audit fails | Include project/SHA/path changed, or a reserved Code Tribunal job is redefined | Auditor errors | Restore the exact direct include example; do not bypass the validator |
 | Runtime override appears ignored | Pinned image predates it or prepare did not receive it | Template image source SHA and manifest effective config | Rotate all image pins together or make the override visible to prepare and start a new run |
 | Snapshot rejects repository | Symlink, special file, excessive depth, or unsupported no-follow platform | `BundleError` relative path | Remove/replace the unsupported entry; do not enable link following |
-| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific status artifact, `duration_ms`, timeout status and redacted timeout artifacts | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (900 seconds when it is omitted, regardless of `timeout_seconds`); inspect the timeout diagnostics before increasing the budget |
+| Reviewer appears slow or stuck | Provider retry, repository exploration, or stalled CLI | Stage-specific finding/critique outcome, `duration_ms`, timeout status and redacted timeout artifacts | Check review against `reviewers.<name>.timeout_seconds` and critique against `reviewers.<name>.critique_timeout_seconds` (900 seconds when it is omitted, regardless of `timeout_seconds`); inspect the timeout diagnostics before increasing the budget |
 | Reviewer reports `model_error` naming a model id | A `AI_REVIEW_<REVIEWER>_MODEL` override contains characters that cannot be passed safely to a CLI or interpolated into adapter config | Redacted `model_error` reading `model id has unsupported characters` | Set the override to a plain provider/slug id, optionally with an OpenRouter `:variant` suffix |
 
 ## Reviewer status meanings
@@ -90,11 +90,12 @@ malformed adapter output.
 
 ## Configuration drift
 
-Prepare binds the effective configuration by SHA-256, and every later stage
-fails when it sees drift; see
+Prepare binds the resolved configuration by SHA-256. Later stages validate that
+document and the run/config bindings of transported outcomes; they do not reread
+YAML or environment overrides. A binding mismatch fails integrity validation; see
 [stage visibility and integrity](configuration.md#stage-visibility-and-integrity).
 Set supported
-overrides at project/group or repository workflow scope and rerun from prepare.
+overrides where prepare receives them and rerun from prepare to change policy.
 
 ## Local reproduction
 

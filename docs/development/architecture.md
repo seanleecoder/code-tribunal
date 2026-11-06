@@ -126,8 +126,8 @@ These rules are worth stating because breaking them is silent:
   One pure quality helper derives eligibility and accepted/omitted counts from
   the payload. Health reads no files and remains observational. Schemas, runner,
   consumers, canonical invocations and canaries change together because staging
-  them would require an old/new reader or dual writer. Unreleased v2 batches
-  evolve in place; generate fresh artifacts with one image pair.
+  them would require an old/new reader or dual writer. These v2 batches shipped
+  in 3.0.0; generate fresh artifacts with one image pair.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

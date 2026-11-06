@@ -7,9 +7,16 @@ for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
 older-format threads that the body-refresh check depends on.
 
+Deployment observations below are dated evidence through the 3.0 acceptance on
+2026-11-01, not a fresh inspection of either service. Before each campaign, run
+`make demo-preflight` (step 0 of the
+[per-release setup checklist](#per-release-setup-checklist)) for credentials and variables, and recheck by
+hand what it does not inspect: branch protection, project settings and pins. The
+historical resting deployments may still need migration to 3.0.
+
 | Platform | Project | Role |
 |---|---|---|
-| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow copy, secrets, repository variables |
+| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow caller, secrets, repository variables; older recorded deployments use a copy |
 | GitLab | <https://gitlab.com/seanleecoder/code-tribunal-demo> (project id `84667714`) | consumer: `.gitlab-ci.yml`, protected/masked variables, runner |
 | GitLab | `seanleecoder/code-tribunal-ci-template` (project id `84667707`) | protected template project holding `ai-review/ci/` |
 
@@ -24,11 +31,11 @@ content from these projects regardless.
 Public, default branch `main`. Contains a small `src/` + `tests/` Python fixture tree.
 The recorded pre-N03 deployment has a single copied workflow,
 `.github/workflows/ai-review.yml`. N03's temporary canary branches install a caller
-and reusable workflow; the persistent consumer must adopt a release-SHA caller
-before the first N03 release, following the
+and reusable workflow. When upgrading the persistent consumer to 3.0 or later,
+replace the recorded copy with a release-SHA caller, following the
 [GitHub installation guide](../getting-started/github.md).
 
-**Already configured — do not rebuild this, only repin it:**
+**Recorded configuration:**
 
 - **Secrets:** `OPENROUTER_API_KEY`, `CURSOR_API_KEY`,
   `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
@@ -37,7 +44,7 @@ before the first N03 release, following the
   protection on `main`, which also required `gate`, had its required status checks
   removed on 2026-09-27; Code Tribunal informs and never gates merges. Classic
   protection otherwise remains (no force pushes, no deletions). `main` accepts direct pushes, but land a
-  workflow adoption as a PR anyway so the new copy runs once before it is merged.
+  workflow adoption as a PR anyway so the caller runs once before it is merged.
 - **Repository variables** (persisted): `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
   `pull_request` runs, which manual mode skips),
   `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`.
@@ -54,12 +61,13 @@ before the first N03 release, following the
   load while the merge-gate override is set. During adoption, replace the legacy
   workflow (including any hard-mapped retired overrides) with the SHA-pinned
   caller. Verify both automatic and manual review plus secret/variable forwarding
-  through an external caller before the first N03 release.
+  through an external caller when adopting the reusable workflow. Retained
+  [3.0 acceptance](#exact-pair-30-cutover-acceptance) records the release-time checks.
 - **Legacy mock mappings:** older workflow copies included mock controls and
   `AI_REVIEW_REQUIRE_REAL_*`. Replace that workflow during adoption. Production
   callers do not gain permanent mock controls; deterministic checks use the
   canary's temporary caller/reusable pair.
-- **Mock variables are currently absent**, which is the intended resting state.
+- **Mock variables were recorded absent**, which is the intended resting state.
   **Delete them again after every Chain B campaign.** When adopting an image with
   S03, remove the older workflow's `AI_REVIEW_REQUIRE_REAL_*` mappings: the runner
   selects mocks only with both `AI_REVIEW_LOCAL_MOCK=1` and
@@ -119,11 +127,11 @@ Closing the PR is fine; deleting the comment or the branch is not.
 
 ## GitLab consumer — `seanleecoder/code-tribunal-demo`
 
-Public, project id `84667714`. Verified present:
+Public, project id `84667714`. Recorded configuration:
 
 - A runner.
 - `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
-  masked**. Remove the obsolete `AI_REVIEW_CRITIQUE_ENABLED` variable before the next major;
+  masked**. Remove the obsolete `AI_REVIEW_CRITIQUE_ENABLED` variable before adopting 3.0 or later;
   critique always runs. Delete retired per-seat
   `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
   packaged roster. `AI_REVIEW_MERGE_GATE_ENABLED` is absent, and must stay so: it
@@ -142,10 +150,11 @@ Public, project id `84667714`. Verified present:
   `5900e34`). N02's temporary canary branches install a direct include at the
   candidate template SHA, independently of this resting deployment. Migrate the
   persistent consumer using the [GitLab installation guide](../getting-started/gitlab.md)
-  before its first N02 adoption; complete the state v2 migration as well.
+  when upgrading it to 3.0 or later; complete the state v2 migration as well.
 
-Before the first N02 campaign, enable the demo's **Allow merge request pipelines
-to access protected variables and runners** setting and confirm `main` remains
+Before a direct-include panel or lifecycle campaign, confirm the demo's **Allow
+merge request pipelines to access protected variables and runners** setting is
+enabled and `main` remains
 protected. The orchestrator protects each panel/lifecycle source branch; the
 hostile source stays unprotected. `make demo-preflight` checks credential
 inventory and flags, but does not inspect this project setting.
@@ -161,14 +170,14 @@ as a new template commit and then point the consumer's direct include at that ne
 
 - **Protected** scratch source branch for every lifecycle MR (Chain A and Chain B).
   The protected `GITLAB_TOKEN` injects only on protected refs; from an unprotected
-  branch it is withheld and prepare and posting fail outright. Protected today:
+  branch it is withheld and prepare fails before posting. Recorded protected branches:
   `main`, `evidence/chain-a-88bc941`, `evidence/chain-b-88bc941`,
   `evidence/gitlab-lifecycle`, `evidence/gitlab-symlink-containment`, and the five
   `evidence/p0-symlink-{relative,parent,dangling,directory,proc-environ}` branches.
   **Protect each new `evidence/chain-*` branch before opening its MR** — this is the
   single most common cause of a lifecycle chain failing for the wrong reason.
 - **Unprotected** source branch (or a fork) for the hostile-MR probe, where the
-  withholding *is* the result being measured. Unprotected today:
+  withholding *is* the result being measured. Recorded unprotected branches:
   `hostile/unprotected-88bc941`, `evidence/p0-hostile-forwarding`, and
   `evidence/gitlab-hostile-boundary`.
 
@@ -205,15 +214,14 @@ candidate refreshed it in place; see the
 1. Dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
    against the new pair. It needs no repin: it pushes its own temporary branch and
    closes its PR/MR afterwards. Do not repin until it is green.
-2. Point the GitHub caller to the reviewed release commit `P`; the first N03
-   adoption replaces the old copied workflow. Copy the GitLab template from `P`
+2. Point the GitHub caller to the reviewed release commit `P`; upgrading a
+   pre-3.0 deployment replaces the old copied workflow. Copy the GitLab template from `P`
    with its three pin variables (`AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`,
    `AI_REVIEW_TRUSTED_IMAGE_SHA`) set to the tested pair.
    Confirm `AI_REVIEW_MERGE_GATE_ENABLED` is still absent from both consumers; it
    is retired and fails the run.
-3. Land the GitHub adoption change as a PR. For the first N03 release, perform
-   the external SHA-pinned caller check in the
-   [release checklist](../development/release-process.md#release-pull-request-checklist).
+3. Land the GitHub adoption change as a PR and verify it using the
+   [GitHub installation guide](../getting-started/github.md#first-run-and-verification).
    Use the temporary canary pair for deterministic mock checks; the persistent
    production caller exposes no mock switch.
 4. Push the repinned template as a new commit to `code-tribunal-ci-template`, then

@@ -33,7 +33,9 @@ Pull requests should:
 - Delete completed specs from the active spec directory after updating its
   index; git history retains them.
 
-New reviewer adapters must validate model/endpoint input, sanitize the child
+Adding a fifth first-party reviewer requires a new accepted
+[ADR](docs/decisions/0003-product-invariants-and-complexity-envelope.md#decision)
+first. Reviewer adapters must validate model/endpoint input, sanitize the child
 environment, receive only their own credential, enforce the strongest available
 read-only/no-shell policy, and produce schema-valid finding and critique
 artifacts. Network egress limitations must be documented honestly.
