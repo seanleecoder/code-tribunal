@@ -65,7 +65,7 @@ the first run, verification, rollback, and uninstall.
 
 ## Local demonstration
 
-The deterministic local path needs Python 3.14 and the development dependencies,
+The deterministic local path uses Python 3.15 and the development dependencies,
 but no provider or platform credentials:
 
 ```bash

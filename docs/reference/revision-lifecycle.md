@@ -42,12 +42,16 @@ identifier needed to resolve or reopen its thread through GraphQL.
 
 ## Retention and migrations
 
-Open and `wontfix` records are retained by default. Bounded resolved and stale
-record counts plus a total byte limit prevent unbounded state. Overflow is an
+Active records and human dispositions are always retained; only the newest five
+automatically resolved records are kept. The total record cap and platform
+summary-comment limit bound state; there is no separate byte-limit setting.
+See [posting and state](../configuration.md#posting-and-state). Overflow is an
 operational failure that makes the `post` job exit nonzero. Inline threads and
 the summary note both carry a hash of their rendered text alone. When a release
 renders an unchanged finding differently, each surfaced bot-authored inline
 thread receives one content refresh on its next run; issue IDs, state records,
 and resolution status remain unchanged. A rollback causes one reverse refresh
-of surfaced threads and does not discard state; `wontfix` and resolved threads
-are not re-rendered.
+of surfaced threads; `wontfix` and resolved threads are not re-rendered. Rolling
+back across the state v2 cutover requires restoring the saved v1 state with the
+old images while reviews are paused; see the
+[migration and rollback procedure](../operations.md#state-v2-migration).

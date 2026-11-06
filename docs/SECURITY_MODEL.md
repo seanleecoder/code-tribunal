@@ -28,8 +28,11 @@ validation, and secret redaction.
 GitHub consumers pin the reusable workflow to a reviewed release commit. Its
 `github` and `vars` contexts belong to the caller, and checkout still fetches the
 caller's PR revision. The caller grants token permissions and forwards provider
-and resolution secrets; the reusable workflow maps each secret only to the
-existing stage and seat that needs it. Caller workflow `env` is not inherited.
+and resolution secrets. Platform tokens stay in prepare/post, and the workflow
+passes `CURSOR_API_KEY` only to the selected Cursor jobs. `OPENROUTER_API_KEY`
+reaches every reviewer job; the runner's credential allowlist isolates each
+reviewer subprocess. See [credential visibility](configuration.md#credentials).
+Caller workflow `env` is not inherited.
 The called workflow retains the same-repository PR guard and rejects unsupported
 events, including `pull_request_target`, before prepare. See the
 [GitHub installation guide](getting-started/github.md) for caller configuration.
@@ -43,8 +46,11 @@ Residual risk: deployment protection settings are external state and must be
 proved per deployment. The Candidate Canary's `hostile` campaign targets a merge
 request from an **unprotected** ref with a direct include. Earlier releases
 recorded the hardened mirrored child topology; that evidence does not prove the
-new composition. The first N02 release must run the direct-include probe. Its
-assertions are listed under
+new composition. The 3.0 release's retained
+[cutover acceptance](evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
+records the direct-include canary. Run `hostile` again when the trust boundary
+changes, as the [release checklist](development/release-process.md#release-pull-request-checklist)
+requires, and verify protection settings for each deployment. Its assertions are listed under
 [Candidate Canary](../CONTRIBUTING.md#candidate-canary), and the body of each
 release that ran it records the run.
 

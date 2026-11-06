@@ -32,7 +32,7 @@ registry; they are not operator configuration.
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor accepts only null effort; choose its model variant instead. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. The summary's run details show it as each review job's limit and mark a job that used at least 80% of it. |
 | `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |
-| `reviewers.<name>.max_findings` | integer, `50` | Maximum raw findings admitted before consensus filtering. Findings it cuts are reported as "omitted by the per-seat cap" in the summary's review health and grade the run `degraded`. |
+| `reviewers.<name>.max_findings` | integer, `50` | Maximum valid findings retained after every candidate is normalized and checked, before consensus grouping. Valid findings it cuts are reported as "omitted by the per-seat cap" in the summary's review health and grade the run `degraded`; malformed drops are counted separately. |
 
 ### Choosing the panel
 
@@ -44,8 +44,8 @@ AI_REVIEW_REVIEWERS=claude,codex,cursor
 ```
 
 The seats named are enabled and every other configured seat is disabled. A seat
-that sits out is not a failure: its adapter writes a `skipped` finding batch and
-status without starting its CLI, and consensus accepts those artifacts. This
+that sits out is not a failure: its adapter writes a `skipped` stage outcome
+without starting its CLI, and consensus accepts that artifact. This
 matters on GitLab, where the job graph is static and every seat's job is created
 regardless of the roster: a seat that is not on the panel still gets its
 `AI review` and `AI critique` matrix instances, which complete quickly with
@@ -385,7 +385,6 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_LOCAL_MOCK` | Selects the deterministic mock in the Python runner only when `1`, with the companion allow flag below. Production templates set `0`; never set as a consumer project/pipeline variable. |
 | `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required alongside `AI_REVIEW_LOCAL_MOCK=1`. A missing CLI or credential always fails when mock mode is not selected. Image preflight and the operator's mock lifecycle runs only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); forwarded only to the selected mock subprocess. |
-
 | `AI_REVIEW_GITHUB_PR_NUMBER` | Immutable selected pull-request number passed to prepare. |
 | `AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA` | Immutable selected pull-request head passed to prepare. |
 | `AI_REVIEW_REVIEWER` | Selected adapter seat inside dispatch. |
@@ -431,8 +430,10 @@ and critique batches remain bound to the run and configuration digest; post also
 checks the consensus artifact against the complete input-manifest digest.
 
 Missing, incomplete, unsupported or corrupt manifest configuration fails before
-consequential work: review/critique write `config_error`, consensus exits 3, and
-post exits 1 before creating a platform client. Downstream environment changes
+consequential work: review/critique emit a bounded diagnostic without an outcome
+when the manifest binding cannot be admitted, consensus exits 3, and post exits
+1 before creating a platform client. Once a valid binding is admitted, runner
+configuration failures produce a `config_error` outcome. Downstream environment changes
 cannot alter the prepared roster, model, budget, platform or policy.
 
 The digest detects mixed or corrupt artifacts; it does not authenticate a writer

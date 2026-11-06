@@ -229,15 +229,17 @@ The change is breaking. Required check names change, secrets need
 shipping. Until that major release, the template-and-copy dimension in ADR-0003
 stands for released versions.
 
-**N03 implementation (next major, unreleased):** the sole GitHub implementation
+**N03 implementation (released in 3.0.0 on 2026-11-01):** the sole GitHub implementation
 is now `.github/workflows/ai-review-reusable.yml`; the repository's `ai-review.yml`
 is a caller using the same commit, and caller changes must land in R (decision 4
 lists the paths P may change). GitHub documents that `vars` uses
 the caller repository and caller `env` is not inherited; the installation guide
 links those rules and describes named secrets when inheritance is unavailable.
 The canary copies the candidate reusable workflow and its caller to the demo,
-so both panel and lifecycle run through `workflow_call`. Before release, verify
-caller variables and secrets with an external SHA-pinned caller as well.
+so both panel and lifecycle run through `workflow_call`. The retained
+[3.0 cutover acceptance](../evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
+records external SHA-pinned caller checks. The live fork-skip check remains a
+[carried coverage gap](../evidence/RUNBOOK.md#carried-coverage-gaps).
 
 ### Sources of truth (replacing the ADR-0003 row)
 

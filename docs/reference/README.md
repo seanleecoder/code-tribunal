@@ -8,5 +8,7 @@ These documents describe the current executable product contract:
 - [Finding revision lifecycle](revision-lifecycle.md)
 
 For operator decisions, start with [configuration](../configuration.md) and
-[operations](../operations.md). Paused historical plans are excluded from current
-documentation checks under top-level [`archive/`](../../archive/).
+[operations](../operations.md). Paused historical plans live under top-level
+[`archive/`](../../archive/) and are not current product guidance. Their links
+and anchors are still checked; only frozen `release/` notes are excluded from
+the Markdown link gate.

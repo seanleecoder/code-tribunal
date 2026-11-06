@@ -137,8 +137,10 @@ Open a same-repository pull request with a small, reviewable change. Confirm:
 
 Every published run creates or refreshes one summary comment, headed by the
 review health. Seeing a green run with a summary comment and no threads is
-normal: it means no finding reached two independent supporters. Check the health
-headline to tell a clean change from a panel that lost seats.
+normal: findings may all be FYI, or a surfaced finding may use summary fallback
+when an inline comment cannot be posted. See the
+[surfacing rule](../reference/consensus.md#grouping-and-independent-support).
+Check the health headline to tell a clean change from a panel that lost seats.
 
 Use [troubleshooting](../TROUBLESHOOTING.md) if a job is quiet or fails. What the
 project has proven live, and its limits, is indexed in the

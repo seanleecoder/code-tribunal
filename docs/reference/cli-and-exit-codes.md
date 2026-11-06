@@ -14,7 +14,7 @@ importable Python functions are not a public API.
 | `python -m ai_review.schema validate --schema NAME --input PATH` | Validate one JSON artifact | 0 | 1 for invalid input/schema; argparse uses 2 |
 | `python scripts/pipeline_trust.py PATH --template-project PROJECT --template-sha SHA` | Audit a GitLab consumer composition; repository-only, not shipped in the images | 0 | 1 for trust violations, 2 for malformed input/arguments |
 | `python -m ai_review.mock_reviewer REVIEWER STAGE` | Emit deterministic local/preflight review or critique JSON | 0 | argparse uses 2; fixture/artifact errors propagate nonzero |
-| `python scripts/check_markdown_links.py` | Check offline Markdown links, anchors, and draft-release links with pinned Lychee | 0 | 1 for link or tool failures |
+| `python scripts/check_markdown_links.py` | Check tracked Markdown links and anchors offline with pinned Lychee, excluding frozen `release/` notes | 0 | 1 for link or tool failures |
 | `scripts/check_supply_chain_pins.py` | Audit the Dockerfile digests, template image pins, constraint usage and `.pin` files | 0 | 1 when any pin contract fails |
 | `python scripts/check_workflow_pins.py` | Run zizmor's pinning audits over the GitHub Actions workflows | 0 | 1 for a pinning finding, a zizmor failure, or zizmor missing from `PATH` |
 
