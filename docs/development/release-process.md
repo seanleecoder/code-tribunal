@@ -142,16 +142,14 @@ release instead.
 
 ## Release pull-request checklist
 
+The one-time 3.0.0 cutovers are recorded in the retained
+[exact-pair acceptance](../evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance);
+upgrades from older releases follow the
+[state migration](../operations.md#state-v2-migration) and platform installation
+guides.
+
 Copy this into the release pull-request description. Each item records whether it
 applied, and the review checks the evidence it cites.
-
-The one-time state v2, GitHub reusable-workflow and GitLab direct-include cutovers
-shipped in 3.0.0. Retained [exact-pair acceptance](../evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
-records the migration rehearsals and external caller checks; the live GitHub
-fork-skip check remains a [carried coverage gap](../evidence/RUNBOOK.md#carried-coverage-gaps).
-Deployments upgrading from older releases still follow the
-[state migration](../operations.md#state-v2-migration) and platform installation
-guides. Do not infer current consumer settings from those acceptance records.
 
 - [ ] **Compatibility targets:** cite the current
   [target audit](temporary-compatibility.md#next-major-target-audit-2026-11-01).

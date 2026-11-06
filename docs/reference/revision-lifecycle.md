@@ -42,10 +42,9 @@ identifier needed to resolve or reopen its thread through GraphQL.
 
 ## Retention and migrations
 
-Active records and human dispositions are always retained; only the newest five
-automatically resolved records are kept. The total record cap and platform
-summary-comment limit bound state; there is no separate byte-limit setting.
-See [posting and state](../configuration.md#posting-and-state). Overflow is an
+Active records and human dispositions are always retained; automatically
+resolved records and total state size are bounded as described under
+[posting and state](../configuration.md#posting-and-state). Overflow is an
 operational failure that makes the `post` job exit nonzero. Inline threads and
 the summary note both carry a hash of their rendered text alone. When a release
 renders an unchanged finding differently, each surfaced bot-authored inline

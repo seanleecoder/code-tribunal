@@ -44,13 +44,11 @@ and the canonical-template contract tests.
 
 Residual risk: deployment protection settings are external state and must be
 proved per deployment. The Candidate Canary's `hostile` campaign targets a merge
-request from an **unprotected** ref with a direct include. Earlier releases
-recorded the hardened mirrored child topology; that evidence does not prove the
-new composition. The 3.0 release's retained
-[cutover acceptance](evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
+request from an **unprotected** ref with a direct include. The 3.0 release's
+retained [cutover acceptance](evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
 records the direct-include canary. Run `hostile` again when the trust boundary
 changes, as the [release checklist](development/release-process.md#release-pull-request-checklist)
-requires, and verify protection settings for each deployment. Its assertions are listed under
+requires. Its assertions are listed under
 [Candidate Canary](../CONTRIBUTING.md#candidate-canary), and the body of each
 release that ran it records the run.
 

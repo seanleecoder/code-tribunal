@@ -8,9 +8,11 @@ release — re-creating them from scratch each release wastes hours and loses th
 older-format threads that the body-refresh check depends on.
 
 Deployment observations below are dated evidence through the 3.0 acceptance on
-2026-11-01, not a fresh inspection of either service. Recheck settings, variables,
-branches and pins before each campaign; the historical resting deployments may
-still need migration even though Code Tribunal 3.0.0 has shipped.
+2026-11-01, not a fresh inspection of either service. Before each campaign, run
+`make demo-preflight` (step 0 of the
+[per-release setup checklist](#per-release-setup-checklist)) for credentials and variables, and recheck by
+hand what it does not inspect: branch protection, project settings and pins. The
+historical resting deployments may still need migration to 3.0.
 
 | Platform | Project | Role |
 |---|---|---|
@@ -33,7 +35,7 @@ and reusable workflow. When upgrading the persistent consumer to 3.0 or later,
 replace the recorded copy with a release-SHA caller, following the
 [GitHub installation guide](../getting-started/github.md).
 
-**Recorded configuration — verify it before adoption or repinning:**
+**Recorded configuration:**
 
 - **Secrets:** `OPENROUTER_API_KEY`, `CURSOR_API_KEY`,
   `AI_REVIEW_GITHUB_RESOLVE_TOKEN`.
@@ -125,7 +127,7 @@ Closing the PR is fine; deleting the comment or the branch is not.
 
 ## GitLab consumer — `seanleecoder/code-tribunal-demo`
 
-Public, project id `84667714`. Recorded configuration; reverify before use:
+Public, project id `84667714`. Recorded configuration:
 
 - A runner.
 - `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
@@ -148,7 +150,7 @@ Public, project id `84667714`. Recorded configuration; reverify before use:
   `5900e34`). N02's temporary canary branches install a direct include at the
   candidate template SHA, independently of this resting deployment. Migrate the
   persistent consumer using the [GitLab installation guide](../getting-started/gitlab.md)
-  before its first N02 adoption; complete the state v2 migration as well.
+  when upgrading it to 3.0 or later; complete the state v2 migration as well.
 
 Before a direct-include panel or lifecycle campaign, confirm the demo's **Allow
 merge request pipelines to access protected variables and runners** setting is

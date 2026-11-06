@@ -196,8 +196,9 @@ individual jobs or mix artifacts. A failed panel is not published: the
 consensus check turns red and the consensus job log prints the same health
 report.
 
-Start with the finding/critique outcomes and job logs; `out/status/` has additional
-parse/timeout diagnostics when produced. Then inspect the consensus and post artifacts. Record run
+Start with the health report, which names failed seats, then that seat's
+finding/critique outcome, job log and any `out/status/` diagnostics, then the
+consensus and post artifacts. Record run
 ID, source SHA, image digests, effective-config digest, panel status, failed and
 resolution-eligible reviewers, post status, and `post_result.warnings`. Export
 sanitized evidence before the artifacts
@@ -208,11 +209,10 @@ source beyond policy, or unnecessary model-authored content in evidence.
 
 ## Cost controls
 
-Control cost by selecting models, choosing a supported three- or four-seat
-panel, setting reviewer timeouts and finding caps, and bounding diff/files/prompt
-size. Every enabled seat runs one review and one blind critique round; critique
-cannot be disabled. See [panel selection](configuration.md#choosing-the-panel)
-for roster validation and resolution-threshold clamping. The
+Control cost by selecting models and [panel size](configuration.md#choosing-the-panel),
+setting reviewer timeouts and finding caps, and bounding diff/files/prompt size.
+Every enabled seat runs one review and one critique round; critique cannot be
+disabled. The
 product does not currently provide the proposed per-reviewer token/cost
 accounting, so provider billing remains the authoritative cost source;
 record it per run when collecting live evidence.
@@ -228,8 +228,7 @@ without an explicit mock selection, a missing CLI or credential always fails.
 These runner controls affect only review/critique
 behavior and are not part of the effective-config digest, so set them
 consistently on the review and critique jobs. Set configuration overrides where
-prepare receives them; later stages consume its resolved policy without
-reapplying environment overrides. See
+prepare receives them; see
 [stage visibility and integrity](configuration.md#stage-visibility-and-integrity).
 
 ## Image pin rotation
