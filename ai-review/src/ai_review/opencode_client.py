@@ -125,23 +125,24 @@ def _request_json(
 class _ServerLog:
     """Bounded diagnostics, with a sticky download record independent of the tail."""
 
-    def __init__(self, maxlen: int = 80, *, password: str = "") -> None:
-        self.lines: deque[str] = deque(maxlen=maxlen)
+    def __init__(self, *, password: str = "") -> None:
+        self.lines: deque[str] = deque(maxlen=80)
         self.ripgrep_fetch: str | None = None
         self.password = password
 
     def append(self, line: str) -> None:
-        line = _clean(line, self.password)
+        # Store raw lines and redact only what is reported; INFO logging makes
+        # per-line redaction far more expensive than the few lines ever shown.
         self.lines.append(line)
         if self.ripgrep_fetch is None and _RIPGREP_FETCH_PATTERN.search(line):
-            self.ripgrep_fetch = line
+            self.ripgrep_fetch = _clean(line, self.password)
 
     def tail(self, count: int) -> str:
-        return " | ".join(list(self.lines)[-count:])
+        return _clean(" | ".join(list(self.lines)[-count:]), self.password)
 
 
-def _server_log_detail(server_log: _ServerLog | None) -> str:
-    detail = server_log.tail(12) if server_log is not None else ""
+def _server_log_detail(server_log: _ServerLog) -> str:
+    detail = server_log.tail(12)
     return f"; server_log={_compact(detail, limit=4000)}" if detail else ""
 
 
@@ -287,7 +288,8 @@ def _start_server(
     root: Path,
     executable: str,
     env: dict[str, str],
-) -> tuple[subprocess.Popen[str], str, _ServerLog, tuple[threading.Thread, ...]]:
+    server_log: _ServerLog,
+) -> tuple[subprocess.Popen[str], str, tuple[threading.Thread, ...]]:
     process = subprocess.Popen(
         [executable, "serve", "--stdio", "--hostname", _HOST, "--port", "0"],
         cwd=root,
@@ -298,7 +300,6 @@ def _start_server(
         text=True,
         bufsize=1,
     )
-    server_log = _ServerLog(password=env["OPENCODE_PASSWORD"])
     startup: queue.Queue[str | OpenCodeClientError] = queue.Queue(maxsize=1)
 
     def drain_stdout() -> None:
@@ -343,13 +344,11 @@ def _start_server(
             )
             if not isinstance(info.get("version"), str) or info.get("pid") != process.pid:
                 raise OpenCodeClientError("OpenCode readiness response did not identify our server")
-            return process, base_url, server_log, threads
+            return process, base_url, threads
         raise OpenCodeClientError("opencode serve did not become ready")
-    except BaseException as exc:
+    except BaseException:
         _stop_server(process, threads)
-        raise OpenCodeClientError(
-            _clean(str(exc), env["OPENCODE_PASSWORD"]) + _server_log_detail(server_log)
-        ) from exc
+        raise
 
 
 def _stop_server(process: subprocess.Popen[str], threads: tuple[threading.Thread, ...]) -> None:
@@ -454,7 +453,7 @@ def _session_answer(
                     )
                 answer = message
             elif kind == "user":
-                if message.get("id") != input_id or not idle or answer is None:
+                if message.get("id") != input_id or answer is None:
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
@@ -523,9 +522,10 @@ def run() -> int:
     # configuration discovery. Stop it at our empty, isolated HOME, rather than
     # letting the snapshot's ancestors supply instruction files from the checkout.
     root = Path(env["HOME"]) / staging.name
+    password = env["OPENCODE_PASSWORD"]
     process: subprocess.Popen[str] | None = None
     threads: tuple[threading.Thread, ...] = ()
-    logs = _ServerLog(password=env["OPENCODE_PASSWORD"])
+    logs = _ServerLog(password=password)
     try:
         try:
             # A timeout kill can leave this PID-named destination behind.
@@ -533,8 +533,7 @@ def run() -> int:
                 shutil.rmtree(root)
             staging.rename(root)
             _initialize_git_root(root, env)
-            process, base_url, logs, threads = _start_server(root, executable, env)
-            password = env["OPENCODE_PASSWORD"]
+            process, base_url, threads = _start_server(root, executable, env, logs)
             session_id = _create_session(
                 base_url, root, password=password, model=model, effort=effort
             )
@@ -568,7 +567,7 @@ def run() -> int:
     except Exception as exc:
         _assert_no_ripgrep_fetch(logs)
         raise OpenCodeClientError(
-            _clean(str(exc), env["OPENCODE_PASSWORD"]) + _server_log_detail(logs)
+            _clean(str(exc), password) + _server_log_detail(logs)
         ) from exc
     sys.stderr.write(f"ai-review: {stage} adapter parsed final answer text\n")
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

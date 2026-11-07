@@ -162,7 +162,7 @@ RUN --mount=type=tmpfs,target=/root --mount=type=tmpfs,target=/tmp set -eu; \
     cursor-agent --help | grep -F -- '--mode <mode>'; \
     # The OpenCode adapter uses the loopback server API and a static session title to
     # prevent a separate title-inference model call. Keep the pinned server surface
-    # fail-closed if either required listen flag changes.
+    # fail-closed if any required serve flag changes.
     serve_help="$(opencode serve --help 2>&1)"; \
     printf '%s\n' "$serve_help" | grep -F -- '--stdio'; \
     printf '%s\n' "$serve_help" | grep -F -- '--hostname'; \

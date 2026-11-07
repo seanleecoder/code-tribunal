@@ -55,7 +55,7 @@ def recorded_request(*args, **kwargs):
 client._request_json = recorded_request
 original_start = client._start_server
 def recorded_start(*args, **kwargs):
-    root, _executable, env = args
+    root, _executable, env, _log = args
     if root.parent != Path(env["HOME"]):
         raise RuntimeError("working root is not beneath isolated HOME")
     if not (root / ".git").is_dir():
@@ -68,7 +68,7 @@ def recorded_start(*args, **kwargs):
     agents = client._request_json(result[1], "GET", "api/agent",
                                  password=env["OPENCODE_PASSWORD"], timeout=30)
     if "tribunal-injected-agent" in json.dumps(agents):
-        client._stop_server(result[0], result[3])
+        client._stop_server(result[0], result[2])
         raise RuntimeError("ancestor agent configuration loaded")
     return result
 client._start_server = recorded_start

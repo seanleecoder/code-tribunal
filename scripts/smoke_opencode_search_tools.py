@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NoReturn
 
 # The image layout. These are module constants rather than environment knobs on
 # purpose: the probe must measure the shipped paths, and there is no reason for a
@@ -49,7 +49,7 @@ def shipped_client() -> ModuleType:
     return opencode_client
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"ERROR: {message}")
 
 
@@ -163,9 +163,15 @@ def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
 
 def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     client = shipped_client()
-    process, base_url, logs, threads = client._start_server(root, "/usr/local/bin/opencode", env)
+    password = env["OPENCODE_PASSWORD"]
+    logs = client._ServerLog(password=password)
     try:
-        password = env["OPENCODE_PASSWORD"]
+        process, base_url, threads = client._start_server(
+            root, "/usr/local/bin/opencode", env, logs
+        )
+    except client.OpenCodeClientError as exc:
+        fail(f"{exc}{client._server_log_detail(logs)}")
+    try:
         # In v2.2.5 agent.list awaits location plugin activation; agent.get
         # reads immediately and can race the config plugin on a cold server.
         client._request_json(base_url, "GET", "api/agent", password=password, timeout=30.0)

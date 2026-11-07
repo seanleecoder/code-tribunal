@@ -380,8 +380,9 @@ def test_stdio_startup_and_log_drain(tmp_path: Path) -> None:
         mock.patch.object(client.subprocess, "Popen", return_value=process) as popen,
         mock.patch.object(client, "_request_json", return_value={"version": "2.2.5", "pid": 42}),
     ):
-        started, url, logs, threads = client._start_server(
-            tmp_path, "/pinned/opencode", {"OPENCODE_PASSWORD": "private"}
+        logs = client._ServerLog()
+        started, url, threads = client._start_server(
+            tmp_path, "/pinned/opencode", {"OPENCODE_PASSWORD": "private"}, logs
         )
         client._stop_server(started, threads)
     assert url == "http://127.0.0.1:41234/"
@@ -402,12 +403,13 @@ def test_stdio_startup_and_log_drain(tmp_path: Path) -> None:
 def test_startup_failure_drains_diagnostics_and_cleans_up(tmp_path: Path) -> None:
     process = fake_process("", "failed to bind port\n")
     process.poll.return_value = 1
+    logs = client._ServerLog()
     with (
         mock.patch.object(client.subprocess, "Popen", return_value=process),
-        pytest.raises(client.OpenCodeClientError, match="exited before readiness") as caught,
+        pytest.raises(client.OpenCodeClientError, match="exited before readiness"),
     ):
-        client._start_server(tmp_path, "/pinned", {"OPENCODE_PASSWORD": "private"})
-    assert "failed to bind port" in str(caught.value)
+        client._start_server(tmp_path, "/pinned", {"OPENCODE_PASSWORD": "private"}, logs)
+    assert "failed to bind port" in client._server_log_detail(logs)
     assert process.stdin.closed
 
 
@@ -450,12 +452,12 @@ def test_run_binds_prompt_and_keeps_root_under_isolated_home(tmp_path: Path, sta
     roots = []
     process = fake_process("")
 
-    def start(root: Path, _executable: str, _env: dict[str, str]) -> tuple[object, ...]:
+    def start(root: Path, _executable: str, _env: dict[str, str], _log: object) -> tuple:
         roots.append(root)
         assert root.parent.name == "opencode-home"
         assert not (root / "stale.py").exists()
         assert (root / "reviewed.py").exists() == (stage == "review")
-        return process, "http://127.0.0.1:1/", client._ServerLog(), ()
+        return process, "http://127.0.0.1:1/", ()
 
     responses = [
         {"data": {"id": "ses_test"}},
@@ -518,7 +520,9 @@ def test_readiness_timeout_closes_stdin_and_joins_drainers(tmp_path: Path) -> No
         mock.patch.object(client, "_SERVER_START_TIMEOUT_SECONDS", 0.02),
         pytest.raises(client.OpenCodeClientError, match="did not become ready"),
     ):
-        client._start_server(tmp_path, "/pinned", {"OPENCODE_PASSWORD": "private"})
+        client._start_server(
+            tmp_path, "/pinned", {"OPENCODE_PASSWORD": "private"}, client._ServerLog()
+        )
     assert process.stdin.closed
     assert process.stdout.closed
     assert process.stderr.closed
@@ -538,15 +542,16 @@ def test_api_failure_reports_post_shutdown_logs_and_cleans_root(tmp_path: Path) 
         "AI_REVIEW_INPUT_DIR": str(tmp_path / "inputs"),
         "AI_REVIEW_OUTPUT_DIR": str(tmp_path / "out"),
     }
-    logs = client._ServerLog()
+    logs: list[object] = []
     roots = []
 
-    def start(root: Path, _executable: str, _env: dict[str, str]) -> tuple[object, ...]:
+    def start(root: Path, _executable: str, _env: dict[str, str], log: object) -> tuple:
         roots.append(root)
-        return fake_process(""), "http://127.0.0.1:1/", logs, ()
+        logs.append(log)
+        return fake_process(""), "http://127.0.0.1:1/", ()
 
     def stop(*_args: object) -> None:
-        logs.append("level=ERROR ref=error-test cause=provider-failure")
+        logs[0].append("level=ERROR ref=error-test cause=provider-failure")
 
     with (
         mock.patch.dict(os.environ, env, clear=True),

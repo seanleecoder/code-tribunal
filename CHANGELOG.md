@@ -15,13 +15,11 @@ versioning.
   schema enforcement; public finding/critique schemas and model/effort settings
   remain unchanged. The workspace is beneath isolated HOME, with explicit
   external-directory denial, a fresh Git boundary and disabled ancestor project
-  configuration discovery.
-  Offline image probes now cover both stages and the v2 isolation/failure paths.
+  configuration discovery. Malformed-answer diagnostics keep a bounded preview,
+  redacted before clipping. Offline image probes now cover both stages and the v2 isolation/failure paths.
 
 ### Fixed
 
-- Restore a bounded, redacted preview of malformed OpenCode answers in failure
-  diagnostics so operators can inspect JSON extraction failures.
 - Omit `.gitignore` files from prepared snapshots at every depth so OpenCode's
   isolated Git worktree cannot silently hide reviewed files from search. Changes
   to those files remain visible in the review diff.

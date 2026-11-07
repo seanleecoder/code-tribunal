@@ -43,7 +43,7 @@ def test_last_native_wildcard_rule_wins(rules: list, permission: str, expected: 
 def test_permission_probe_refuses_session_that_only_accepted_but_dropped_rules() -> None:
     client = mock.MagicMock()
     env = {"OPENCODE_PASSWORD": "private"}
-    client._start_server.return_value = (mock.Mock(), "http://127.0.0.1:1/", mock.Mock(), ())
+    client._start_server.return_value = (mock.Mock(), "http://127.0.0.1:1/", ())
     client._create_session.return_value = "ses_test"
     client._response_data.side_effect = [
         {
