@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -12,12 +11,11 @@ from unittest import mock
 import pytest
 from ai_review import opencode_client
 
+from tests.support.repository_script import load_repository_script
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "smoke_opencode_batch_output.py"
-spec = importlib.util.spec_from_file_location("smoke_opencode_batch_output", SCRIPT)
-assert spec is not None and spec.loader is not None
-smoke = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(smoke)
+smoke = load_repository_script("smoke_opencode_batch_output", SCRIPT)
 
 
 def test_rg_audit_wrapper_executes_and_restores_binary(tmp_path: Path, monkeypatch) -> None:

@@ -232,7 +232,7 @@ The trusted orchestrator knows the expected roster. A missing result is a transp
 
 **Delete/simplify.** Keep four explicit adapters but implement their argv, environment, and configuration construction in Python using argument arrays and a JSON serializer. Share only the lifecycle/snapshot/environment code that actually repeats. Use fixed trusted binary locations for the supported container runtime; local tests inject dependencies outside the production path. Do not add a plugin manager, adapter inheritance framework, or dynamically loaded provider registry.
 
-**Important exception.** Keep the OpenCode server client until the pinned CLI demonstrably supplies the required structured-output behavior another way. The source explicitly explains why `run --format json` is not a schema-enforcement replacement. Preserve the explicit `StructuredOutput` and `external_directory` permissions and current project-configuration stripping.
+**Important exception.** Keep the OpenCode server client: the pinned v2 session API has no generation-time JSON-schema mode, so the client admits only the completed assistant's final answer text to the shared extractor. Preserve the explicit `external_directory` deny and current project-configuration stripping.
 
 **Gain.** Deletes cross-language quoting and environment protocols, removes injection hazards caused by interpolating model strings into JSON, and centralizes actual process ownership.
 

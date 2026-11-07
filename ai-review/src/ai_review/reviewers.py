@@ -127,6 +127,7 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 ("XDG_CACHE_HOME", "opencode-cache-home"),
                 ("XDG_STATE_HOME", "opencode-state-home"),
                 ("OPENCODE_CONFIG_DIR", "opencode-config-dir"),
+                ("TMPDIR", "opencode-tmp"),
             ),
             environment=(
                 # which("rg") must find the image's pinned binary before any

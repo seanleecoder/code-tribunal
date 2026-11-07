@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
+from tests.support.repository_script import load_repository_script
+
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "smoke_opencode_search_tools.py"
-spec = importlib.util.spec_from_file_location("smoke_opencode_search_tools", SCRIPT)
-assert spec is not None and spec.loader is not None
-smoke = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(smoke)
+smoke = load_repository_script("smoke_opencode_search_tools", SCRIPT)
 
 
 def rule(action: str, effect: str, resource: str = "*") -> dict[str, str]:
@@ -46,6 +44,7 @@ def test_permission_probe_refuses_session_that_only_accepted_but_dropped_rules()
     client = mock.MagicMock()
     env = {"OPENCODE_PASSWORD": "private"}
     client._start_server.return_value = (mock.Mock(), "http://127.0.0.1:1/", mock.Mock(), ())
+    client._create_session.return_value = "ses_test"
     client._response_data.side_effect = [
         {
             "permissions": [
@@ -56,7 +55,6 @@ def test_permission_probe_refuses_session_that_only_accepted_but_dropped_rules()
                 rule("external_directory", "deny"),
             ]
         },
-        {"id": "ses_test"},
         {"permissions": []},
     ]
     with (

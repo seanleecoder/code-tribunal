@@ -23,7 +23,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urljoin, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 from .adapter_output import extract_json_text
@@ -216,17 +216,16 @@ def _opencode_config(model: str, effort: str | None) -> dict[str, Any]:
 
 
 def _server_env(tmp_dir: Path, *, api_key: str, config: dict[str, Any]) -> dict[str, str]:
+    # The registry's state directories include a private TMPDIR, so ambient
+    # runtime state never leaks into this execution.
     env = state_environment(_DEFINITION, tmp_dir, {})
-    # Ignore even ambient TMPDIR: all runtime state is private to this execution.
     env.update(
         {
-            "TMPDIR": str(tmp_dir / "opencode-tmp"),
             "OPENCODE_CONFIG_CONTENT": json.dumps(config, ensure_ascii=False),
             "OPENCODE_PASSWORD": secrets.token_urlsafe(32),
             "OPENROUTER_API_KEY": api_key,
         }
     )
-    Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return env
 
 
@@ -300,20 +299,23 @@ def _start_server(
         bufsize=1,
     )
     server_log = _ServerLog(password=env["OPENCODE_PASSWORD"])
-    startup: queue.Queue[str] = queue.Queue(maxsize=1)
+    startup: queue.Queue[str | OpenCodeClientError] = queue.Queue(maxsize=1)
 
     def drain_stdout() -> None:
         assert process.stdout is not None
+        announced = False
         for line in process.stdout:
             # Drain all output, even after startup. Never let a full pipe block
             # the server, and never confuse stderr diagnostics with its address.
+            if announced:
+                continue
             try:
-                address = _startup_url(line)
-            except OpenCodeClientError:
-                address = "invalid"
+                address: str | OpenCodeClientError | None = _startup_url(line)
+            except OpenCodeClientError as exc:
+                address = exc
             if address is not None:
-                with contextlib.suppress(queue.Full):
-                    startup.put_nowait(line)
+                startup.put_nowait(address)
+                announced = True
 
     def drain_stderr() -> None:
         assert process.stderr is not None
@@ -321,11 +323,7 @@ def _start_server(
             server_log.append(line.rstrip())
 
     threads = tuple(
-        threading.Thread(target=target, daemon=True)
-        for target in (
-            drain_stdout,
-            drain_stderr,
-        )
+        threading.Thread(target=target, daemon=True) for target in (drain_stdout, drain_stderr)
     )
     for thread in threads:
         thread.start()
@@ -335,19 +333,17 @@ def _start_server(
             if process.poll() is not None:
                 raise OpenCodeClientError("opencode serve exited before readiness")
             try:
-                line = startup.get(timeout=0.05)
+                base_url = startup.get(timeout=0.05)
             except queue.Empty:
                 continue
-            base_url = _startup_url(line)
-            if base_url is not None:
-                info = _request_json(
-                    base_url, "GET", "api/info", password=env["OPENCODE_PASSWORD"], timeout=5.0
-                )
-                if not isinstance(info.get("version"), str) or info.get("pid") != process.pid:
-                    raise OpenCodeClientError(
-                        "OpenCode readiness response did not identify our server"
-                    )
-                return process, base_url, server_log, threads
+            if isinstance(base_url, OpenCodeClientError):
+                raise base_url
+            info = _request_json(
+                base_url, "GET", "api/info", password=env["OPENCODE_PASSWORD"], timeout=5.0
+            )
+            if not isinstance(info.get("version"), str) or info.get("pid") != process.pid:
+                raise OpenCodeClientError("OpenCode readiness response did not identify our server")
+            return process, base_url, server_log, threads
         raise OpenCodeClientError("opencode serve did not become ready")
     except BaseException as exc:
         _stop_server(process, threads)
@@ -419,7 +415,7 @@ def _session_answer(
 ) -> dict[str, Any] | list[Any]:
     # Descending pagination finds the newest final answer, then proves it belongs
     # to our admitted prompt. Never accept an earlier answer after a failed run.
-    prefix = f"api/session/{quote(session_id, safe='')}"
+    prefix = f"api/session/{session_id}"
     cursor: str | None = None
     seen: set[str] = set()
     answer: dict[str, Any] | None = None
@@ -466,6 +462,34 @@ def _session_answer(
         seen.add(cursor)
 
 
+def _create_session(
+    base_url: str, root: Path, *, password: str, model: str, effort: str | None
+) -> str:
+    model_ref = {"providerID": "openrouter", "id": model}
+    if effort:
+        model_ref["variant"] = effort
+    session = _response_data(
+        _request_json(
+            base_url,
+            "POST",
+            "api/session",
+            password=password,
+            timeout=30.0,
+            body={
+                "title": _SESSION_TITLE,
+                "agent": "ai-reviewer",
+                "model": model_ref,
+                "location": {"directory": str(root)},
+                "permissions": _CONFIG_PERMISSIONS,
+            },
+        )
+    )
+    session_id = session.get("id")
+    if not isinstance(session_id, str) or not re.fullmatch(r"ses_[A-Za-z0-9_-]+", session_id):
+        raise OpenCodeClientError("OpenCode session creation returned no valid session id")
+    return session_id
+
+
 def run() -> int:
     model = os.environ.get("AI_REVIEW_MODEL", "")
     if not model:
@@ -508,36 +532,14 @@ def run() -> int:
             _initialize_git_root(root, env)
             process, base_url, logs, threads = _start_server(root, executable, env)
             password = env["OPENCODE_PASSWORD"]
-            model_ref = {"providerID": "openrouter", "id": model}
-            if effort:
-                model_ref["variant"] = effort
-            session = _response_data(
-                _request_json(
-                    base_url,
-                    "POST",
-                    "api/session",
-                    password=password,
-                    timeout=30.0,
-                    body={
-                        "title": _SESSION_TITLE,
-                        "agent": "ai-reviewer",
-                        "model": model_ref,
-                        "location": {"directory": str(root)},
-                        "permissions": _CONFIG_PERMISSIONS,
-                    },
-                )
+            session_id = _create_session(
+                base_url, root, password=password, model=model, effort=effort
             )
-            session_id = session.get("id")
-            if not isinstance(session_id, str) or not re.fullmatch(
-                r"ses_[A-Za-z0-9_-]+", session_id
-            ):
-                raise OpenCodeClientError("OpenCode session creation returned no valid session id")
-            prefix = f"api/session/{session_id}"
             admitted = _response_data(
                 _request_json(
                     base_url,
                     "POST",
-                    f"{prefix}/prompt",
+                    f"api/session/{session_id}/prompt",
                     password=password,
                     timeout=30.0,
                     body={"text": prompt},

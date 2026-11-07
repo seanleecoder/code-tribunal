@@ -186,26 +186,15 @@ def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
         for permission in ("read", "glob", "grep"):
             if effective_wildcard_effect(rules, permission) != "allow":
                 fail(f"the real agent did not allow {permission}")
-        session = client._response_data(
-            client._request_json(
-                base_url,
-                "POST",
-                "api/session",
-                password=password,
-                timeout=30.0,
-                body={
-                    "title": "ai-review-search-smoke",
-                    "agent": "ai-reviewer",
-                    "location": {"directory": str(root)},
-                    "permissions": client._CONFIG_PERMISSIONS,
-                },
-            )
+        # The client's own session request, so the probe sees any drift in it.
+        session_id = client._create_session(
+            base_url, root, password=password, model=PROBE_MODEL, effort=None
         )
         stored = client._response_data(
             client._request_json(
                 base_url,
                 "GET",
-                f"api/session/{session['id']}",
+                f"api/session/{session_id}",
                 password=password,
                 timeout=30.0,
             )

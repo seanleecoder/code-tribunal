@@ -65,7 +65,6 @@ def recorded_start(*args, **kwargs):
         raise RuntimeError("critique root contains repository files")
     result = original_start(*args, **kwargs)
     print("OPENCODE_V2_EVIDENCE " + json.dumps({"startup": {"url": result[1]}}), file=sys.stderr)
-    env = args[2]
     agents = client._request_json(result[1], "GET", "api/agent",
                                  password=env["OPENCODE_PASSWORD"], timeout=30)
     if "tribunal-injected-agent" in json.dumps(agents):
@@ -163,7 +162,7 @@ class _StubProvider:
         text: str | None = None,
         mode: str = "text",
     ) -> None:
-        self.batch, self.steps, self.mode = batch, steps or [], mode
+        self.steps, self.mode = steps or [], mode
         self.text = json.dumps(batch) if text is None else text
         self.requests: list[dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -263,8 +262,9 @@ def _client_config(effort: str | None = None) -> str:
 
 
 def _run_client(
-    config: str, label: str, stage: str = "review", effort: str | None = None
+    provider_url: str, label: str, stage: str = "review", effort: str | None = None
 ) -> tuple[int, str, str]:
+    config = patch_provider_base_url(_client_config(effort), provider_url)
     work = SMOKE_DIR / f"client-{label}"
     snapshot = work / "inputs" / "repo_snapshot"
     snapshot.mkdir(parents=True)
@@ -349,15 +349,12 @@ def _prove_batch(stage: str, *, effort: str | None = None) -> None:
     )
     with _StubProvider(batch, steps=steps) as stub:
         code, stdout, stderr = _run_client(
-            patch_provider_base_url(_client_config(effort), stub.base_url),
-            f"{stage}-{effort or 'default'}",
-            stage,
-            effort,
+            stub.base_url, f"{stage}-{effort or 'default'}", stage, effort
         )
     _assert_provider_requests(stub.requests)
     if code or json.loads(stdout) != batch:
         fail(f"{stage} did not return the exact expected batch: {stderr}")
-    if "parsed final answer text" not in stderr or "used structured_output" in stderr:
+    if "parsed final answer text" not in stderr:
         fail("the client did not report final-answer text honestly")
     from ai_review.schema import validate_instance  # noqa: PLC0415
 
@@ -388,9 +385,7 @@ def _prove_failures() -> None:
         ("provider", "", "provider-error"),
     ]:
         with _StubProvider(probe_batch("review"), text=text, mode=mode) as stub:
-            code, stdout, stderr = _run_client(
-                patch_provider_base_url(_client_config(), stub.base_url), label
-            )
+            code, stdout, stderr = _run_client(stub.base_url, label)
         if not stub.requests or code == 0 or stdout.strip():
             fail(f"invalid {label} case was accepted or never reached the provider: {stderr}")
 
@@ -406,9 +401,7 @@ def _prove_external_and_mutation_denial() -> None:
         if tool == "edit":
             arguments.update({"oldString": "PREFLIGHT_", "newString": "changed"})
         with _StubProvider(probe_batch("review"), steps=[(tool, arguments)]) as stub:
-            code, _stdout, stderr = _run_client(
-                patch_provider_base_url(_client_config(), stub.base_url), label
-            )
+            code, _stdout, stderr = _run_client(stub.base_url, label)
         _assert_provider_requests(stub.requests)
         results = "\n".join(tool_result_text(request) for request in stub.requests[1:])
         if EXTERNAL_MARKER in results or outside.read_text() != EXTERNAL_MARKER:
@@ -468,9 +461,7 @@ def _prove_rg_absent_is_a_client_failure() -> None:
         with _StubProvider(
             probe_batch("review"), steps=[("grep", {"pattern": GREP_MARKER})]
         ) as stub:
-            code, stdout, stderr = _run_client(
-                patch_provider_base_url(_client_config(), stub.base_url), "rg-absent"
-            )
+            code, stdout, stderr = _run_client(stub.base_url, "rg-absent")
         if (
             not stub.requests
             or code == 0

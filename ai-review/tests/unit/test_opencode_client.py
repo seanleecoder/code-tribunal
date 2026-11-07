@@ -312,7 +312,6 @@ def test_environment_drops_all_ambient_runtime_controls(tmp_path: Path) -> None:
         env = client._server_env(tmp_path, api_key="selected-key", config={})
     assert env["OPENCODE_PASSWORD"] != "host-secret"
     assert env["TMPDIR"] == str(tmp_path / "opencode-tmp")
-    assert Path(env["TMPDIR"]).is_dir()
     assert env["OPENCODE_CONFIG_PROJECT_DISABLE"] == "1"
     assert env["OPENCODE_DISABLE_FFF"] == "1"
     assert env["OPENCODE_PRINT_LOGS"] == "1"
@@ -455,7 +454,6 @@ def test_run_binds_prompt_and_keeps_root_under_isolated_home(tmp_path: Path, sta
     assert request.call_args_list[0].kwargs["body"]["location"]["directory"] == str(roots[0])
     assert request.call_args_list[1].kwargs["body"] == {"text": "trusted stage prompt"}
     assert "parsed final answer text" in errors.getvalue()
-    assert "structured_output" not in errors.getvalue()
     assert json.loads(output.getvalue()) == {"findings" if stage == "review" else "critiques": []}
 
 

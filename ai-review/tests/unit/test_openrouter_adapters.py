@@ -232,15 +232,12 @@ printf '%s\n' "$result"
             'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
             'case "$args" in *critique_batch.schema.json*) payload=\'{"critiques":[]}\' ;; esac\n'
-            'trace_dir="${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}"\n'
+            'trace_dir="${CODEX_HOME:-}"\n'
             'if [ -n "$trace_dir" ]; then\n'
             '  mkdir -p "$trace_dir"\n'
             '  printf \'%s\\n\' "$0 $args" > "$trace_dir/cli.args"\n'
             '  env | sort > "$trace_dir/cli.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
-            '  if [ -n "${OPENCODE_CONFIG_CONTENT:-}" ]; then\n'
-            '    printf \'%s\' "$OPENCODE_CONFIG_CONTENT" > "$trace_dir/opencode_config.json"\n'
-            "  fi\n"
             "fi\n"
             "out=''\n"
             "cd_dir=.\n"
@@ -292,10 +289,6 @@ printf '%s\n' "$result"
                 script = script.replace(f"printf '{empty}'", f"cat '{fixture}'")
                 script = script.replace(f"payload='{empty}'", f"payload=$(cat '{fixture}')")
                 script = script.replace(f"result='{empty}'", f"result=$(cat '{fixture}')")
-                script = script.replace(
-                    f"structured = {{'{stage_field}': []}}",
-                    f"structured = json.loads(Path({str(fixture)!r}).read_text())",
-                )
                 script = script.replace(empty, json.dumps(payload, separators=(",", ":")))
                 if cli_name == "opencode":
                     script = script.replace(
