@@ -18,6 +18,12 @@ versioning.
   configuration discovery.
   Offline image probes now cover both stages and the v2 isolation/failure paths.
 
+### Fixed
+
+- Omit `.gitignore` files from prepared snapshots at every depth so OpenCode's
+  isolated Git worktree cannot silently hide reviewed files from search. Changes
+  to those files remain visible in the review diff.
+
 ## [3.0.0] - 2026-11-01
 
 ### Upgrade

@@ -933,6 +933,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
         agent_files = (
             "AGENTS.md",
             "CLAUDE.md",
+            ".gitignore",
             ".cursorignore",
             ".cursorrules",
             "opencode.json",

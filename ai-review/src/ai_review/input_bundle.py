@@ -57,6 +57,8 @@ _REVIEWER_AGENT_FILE_NAMES = frozenset(
         # Read by more than one reviewer CLI.
         "AGENTS.md",
         "CLAUDE.md",
+        # Search must cover the snapshot even inside OpenCode's isolated Git root.
+        ".gitignore",
         # Claude
         ".claude",
         # Codex

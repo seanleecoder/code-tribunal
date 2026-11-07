@@ -267,8 +267,17 @@ def _run_client(
     config = patch_provider_base_url(_client_config(effort), provider_url)
     work = SMOKE_DIR / f"client-{label}"
     snapshot = work / "inputs" / "repo_snapshot"
-    snapshot.mkdir(parents=True)
-    (snapshot / "example.py").write_text(f"{GREP_MARKER} = 1\n")
+    source = work / "source"
+    (source / "nested").mkdir(parents=True)
+    (source / "example.py").write_text(f"{GREP_MARKER} = 1\n")
+    (source / "nested" / "ignored.py").write_text(f"{GREP_MARKER} = 2\n")
+    # Exercise trusted prepare too: both rules would hide reviewed files after
+    # the client initializes its Git boundary if copied into the snapshot.
+    (source / ".gitignore").write_text("*\n")
+    (source / "nested" / ".gitignore").write_text("*\n")
+    from ai_review.input_bundle import copy_repo_snapshot  # noqa: PLC0415
+
+    copy_repo_snapshot(source, snapshot)
     # Mimic CI: the client's temporary snapshot lives below another Git worktree.
     subprocess.run(
         ["/usr/bin/git", "init", "--quiet", "--template=", str(work)],
@@ -370,6 +379,8 @@ def _prove_batch(stage: str, *, effort: str | None = None) -> None:
                 fail(f"in-root tool returned no file: {result}")
         if GREP_MARKER not in tool_result_text(stub.requests[1]):
             fail("grep returned no in-root match")
+        if "nested/ignored.py" not in tool_result_text(stub.requests[1]):
+            fail("grep missed the nested file covered by repository ignore rules")
     # Native OpenRouter consumes settings.reasoning.effort. This must
     # be measured at the provider boundary, not merely asserted on config.
     if effort and stub.requests[0].get("reasoning", {}).get("effort") != effort:

@@ -121,9 +121,11 @@ The OpenCode reviewer may read, glob and grep inside its temporary review root.
 The client explicitly denies `external_directory` (allowed by default in v2),
 mutation and other tools. Critique gets no repository content. Each workspace
 has fresh Git metadata with no history, remotes or hooks, preventing v2 from
-treating the enclosing CI checkout as an internal worktree. The working root sits
-beneath the isolated HOME so ancestor instruction discovery cannot reach the
-checkout, and project configuration discovery is disabled. Cache, state and
+treating the enclosing CI checkout as an internal worktree. Trusted prepare
+omits `.gitignore` files at every depth so this Git boundary cannot activate
+repository-authored search exclusions. The working root sits beneath the isolated
+HOME so ancestor instruction discovery cannot reach the checkout, and project
+configuration discovery is disabled. Cache, state and
 temporary directories are isolated, model fetching and file watching are off,
 and search uses the pinned ripgrep on the fixed image PATH. A runtime ripgrep
 download fails the seat. These are trusted runtime settings, not operator keys;
