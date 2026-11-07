@@ -1,4 +1,4 @@
-"""V2 transport behavior. HTTP fakes are provisional until the real image probe runs."""
+"""V2 transport behavior, including responses captured from the pinned image."""
 
 from __future__ import annotations
 
@@ -33,6 +33,42 @@ def page(*messages: object, cursor: str | None = None) -> dict[str, object]:
 
 IDLE = {"id": "msg_idle", "type": "idle", "outcome": "succeeded"}
 USER = {"id": "msg_input", "type": "user"}
+
+
+@pytest.mark.parametrize(
+    "name,stage,accepted",
+    [
+        ("review-success", "review", True),
+        ("critique-success", "critique", True),
+        ("review-malformed", "review", False),
+        ("review-ambiguous", "review", False),
+        ("review-empty", "review", False),
+        ("review-reasoning-only", "review", False),
+        ("review-provider-error", "review", False),
+    ],
+)
+def test_captured_v2_image_message_pages(name: str, stage: str, accepted: bool) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "opencode" / f"{name}.json"
+    captured = json.loads(fixture.read_text())
+    with mock.patch.object(client, "_request_json", return_value=captured["page"]):
+        if accepted:
+            result = client._session_answer(
+                "http://127.0.0.1:1/",
+                "captured",
+                captured["prompt_id"],
+                password="private",
+                stage=stage,
+            )
+            assert result["findings" if stage == "review" else "critiques"]
+        else:
+            with pytest.raises(client.OpenCodeClientError):
+                client._session_answer(
+                    "http://127.0.0.1:1/",
+                    "captured",
+                    captured["prompt_id"],
+                    password="private",
+                    stage=stage,
+                )
 
 
 @pytest.mark.parametrize(
