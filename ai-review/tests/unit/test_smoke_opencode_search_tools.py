@@ -65,6 +65,9 @@ def test_permission_probe_refuses_session_that_only_accepted_but_dropped_rules()
     ):
         smoke._prove_effective_permissions(env, Path("/root"))
     client._stop_server.assert_called_once()
+    requests = client._request_json.call_args_list
+    assert requests[0].args[1:] == ("GET", "api/agent")
+    assert requests[1].args[1:] == ("GET", "api/agent/ai-reviewer")
 
 
 def test_lost_pinned_binary_is_not_a_decoy_success(tmp_path: Path) -> None:

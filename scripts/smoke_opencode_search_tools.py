@@ -166,6 +166,9 @@ def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     process, base_url, logs, threads = client._start_server(root, "/usr/local/bin/opencode", env)
     try:
         password = env["OPENCODE_PASSWORD"]
+        # In v2.2.5 agent.list awaits location plugin activation; agent.get
+        # reads immediately and can race the config plugin on a cold server.
+        client._request_json(base_url, "GET", "api/agent", password=password, timeout=30.0)
         agent = client._response_data(
             client._request_json(
                 base_url,
