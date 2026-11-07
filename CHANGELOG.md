@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-07
+
 ### Changed
 
 - Migrate the OpenCode seat from `opencode-ai@1.19.5` to `@opencode/cli@2.2.6`.
