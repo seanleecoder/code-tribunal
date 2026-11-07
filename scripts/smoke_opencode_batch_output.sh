@@ -8,7 +8,7 @@ fi
 image="$1"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-driver="$repo_root/scripts/smoke_opencode_structured_output.py"
+driver="$repo_root/scripts/smoke_opencode_batch_output.py"
 smoke_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$smoke_dir" 2>/dev/null || true
@@ -26,11 +26,11 @@ mkdir -p "$smoke_dir/home"
 # --network none is load-bearing twice over: the stub provider is on loopback, which
 # survives `none`, so a regression that reaches a real endpoint fails here instead of
 # spending a token; and a reintroduced review-time ripgrep download cannot succeed.
-timeout 420 docker run --rm \
+timeout 1800 docker run --rm \
   --network none \
   --mount "type=bind,src=$smoke_dir,dst=/smoke" \
-  --mount "type=bind,src=$driver,dst=/probe/smoke_opencode_structured_output.py,readonly" \
+  --mount "type=bind,src=$driver,dst=/probe/smoke_opencode_batch_output.py,readonly" \
   --env HOME=/smoke/home \
   --env PATH=/usr/local/bin:/usr/bin:/bin \
   "$image" \
-  python3 /probe/smoke_opencode_structured_output.py
+  python3 /probe/smoke_opencode_batch_output.py

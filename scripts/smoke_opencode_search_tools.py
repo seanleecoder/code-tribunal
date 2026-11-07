@@ -1,38 +1,8 @@
 #!/usr/bin/env python3
-"""Preflight proof of the pinned OpenCode search-tool reach.
+"""Offline proof of pinned binaries and v2 effective/session permissions.
 
-Runs inside the reviewer image via scripts/smoke_opencode_search_tools.sh, which
-denies egress so a reintroduced review-time ripgrep download cannot succeed.
-
-Proves, against the real pinned binaries:
-
-1. The pinned `rg` resolves to `/usr/local/bin/rg` on exactly the fixed trusted
-   PATH the client gives the server (`ai_review.opencode_client`), hashes to
-   `ripgrep.pin`'s `binary_sha256`, and reports the pinned version — even when an
-   earlier `rg` sits first on the ambient PATH. A decoy negative control shows the
-   decoy WOULD win on the ambient PATH, demonstrating why the fixed PATH matters.
-
-2. The client launches the pinned `/usr/local/bin/opencode` even when a decoy sits
-   earlier on the ambient PATH, where an ambient-first lookup would substitute a
-   shadowing binary for the pinned one.
-
-3. The client's own generated config resolves `external_directory` to `deny` for
-   an external absolute path, while `read`, `glob`, and `grep` stay `allow` inside
-   the review root. The config and the root come from the client's own functions
-   rather than being restated here, so a config that drifts from the client is a
-   failure. Resolution is read from the pinned
-   `opencode --pure debug agent ai-reviewer`, i.e. from OpenCode's own permission
-   resolver.
-
-4. The real pinned `opencode` server accepts *and retains* the client's session-create
-   permission rules, including the `external_directory` deny.
-
-Tool-layer enforcement is not observable provider-free through the pinned server's
-API; see `_prove_session_permission_rules` for what was tried and why it does not
-work. Live `grep` usability — a real tool call with a non-empty result — is proven by
-the sibling probe `smoke_opencode_structured_output.py`, which scripts a loopback stub
-provider to force the call. What still needs a real provider and stays the rollout
-canary (SPEC-51) is that a real model produces a batch the runner accepts.
+Actual tool execution, external-path denial and the no-rg failure control live
+in smoke_opencode_batch_output.py, against the real server and a stub provider.
 """
 
 from __future__ import annotations
@@ -80,8 +50,7 @@ def shipped_client() -> ModuleType:
 
 
 def fail(message: str) -> None:
-    print(f"ERROR: {message}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(f"ERROR: {message}")
 
 
 def _read_pin() -> dict[str, str]:
@@ -100,28 +69,19 @@ def _read_pin() -> dict[str, str]:
     return pin
 
 
-def effective_wildcard_action(rules: list[Any], permission: str) -> str | None:
-    """Resolve one permission the way OpenCode's own resolver does.
-
-    `opencode debug agent` prints an ordered rule list in which later rules win, so
-    the effective action for a path nothing specific matches is the LAST rule for
-    that permission with the `*` pattern. Reading the first match, or any
-    external_directory rule regardless of pattern, would both misreport: OpenCode
-    appends its own narrow allows (its tool-output directory, for instance) after
-    the config's rules, and those must not be mistaken for the wildcard verdict.
-
-    Returns None when the permission carries no wildcard rule at all, which is a
-    failure rather than a pass — an absent rule is how the `ask` default returned.
-    """
-    action: str | None = None
+def effective_wildcard_effect(rules: list[Any], permission: str) -> str | None:
+    """Read the last matching native v2 wildcard rule; narrow exceptions differ."""
+    effect: str | None = None
     for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        if rule.get("permission") == permission and rule.get("pattern") == "*":
-            resolved = rule.get("action")
+        if (
+            isinstance(rule, dict)
+            and rule.get("action") in ("*", permission)
+            and rule.get("resource") == "*"
+        ):
+            resolved = rule.get("effect")
             if isinstance(resolved, str):
-                action = resolved
-    return action
+                effect = resolved
+    return effect
 
 
 def _prove_pinned_rg(pin: dict[str, str], env: dict[str, str]) -> None:
@@ -146,8 +106,7 @@ def _prove_pinned_rg(pin: dict[str, str], env: dict[str, str]) -> None:
     digest = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
     if digest != pin["binary_sha256"]:
         fail(
-            f"{resolved} hashes to {digest}, not ripgrep.pin's binary_sha256 "
-            f"{pin['binary_sha256']}"
+            f"{resolved} hashes to {digest}, not ripgrep.pin's binary_sha256 {pin['binary_sha256']}"
         )
     version_line = subprocess.run(
         [resolved, "--version"], check=True, capture_output=True, text=True
@@ -203,116 +162,70 @@ def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
 
 
 def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
-    """Read the effective permissions out of OpenCode's own resolver.
-
-    `external_directory` is a permission key of its own, so the config's
-    `"*": "deny"` tool wildcard does not cover it and OpenCode's default is
-    `{"*": "ask"}` — in a headless reviewer an approval nobody can answer, so the
-    sanitized snapshot would stop bounding the reviewer's reach. Asserting on the
-    generated JSON alone cannot show that OpenCode agrees; this runs the pinned
-    binary against the client's config and reads what it resolves.
-    """
-    opencode = shutil.which("opencode", path=env["PATH"])
-    if opencode is None:
-        fail("pinned opencode was not found on the server's fixed trusted PATH")
-    completed = subprocess.run(
-        [str(opencode), "--pure", "debug", "agent", "ai-reviewer"],
-        env=env,
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        fail(
-            "opencode debug agent failed for the client's generated config: "
-            f"{completed.stdout.strip()} {completed.stderr.strip()}"
-        )
-    start = completed.stdout.find("{")
-    if start < 0:
-        fail(f"opencode debug agent printed no JSON: {completed.stdout!r}")
-    try:
-        agent = json.loads(completed.stdout[start:])
-    except json.JSONDecodeError as exc:
-        fail(f"opencode debug agent output did not parse: {exc}")
-    rules = agent.get("permission") if isinstance(agent, dict) else None
-    if not isinstance(rules, list):
-        fail(f"opencode debug agent reported no permission rules: {agent!r}")
-
-    external = effective_wildcard_action(rules, "external_directory")
-    if external != "deny":
-        fail(
-            f"external_directory resolves to {external!r}, not 'deny' — the review "
-            f"root does not bound the reviewer's reach. Rules: {json.dumps(rules)}"
-        )
-    for permission in ("read", "glob", "grep"):
-        action = effective_wildcard_action(rules, permission)
-        if action != "allow":
-            fail(
-                f"{permission} resolves to {action!r}, not 'allow' — the reviewer "
-                f"cannot explore its own review root. Rules: {json.dumps(rules)}"
-            )
-
-
-def _prove_session_permission_rules(env: dict[str, str], root: Path) -> None:
-    """Show the pinned server accepts and retains the client's permission rules.
-
-    Session-create returning an id proves only tolerance, so this also reads the
-    session back and requires the `external_directory` deny to still be there: a
-    server that dropped the unrecognized key fails here.
-
-    It deliberately stops short of claiming tool-layer enforcement, which the pinned
-    server's API does not expose provider-free. There is no tool-execute endpoint
-    (`/experimental/tool*` are GET-only; the sole tool-ish POST is
-    `/session/{id}/shell`, i.e. bash), and `POST /api/session/{id}/permission` is not
-    the tool layer's oracle — with the client's real config loaded it answers `deny`
-    for everything, including `read`/`glob`/`grep` on absolute in-root paths that
-    OpenCode's own resolver allows, because it resolves against the top-level
-    `"*": "deny"` rather than the agent's allows. Enforcement evidence therefore comes
-    from `_prove_effective_permissions`; forcing a real `grep` call would need a
-    model, i.e. a provider.
-    """
     client = shipped_client()
-    process, base_url, _logs, drain_thread = client._start_server(
-        root, "/usr/local/bin/opencode", env
-    )
+    process, base_url, logs, threads = client._start_server(root, "/usr/local/bin/opencode", env)
     try:
-        session = client._request_json(
-            base_url,
-            "POST",
-            "session",
-            directory=root,
-            body={"title": "ai-review-search-smoke", "permission": client._PERMISSION_RULES},
-            timeout=30.0,
-        )
-        session_data = client._response_data(session)
-        if not (
-            isinstance(session_data, dict)
-            and isinstance(session_data.get("id"), str)
-            and session_data["id"]
-        ):
-            fail(
-                "session-create rejected or mis-parsed the client's permission "
-                f"rules: {session!r}"
+        password = env["OPENCODE_PASSWORD"]
+        agent = client._response_data(
+            client._request_json(
+                base_url,
+                "GET",
+                "api/agent/ai-reviewer",
+                password=password,
+                timeout=30.0,
             )
+        )
+        rules = agent.get("permissions")
+        if not isinstance(rules, list):
+            fail("OpenCode did not return native agent permissions")
+        if effective_wildcard_effect(rules, "external_directory") != "deny":
+            fail("the real agent did not retain the external_directory deny")
+        for permission in ("read", "glob", "grep"):
+            if effective_wildcard_effect(rules, permission) != "allow":
+                fail(f"the real agent did not allow {permission}")
+        session = client._response_data(
+            client._request_json(
+                base_url,
+                "POST",
+                "api/session",
+                password=password,
+                timeout=30.0,
+                body={
+                    "title": "ai-review-search-smoke",
+                    "agent": "ai-reviewer",
+                    "location": {"directory": str(root)},
+                    "permissions": client._CONFIG_PERMISSIONS,
+                },
+            )
+        )
         stored = client._response_data(
             client._request_json(
                 base_url,
                 "GET",
-                f"session/{session_data['id']}",
-                directory=root,
+                f"api/session/{session['id']}",
+                password=password,
                 timeout=30.0,
             )
         )
-        retained = stored.get("permission") if isinstance(stored, dict) else None
-        expected = {"permission": "external_directory", "action": "deny", "pattern": "*"}
-        if not isinstance(retained, list) or expected not in retained:
-            fail(
-                "the session did not retain the external_directory deny the client "
-                f"sent; stored rules: {retained!r}"
+        if {"action": "external_directory", "resource": "*", "effect": "deny"} not in (
+            stored.get("permissions", [])
+        ):
+            fail("the real session did not retain the explicit external_directory deny")
+        print(
+            "OPENCODE_V2_EVIDENCE "
+            + client._clean(
+                json.dumps(
+                    {
+                        "agent": agent,
+                        "session": stored,
+                    }
+                ),
+                password,
             )
+        )
     finally:
-        client._stop_server(process, drain_thread)
+        client._stop_server(process, threads)
+    client._assert_no_ripgrep_fetch(logs)
 
 
 def main() -> int:
@@ -321,7 +234,6 @@ def main() -> int:
     _prove_pinned_rg(_read_pin(), env)
     _prove_pinned_opencode()
     _prove_effective_permissions(env, root)
-    _prove_session_permission_rules(env, root)
     print("opencode search-tool preflight smoke passed")
     return 0
 

@@ -15,7 +15,7 @@ env:
   IMAGE_VERSION: "3.0"
   AI_REVIEW_CLAUDE_NPM_PACKAGE: "@anthropic-ai/claude-code"
   AI_REVIEW_CODEX_NPM_PACKAGE: "@openai/codex"
-  AI_REVIEW_OPENCODE_NPM_PACKAGE: "opencode-ai"
+  AI_REVIEW_OPENCODE_NPM_PACKAGE: "@opencode/cli"
 
 jobs:
   build-preflight:
@@ -180,22 +180,14 @@ jobs:
         shell: bash
         run: scripts/smoke_opencode_search_tools.sh "$AI_REVIEW_REVIEWER_TAG"
 
-      - name: Verify the OpenCode structured-output transport
-        # Spec-51 follow-up. The reviewer returns its batch by calling the
-        # StructuredOutput tool OpenCode injects for a json_schema format, and the
-        # config's "*": "deny" permission wildcard once covered that tool: the model
-        # was told to call a tool it was never offered and every review failed. No
-        # other check could see it — the config was well-formed, the session was
-        # created, and permissions resolved as documented. This runs the shipped
-        # client against a loopback stub provider, so the transport is
-        # exercised on every build without a provider secret, and asserts the
-        # negative control (remove the permission, lose the tool and the run).
-        #
-        # Same placement rationale as the step above: a step in this job with no event
-        # condition, before the image artifact is saved, so it gates merge as well as
-        # publication and a failed probe cannot hand an image downstream.
+      - name: Verify OpenCode v2 batches and runtime isolation
+        # Real pinned server with a loopback stub provider and no egress. Covers
+        # both stages, exact batch equality, failure controls, ancestor discovery,
+        # permissions, rg execution/no-fetch and tool environment credentials.
+        # Selected redacted v2 responses in the job log substantiate fixtures.
+        # Unconditional: this is the runtime feasibility gate on PRs too.
         shell: bash
-        run: scripts/smoke_opencode_structured_output.sh "$AI_REVIEW_REVIEWER_TAG"
+        run: scripts/smoke_opencode_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
 
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'

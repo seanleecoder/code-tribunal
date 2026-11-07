@@ -100,21 +100,34 @@ manifest and digest, so all pipeline stages must use the same policy. Explicit
 `critique_timeout_seconds` values are used as configured; keep them at or below
 900 seconds while using the shipped 20-minute critique CI ceiling.
 
-OpenCode review and critique use a loopback-only `opencode serve` session client.
-The client sends the fixed internal session title `code-tribunal-ai-review` and
-the stage-specific schema through OpenCode's `json_schema` message format. The
-title is non-empty and contains no prompt, repository, pull/merge-request, or
-user data, so OpenCode does not make a separate automatic title-inference model
-request. It is not a configuration key or an additional model-selection
-interface. `reviewers.opencode.model` and `AI_REVIEW_OPENCODE_MODEL` remain the
-sole OpenCode model controls.
+OpenCode review and critique use the pinned v2 CLI's private, authenticated
+loopback server (`opencode serve --stdio`). Closing the client's stdin shuts it
+down. The fixed session title `code-tribunal-ai-review` contains no prompt,
+repository, pull/merge-request or user data and avoids automatic title inference.
+`reviewers.opencode.model` and `AI_REVIEW_OPENCODE_MODEL` remain the sole OpenCode
+model controls; configured effort is passed unchanged through a model variant's
+native OpenRouter `reasoning.effort` setting.
 
-The OpenCode reviewer may read, glob, and grep inside its temporary review root
-and nowhere else: the adapter denies OpenCode's `external_directory` permission,
-which gates absolute paths outside that root. Its search tools use the pinned
-ripgrep shipped on the image `PATH`, so no reviewer run downloads a search binary
-at review time. Neither is a configuration key — there is no supported way for
-project configuration to widen the reviewer's filesystem reach.
+V2 no longer exposes the v1 session JSON-schema generation API. OpenCode returns
+final-answer text JSON, which uses the same extractor and authoring-schema
+validation as the other text seats. Reasoning, tool arguments, incomplete
+answers and failed/interrupted sessions are never accepted as answers. This
+preserves the public finding and critique schemas; generation itself is no
+longer schema-enforced. The image's offline probes verify both stages, exact
+batch output and failure cases; real-provider reliability is a Candidate Canary
+check before release.
+
+The OpenCode reviewer may read, glob and grep inside its temporary review root.
+The client explicitly denies `external_directory` (allowed by default in v2),
+mutation and other tools. Critique gets no repository content. Each workspace
+has fresh Git metadata with no history, remotes or hooks, preventing v2 from
+treating the enclosing CI checkout as an internal worktree. The working root sits
+beneath the isolated HOME so ancestor instruction discovery cannot reach the
+checkout, and project configuration discovery is disabled. Cache, state and
+temporary directories are isolated, model fetching and file watching are off,
+and search uses the pinned ripgrep on the fixed image PATH. A runtime ripgrep
+download fails the seat. These are trusted runtime settings, not operator keys;
+project configuration cannot widen them.
 
 ### Shipped defaults
 

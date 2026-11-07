@@ -640,11 +640,12 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("codex --version", text)
         self.assertIn("opencode --version", text)
         self.assertIn("cursor-agent --help | grep -F -- '--mode <mode>'", text)
-        self.assertIn('serve_help="$(opencode --pure serve --help 2>&1 || true)"', text)
+        self.assertIn('serve_help="$(opencode serve --help 2>&1)"', text)
+        self.assertIn("""printf '%s\\n' "$serve_help" | grep -F -- '--stdio'""", text)
         self.assertIn("""printf '%s\\n' "$serve_help" | grep -F -- '--hostname'""", text)
         self.assertIn("""printf '%s\\n' "$serve_help" | grep -F -- '--port'""", text)
         # OpenCode resolves which("rg") first and otherwise downloads an
-        # unverified ripgrep at review time. The build must prove the pinned
+        # runtime ripgrep at review time. The build must prove the pinned
         # binary is what resolves on the adapter's forwarded PATH.
         self.assertIn("rg --version", text)
         self.assertIn("COPY --from=ripgrep-bin /opt/ripgrep/rg /usr/local/bin/rg", text)

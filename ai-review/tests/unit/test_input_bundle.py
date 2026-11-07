@@ -939,7 +939,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
             "opencode.jsonc",
             "tui.json",
         )
-        agent_dirs = (".claude", ".codex", ".cursor", ".opencode")
+        agent_dirs = (".claude", ".codex", ".cursor", ".opencode", ".agents")
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "repo"
             dest = Path(tmpdir) / "repo_snapshot"

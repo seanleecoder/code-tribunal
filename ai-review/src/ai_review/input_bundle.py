@@ -67,6 +67,7 @@ _REVIEWER_AGENT_FILE_NAMES = frozenset(
         ".cursorrules",
         # OpenCode
         ".opencode",
+        ".agents",
         "opencode.json",
         "opencode.jsonc",
         "tui.json",

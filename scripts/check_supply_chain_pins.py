@@ -282,7 +282,7 @@ def _pin_file_issues(name: str, text: str, opencode_version: str) -> list[str]:
         # bump must fail here until ripgrep.pin is re-observed (SUPPLY_CHAIN.md).
         if values.get("opencode_version") != opencode_version:
             issues.append(
-                f"ripgrep.pin opencode_version must equal package.json opencode-ai "
+                f"ripgrep.pin opencode_version must equal package.json @opencode/cli "
                 f"{opencode_version}; refresh ripgrep.pin (SUPPLY_CHAIN.md)"
             )
     return issues
@@ -292,7 +292,7 @@ def issues() -> list[str]:
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
     package = json.loads(_read(PACKAGE_JSON))
-    opencode_version = str(package.get("dependencies", {}).get("opencode-ai", ""))
+    opencode_version = str(package.get("dependencies", {}).get("@opencode/cli", ""))
     constraints = _read(PYTHON_CONSTRAINTS)
     return [
         *_dockerfile_issues("base.Dockerfile", base),

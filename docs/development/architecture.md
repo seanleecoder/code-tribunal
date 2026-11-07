@@ -69,7 +69,7 @@ from the package at all.
 | `reviewer_setup.py` | Registry-declared CLI arguments, isolated state, snapshot workspaces, schema transport, and Claude's build-time acceptance probe | no |
 | `adapter_artifacts.py` | Redacted parse/timeout diagnostic writing | no |
 | `outcomes.py` | Shared stage outcome loading and run/config/filename admission | no |
-| `opencode_client.py` | The OpenCode seat, launched by the runner as a module: generated config, server environment and the loopback server client | no |
+| `opencode_client.py` | The OpenCode seat, launched by the runner as a module: native v2 config, isolated server environment and the authenticated loopback session client | no |
 
 These rules are worth stating because breaking them is silent:
 

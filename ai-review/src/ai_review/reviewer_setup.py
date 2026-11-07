@@ -29,8 +29,8 @@ def stage_schema_path(stage: str) -> Path:
 
 
 def transport_schema(stage: str) -> dict[str, Any]:
-    # Claude and OpenCode reject the repository validator's draft declaration;
-    # the rest of the schema is passed unchanged to their structured-output APIs.
+    # Claude rejects the repository validator's draft declaration; the rest of
+    # the schema is passed unchanged to its structured-output API.
     schema: dict[str, Any] = load_json_file(stage_schema_path(stage))
     schema.pop("$schema", None)
     return schema
