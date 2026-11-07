@@ -435,7 +435,11 @@ def _session_answer(
         for message in messages:
             if not isinstance(message, dict):
                 raise OpenCodeClientError("OpenCode message was not an object")
-            if message.get("error") is not None:
+            # A successful continuation can leave an earlier failed assistant
+            # in history. Only the newest assistant supplies the final answer.
+            if message.get("error") is not None and (
+                answer is None or message.get("type") != "assistant"
+            ):
                 raise OpenCodeClientError(
                     f"OpenCode provider/API error: {_compact(message['error'])}"
                 )
@@ -492,12 +496,15 @@ def run() -> int:
     # configuration discovery. Stop it at our empty, isolated HOME, rather than
     # letting the snapshot's ancestors supply instruction files from the checkout.
     root = Path(env["HOME"]) / staging.name
-    staging.rename(root)
     process: subprocess.Popen[str] | None = None
     threads: tuple[threading.Thread, ...] = ()
     logs = _ServerLog(password=env["OPENCODE_PASSWORD"])
     try:
         try:
+            # A timeout kill can leave this PID-named destination behind.
+            if root.exists():
+                shutil.rmtree(root)
+            staging.rename(root)
             _initialize_git_root(root, env)
             process, base_url, logs, threads = _start_server(root, executable, env)
             password = env["OPENCODE_PASSWORD"]
@@ -551,6 +558,7 @@ def run() -> int:
             if process is not None:
                 _stop_server(process, threads)
             shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)
         _assert_no_ripgrep_fetch(logs)
     except Exception as exc:
         _assert_no_ripgrep_fetch(logs)

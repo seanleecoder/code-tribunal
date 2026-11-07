@@ -179,6 +179,31 @@ def test_repeated_pagination_cursor_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize("stage", ["review", "critique"])
+def test_successful_continuation_can_follow_an_errored_assistant(stage: str) -> None:
+    batch = {"findings" if stage == "review" else "critiques": []}
+    with mock.patch.object(
+        client,
+        "_request_json",
+        side_effect=[
+            page(IDLE, answer(json.dumps(batch)), cursor="older"),
+            page(
+                {"type": "synthetic", "text": "Continue after interrupted stream"},
+                answer(
+                    "interrupted output",
+                    id="msg_failed",
+                    finish="error",
+                    error={"type": "TransportError"},
+                ),
+                USER,
+            ),
+        ],
+    ):
+        assert client._session_answer(
+            "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage=stage
+        ) == batch
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -394,12 +419,18 @@ def test_run_binds_prompt_and_keeps_root_under_isolated_home(tmp_path: Path, sta
         "AI_REVIEW_INPUT_DIR": str(tmp_path / "inputs"),
         "AI_REVIEW_OUTPUT_DIR": str(tmp_path / "out"),
     }
+    stale_root = (
+        tmp_path / "out" / ".tmp" / "opencode-home" / f"opencode-{stage}-root.{os.getpid()}"
+    )
+    stale_root.mkdir(parents=True)
+    (stale_root / "stale.py").write_text("left behind by a killed run")
     roots = []
     process = fake_process("")
 
     def start(root: Path, _executable: str, _env: dict[str, str]) -> tuple[object, ...]:
         roots.append(root)
         assert root.parent.name == "opencode-home"
+        assert not (root / "stale.py").exists()
         assert (root / "reviewed.py").exists() == (stage == "review")
         return process, "http://127.0.0.1:1/", client._ServerLog(), ()
 
@@ -426,6 +457,36 @@ def test_run_binds_prompt_and_keeps_root_under_isolated_home(tmp_path: Path, sta
     assert "parsed final answer text" in errors.getvalue()
     assert "structured_output" not in errors.getvalue()
     assert json.loads(output.getvalue()) == {"findings" if stage == "review" else "critiques": []}
+
+
+def test_workspace_move_failure_cleans_staging_and_reports_error(tmp_path: Path) -> None:
+    prompt = tmp_path / "prompt"
+    prompt.write_text("trusted prompt")
+    staging = tmp_path / "stage"
+    staging.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        "AI_REVIEW_STAGE": "critique",
+        "AI_REVIEW_MODEL": "google/test",
+        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+        "OPENROUTER_API_KEY": "selected-key",
+    }
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(client, "_resolve_opencode_executable", return_value="/pinned"),
+        mock.patch.object(client, "prepare_workspace", return_value=(tmp_path, staging)),
+        mock.patch.object(
+            client, "_server_env", return_value={"HOME": str(home), "OPENCODE_PASSWORD": "private"}
+        ),
+        mock.patch.object(Path, "rename", side_effect=OSError("move failed")),
+        mock.patch.object(client, "_start_server") as start,
+        pytest.raises(client.OpenCodeClientError, match="move failed"),
+    ):
+        client.run()
+    start.assert_not_called()
+    assert not staging.exists()
+    assert not (home / staging.name).exists()
 
 
 def test_readiness_timeout_closes_stdin_and_joins_drainers(tmp_path: Path) -> None:
