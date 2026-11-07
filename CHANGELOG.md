@@ -7,6 +7,23 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate the OpenCode seat from `opencode-ai@1.19.5` to `@opencode/cli@2.2.5`.
+  Both stages use a private authenticated v2 session and return final-answer JSON
+  through the existing extractor and schema validation. V2 removes generation-time
+  schema enforcement; public finding/critique schemas and model/effort settings
+  remain unchanged. The workspace is beneath isolated HOME, with explicit
+  external-directory denial, a fresh Git boundary and disabled ancestor project
+  configuration discovery. Malformed-answer diagnostics keep a bounded preview,
+  redacted before clipping. Offline image probes now cover both stages and the v2 isolation/failure paths.
+
+### Fixed
+
+- Omit `.gitignore` files from prepared snapshots at every depth so OpenCode's
+  isolated Git worktree cannot silently hide reviewed files from search. Changes
+  to those files remain visible in the review diff.
+
 ## [3.0.0] - 2026-11-01
 
 ### Upgrade

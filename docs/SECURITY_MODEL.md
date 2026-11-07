@@ -112,7 +112,9 @@ uploaded bundle.
 
 Prepare also leaves out, at every depth, the files a reviewer CLI would read from
 its working tree as instructions or project configuration, such as `AGENTS.md`,
-`CLAUDE.md`, and each CLI's own config files and directories. The list is
+`CLAUDE.md`, `.gitignore`, and each CLI's own config files and directories. Omitting
+Git ignore rules keeps OpenCode's isolated Git root from hiding snapshot files
+from directory-wide searches. The list is
 `_REVIEWER_AGENT_FILE_NAMES` in
 [`input_bundle.py`](../ai-review/src/ai_review/input_bundle.py). A merge request
 cannot steer a reviewer through them. The diff still shows changes to these

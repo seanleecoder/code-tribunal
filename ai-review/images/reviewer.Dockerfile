@@ -19,7 +19,7 @@ RUN set -eu; \
     npm cache clean --force; \
     nm=node_modules; \
     cx="$nm/$CODEX_VENDOR"; \
-    rm -r "$nm"/@anthropic-ai/claude-code-linux-* "$nm"/opencode-linux-*; \
+    rm -r "$nm"/@anthropic-ai/claude-code-linux-* "$nm"/@opencode/cli-linux-*; \
     CODEX_HOME="$(mktemp -d)" "$cx/bin/codex" features list \
       | grep -Eq '^code_mode[[:space:]].*[[:space:]]false$'; \
     rm "$cx/bin/codex-code-mode-host"; \
@@ -93,7 +93,7 @@ FROM ${AI_REVIEW_BASE_IMAGE}
 
 ARG CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code
 ARG CODEX_NPM_PACKAGE=@openai/codex
-ARG OPENCODE_NPM_PACKAGE=opencode-ai
+ARG OPENCODE_NPM_PACKAGE=@opencode/cli
 ARG CODEX_VENDOR
 
 # No Node runtime ships: claude and opencode are native executables, codex is
@@ -135,7 +135,7 @@ RUN set -eu; \
     if command -v node >/dev/null; then echo "reviewer image must not ship node" >&2; exit 1; fi
 
 # OpenCode's grep/glob tools shell out to ripgrep, resolving which("rg") first and
-# otherwise downloading an unverified copy from GitHub at review time. Prove the
+# otherwise downloading a checksum-verified copy from GitHub at review time. Prove the
 # pinned binary is the one that will be found, on the PATH the adapter forwards —
 # not merely present somewhere in the image. The binary digest is re-checked here
 # rather than only in the builder stage, because what matters is the identity of
@@ -153,14 +153,18 @@ RUN --mount=type=tmpfs,target=/root --mount=type=tmpfs,target=/tmp set -eu; \
     claude --version; \
     codex --version; \
     opencode --version; \
+    if [ -d /etc/opencode ] && [ -n "$(find /etc/opencode -mindepth 1 -print -quit)" ]; then \
+      echo "reviewer image must not carry ambient OpenCode system configuration" >&2; exit 1; \
+    fi; \
     cursor-agent --version; \
     # The adapter's read-only boundary depends on this pinned CLI surface. Fail the
     # image build if a future pin drops or renames native ask mode.
     cursor-agent --help | grep -F -- '--mode <mode>'; \
     # The OpenCode adapter uses the loopback server API and a static session title to
     # prevent a separate title-inference model call. Keep the pinned server surface
-    # fail-closed if either required listen flag changes.
-    serve_help="$(opencode --pure serve --help 2>&1 || true)"; \
+    # fail-closed if any required serve flag changes.
+    serve_help="$(opencode serve --help 2>&1)"; \
+    printf '%s\n' "$serve_help" | grep -F -- '--stdio'; \
     printf '%s\n' "$serve_help" | grep -F -- '--hostname'; \
     printf '%s\n' "$serve_help" | grep -F -- '--port'; \
     # Probe both Claude stages with the registry's runtime argv and schema

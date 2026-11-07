@@ -27,8 +27,8 @@ mkdir -p "$smoke_dir/home"
 # state under its isolated HOME on the mounted /smoke.
 #
 # --network none is load-bearing, not hygiene: the defect this probe guards is
-# OpenCode fetching an unverified ripgrep at review time. With egress removed, a
-# regression that restores that fetch fails here instead of quietly succeeding.
+# OpenCode fetching ripgrep at review time instead of using the image binary.
+# With egress removed, a regression that restores that fetch fails here instead of quietly succeeding.
 # Nothing the probe needs crosses the network — loopback survives `none`, the
 # model-list fetch is disabled, and no provider is contacted.
 timeout 300 docker run --rm \

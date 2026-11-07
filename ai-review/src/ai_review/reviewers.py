@@ -124,19 +124,23 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 ("HOME", "opencode-home"),
                 ("XDG_CONFIG_HOME", "opencode-config-home"),
                 ("XDG_DATA_HOME", "opencode-data-home"),
+                ("XDG_CACHE_HOME", "opencode-cache-home"),
+                ("XDG_STATE_HOME", "opencode-state-home"),
                 ("OPENCODE_CONFIG_DIR", "opencode-config-dir"),
+                ("TMPDIR", "opencode-tmp"),
             ),
             environment=(
                 # which("rg") must find the image's pinned binary before any
                 # ambient executable or OpenCode's download fallback.
                 ("PATH", "/usr/local/bin:/usr/bin:/bin"),
-                ("OPENCODE_DISABLE_AUTOUPDATE", "1"),
-                ("OPENCODE_DISABLE_DEFAULT_PLUGINS", "1"),
-                ("OPENCODE_DISABLE_LSP_DOWNLOAD", "1"),
                 ("OPENCODE_DISABLE_CLAUDE_CODE", "1"),
-                ("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT", "1"),
                 ("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", "1"),
                 ("OPENCODE_DISABLE_MODELS_FETCH", "1"),
+                ("OPENCODE_CONFIG_PROJECT_DISABLE", "1"),
+                ("OPENCODE_DISABLE_FFF", "1"),
+                ("OPENCODE_FILEWATCHER_DISABLE", "1"),
+                ("OPENCODE_PRINT_LOGS", "1"),
+                ("OPENCODE_LOG_LEVEL", "INFO"),
             ),
         ),
         # Pinned Cursor JSON mode aggregates intermediate answers. Text mode

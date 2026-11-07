@@ -91,7 +91,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
             with self.subTest(reviewer=reviewer):
                 completed = subprocess.run(
                     ["/bin/sh", str(_ADAPTERS / f"{reviewer}.sh")],
-                    check=False, capture_output=True, text=True,
+                    check=False,
+                    capture_output=True,
+                    text=True,
                     env={
                         "PATH": "",
                         "AI_REVIEW_MODEL": "provider/test-model",
@@ -119,7 +121,9 @@ class ProviderAdapterBehaviorTests(unittest.TestCase):
                 with self.subTest(reviewer=reviewer):
                     completed = subprocess.run(
                         ["/bin/sh", str(_ADAPTERS / f"{reviewer}.sh")],
-                        check=False, capture_output=True, text=True,
+                        check=False,
+                        capture_output=True,
+                        text=True,
                         env={
                             "PATH": str(bin_dir),
                             "AI_REVIEW_MODEL": "provider/test-model",
@@ -219,77 +223,8 @@ printf '%s\n' "$result"
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
             return
         if name == "opencode":
-            cli.write_text(
-                f"#!{sys.executable}\n"
-                "import json\n"
-                "import os\n"
-                "import sys\n"
-                "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
-                "from pathlib import Path\n"
-                "\n"
-                "trace_dir = Path(os.environ['OPENCODE_CONFIG_DIR'])\n"
-                "trace_dir.mkdir(parents=True, exist_ok=True)\n"
-                "(trace_dir / 'cli.args').write_text(' '.join(sys.argv), encoding='utf-8')\n"
-                "(trace_dir / 'cli.env').write_text(''.join(f'{k}={v}\\n' for k, v in sorted(os.environ.items())), encoding='utf-8')\n"  # noqa: E501
-                "(trace_dir / 'cli.key').write_text(os.environ.get('OPENROUTER_API_KEY', ''), encoding='utf-8')\n"  # noqa: E501
-                "if os.environ.get('OPENCODE_CONFIG_CONTENT'):\n"
-                "    (trace_dir / 'opencode_config.json').write_text(os.environ['OPENCODE_CONFIG_CONTENT'], encoding='utf-8')\n"  # noqa: E501
-                "\n"
-                "def write_json(handler, status, value):\n"
-                "    encoded = json.dumps(value, separators=(',', ':')).encode('utf-8')\n"
-                "    handler.send_response(status)\n"
-                "    handler.send_header('Content-Type', 'application/json')\n"
-                "    handler.send_header('Content-Length', str(len(encoded)))\n"
-                "    handler.end_headers()\n"
-                "    handler.wfile.write(encoded)\n"
-                "\n"
-                "class Handler(BaseHTTPRequestHandler):\n"
-                "    def log_message(self, *_args):\n"
-                "        return\n"
-                "\n"
-                "    def do_GET(self):\n"
-                "        if self.path.split('?', 1)[0] == '/global/health':\n"
-                "            write_json(self, 200, {'healthy': True, 'version': '1.18.12'})\n"
-                "            return\n"
-                "        write_json(self, 404, {'error': 'not found'})\n"
-                "\n"
-                "    def do_POST(self):\n"
-                "        length = int(self.headers.get('Content-Length', '0'))\n"
-                "        body = json.loads(self.rfile.read(length) or b'{}')\n"
-                "        with (trace_dir / 'requests.ndjson').open('a', encoding='utf-8') as handle:\n"  # noqa: E501
-                "            handle.write(json.dumps({'path': self.path, 'directory': self.headers.get('X-Opencode-Directory'), 'body': body}) + '\\n')\n"  # noqa: E501
-                # Reject unknown top-level keys the way a strict server would, so
-                # a drift in the client's request shape fails loudly here instead
-                # of silently dropping fields such as the permission denials.
-                "        if self.path.split('?', 1)[0] == '/session':\n"
-                "            unknown = sorted(set(body) - {'title', 'permission'})\n"
-                "            if unknown:\n"
-                "                write_json(self, 400, {'error': 'unknown session keys: ' + ','.join(unknown)})\n"  # noqa: E501
-                "                return\n"
-                "            write_json(self, 200, {'id': 'ses_fake', 'title': body.get('title')})\n"  # noqa: E501
-                "            return\n"
-                "        if self.path.endswith('/message'):\n"
-                "            directory = Path(self.headers['X-Opencode-Directory'])\n"
-                "            entries = sorted(f\"{p.relative_to(directory)}{'/' if p.is_dir() else ''}\" for p in directory.rglob('*'))\n"  # noqa: E501
-                "            (trace_dir / 'workspace.json').write_text(json.dumps(entries), encoding='utf-8')\n"  # noqa: E501
-                "            unknown = sorted(set(body) - {'agent', 'model', 'parts', 'format'})\n"  # noqa: E501
-                "            if unknown:\n"
-                "                write_json(self, 400, {'error': 'unknown message keys: ' + ','.join(unknown)})\n"  # noqa: E501
-                "                return\n"
-                "            properties = body['format']['schema']['properties']\n"
-                "            if 'critiques' in properties:\n"
-                "                structured = {'critiques': []}\n"
-                "            else:\n"
-                "                structured = {'findings': []}\n"
-                "            write_json(self, 200, {'info': {'role': 'assistant', 'structured': structured}, 'parts': [{'type': 'text', 'text': 'conflicting text'}]})\n"  # noqa: E501
-                "            return\n"
-                "        write_json(self, 404, {'error': 'not found'})\n"
-                "\n"
-                "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
-                "server = ThreadingHTTPServer(('127.0.0.1', port), Handler)\n"
-                "server.serve_forever()\n",
-                encoding="utf-8",
-            )
+            source = Path(__file__).resolve().parents[1] / "support" / "opencode_v2_cli.py"
+            cli.write_text(f"#!{sys.executable}\n" + source.read_text(), encoding="utf-8")
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
             return
         cli.write_text(
@@ -297,15 +232,12 @@ printf '%s\n' "$result"
             'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
             'case "$args" in *critique_batch.schema.json*) payload=\'{"critiques":[]}\' ;; esac\n'
-            'trace_dir="${CODEX_HOME:-${OPENCODE_CONFIG_DIR:-}}"\n'
+            'trace_dir="${CODEX_HOME:-}"\n'
             'if [ -n "$trace_dir" ]; then\n'
             '  mkdir -p "$trace_dir"\n'
             '  printf \'%s\\n\' "$0 $args" > "$trace_dir/cli.args"\n'
             '  env | sort > "$trace_dir/cli.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
-            '  if [ -n "${OPENCODE_CONFIG_CONTENT:-}" ]; then\n'
-            '    printf \'%s\' "$OPENCODE_CONFIG_CONTENT" > "$trace_dir/opencode_config.json"\n'
-            "  fi\n"
             "fi\n"
             "out=''\n"
             "cd_dir=.\n"
@@ -357,11 +289,12 @@ printf '%s\n' "$result"
                 script = script.replace(f"printf '{empty}'", f"cat '{fixture}'")
                 script = script.replace(f"payload='{empty}'", f"payload=$(cat '{fixture}')")
                 script = script.replace(f"result='{empty}'", f"result=$(cat '{fixture}')")
-                script = script.replace(
-                    f"structured = {{'{stage_field}': []}}",
-                    f"structured = json.loads(Path({str(fixture)!r}).read_text())",
-                )
                 script = script.replace(empty, json.dumps(payload, separators=(",", ":")))
+                if cli_name == "opencode":
+                    script = script.replace(
+                        'batch = {"critiques": []} if state.get("critique") else {"findings": []}',
+                        f"batch = json.loads(Path({str(fixture)!r}).read_text())",
+                    )
                 cli.write_text(script)
                 (input_dir / "mr.diff").write_text(
                     "diff --git a/src/reviewed.py b/src/reviewed.py\n--- /dev/null\n"
@@ -847,127 +780,49 @@ printf '%s\n' "$result"
 
     def test_opencode_real_path_invokes_opencode_cli(self) -> None:
         batch, cli_args, cli_env, meta = self._run_with_fake_cli("opencode", "opencode")
-
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "opencode")
-        # cli_args is the argv the real client spawned the server with.
-        self.assertIn(
-            "--pure serve --print-logs --log-level INFO --hostname 127.0.0.1 --port ", cli_args
-        )
-        self.assertNotIn("--title", cli_args)
-        self.assertNotIn("--format", cli_args)
-        self.assertNotIn("--model", cli_args)
-        self.assertNotIn("--agent", cli_args)
+        self.assertIn("serve --stdio --hostname 127.0.0.1 --port 0", cli_args)
+        self.assertNotIn("--pure", cli_args)
         requests = meta["opencode_requests"]
-        assert isinstance(requests, list)
-        self.assertEqual(len(requests), 2)
-        session_request, message_request = requests
-        self.assertEqual(session_request["path"], "/session")
         self.assertEqual(
-            session_request["body"],
-            {
-                "title": "code-tribunal-ai-review",
-                "permission": [
-                    {"permission": "question", "action": "deny", "pattern": "*"},
-                    {"permission": "plan_enter", "action": "deny", "pattern": "*"},
-                    {"permission": "plan_exit", "action": "deny", "pattern": "*"},
-                    {"permission": "external_directory", "action": "deny", "pattern": "*"},
-                ],
-            },
+            [item["path"] for item in requests],
+            [
+                "/api/session",
+                "/api/session/ses_fake/prompt",
+                "/api/experimental/session/ses_fake/wait",
+            ],
         )
-        self.assertEqual(message_request["path"], "/session/ses_fake/message")
-        message_body = message_request["body"]
-        self.assertEqual(message_body["agent"], "ai-reviewer")
+        session = requests[0]["body"]
+        self.assertEqual(session["title"], "code-tribunal-ai-review")
+        self.assertEqual(session["agent"], "ai-reviewer")
         self.assertEqual(
-            message_body["model"],
-            {"providerID": "openrouter", "modelID": _SHIPPED["opencode"]["model"]},
+            session["model"],
+            {"providerID": "openrouter", "id": _SHIPPED["opencode"]["model"], "variant": "low"},
         )
-        self.assertEqual(message_body["parts"][0]["type"], "text")
-        self.assertEqual(message_body["format"]["type"], "json_schema")
-        expected_schema = load_json_file(
-            Path(__file__).resolve().parents[2] / "schemas" / "raw_finding_batch.schema.json"
-        )
-        assert isinstance(expected_schema, dict)
-        expected_schema.pop("$schema")
-        self.assertEqual(message_body["format"]["schema"], expected_schema)
-        self.assertNotIn("$schema", message_body["format"]["schema"])
-        self.assertNotEqual(meta["selected_dir"], meta["input_dir"])
-        self.assertNotEqual(meta["selected_dir"], meta["repo_snapshot_dir"])
+        self.assertEqual(session["location"]["directory"], meta["selected_dir"])
+        self.assertEqual(set(requests[1]["body"]), {"text"})
         self.assertEqual(meta["workspace_entries"], {"README.md", "src/", "src/reviewed.py"})
-        self.assertIn("OPENCODE_DISABLE_AUTOUPDATE=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_DEFAULT_PLUGINS=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_LSP_DOWNLOAD=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1", cli_env)
-        self.assertIn("OPENCODE_DISABLE_MODELS_FETCH=1", cli_env)
-        self.assertIn("OPENCODE_CONFIG_DIR=", cli_env)
-        self.assertIn("OPENCODE_CONFIG_CONTENT=", cli_env)
-        self.assertIn('"openrouter"', cli_env)
-        self.assertIn('"apiKey": "{env:OPENROUTER_API_KEY}"', cli_env)
-        self.assertIn('"baseURL": "https://openrouter.ai/api/v1"', cli_env)
-        self.assertIn('"enabled_providers": ["openrouter"]', cli_env)
-        self.assertIn(json.dumps(_SHIPPED["opencode"]["model"]), cli_env)
-        self.assertIn('"*": "deny"', cli_env)
-        self.assertIn('"read": "allow"', cli_env)
-        self.assertIn('"glob": "allow"', cli_env)
-        self.assertIn('"grep": "allow"', cli_env)
-        self.assertIn('"bash": "deny"', cli_env)
-        self.assertIn('"edit": "deny"', cli_env)
-        self.assertIn('"webfetch": "deny"', cli_env)
-        self.assertIn('"websearch": "deny"', cli_env)
-        self.assertIn('"task": "deny"', cli_env)
-        self.assertIn('"skill": "deny"', cli_env)
         config = meta["opencode_config"]
-        self.assertIsInstance(config, dict)
-        assert isinstance(config, dict)
-        self.assertIs(config["lsp"], False)
-        self.assertIs(config["formatter"], False)
-        agent = config["agent"]["ai-reviewer"]
-        self.assertNotIn("steps", agent)
-        self.assertEqual(agent.get("reasoningEffort"), _SHIPPED["opencode"].get("effort"))
         self.assertEqual(
-            agent["tools"],
-            {
-                "bash": False,
-                "edit": False,
-                "write": False,
-                "patch": False,
-                "webfetch": False,
-                "websearch": False,
-                "task": False,
-                "todowrite": False,
-                "todoread": False,
-                "skill": False,
-            },
+            config["providers"]["openrouter"]["settings"]["baseURL"], "https://openrouter.ai/api/v1"
         )
-        self.assertEqual(agent["permission"]["*"], "deny")
-        self.assertEqual(agent["permission"]["read"], "allow")
-        self.assertEqual(agent["permission"]["glob"], "allow")
-        self.assertEqual(agent["permission"]["grep"], "allow")
-        # external_directory is a permission key of its own, so the "*" wildcard
-        # above does not cover it and OpenCode's default is {"*": "ask"}. Without
-        # this explicit deny, read/grep on an absolute path outside the review
-        # root raises an approval nothing in a headless session can answer, and
-        # the sanitized snapshot stops bounding the reviewer's reach.
-        self.assertEqual(agent["permission"]["external_directory"], {"*": "deny"})
-        self.assertEqual(config["permission"]["external_directory"], {"*": "deny"})
-        # StructuredOutput is the tool OpenCode injects for
-        # format: {"type":"json_schema", …} and the only way a schema-conforming
-        # batch can come back. The "*" wildcard above filtered it out of the tool
-        # list sent to the model, so the reviewer was told to call a tool it was
-        # never offered and every response was flagged StructuredOutputError.
-        # Verified in the built image against a stub provider: without this rule
-        # the provider request carries only glob/grep/read.
-        self.assertEqual(agent["permission"]["StructuredOutput"], "allow")
-        self.assertEqual(config["permission"]["StructuredOutput"], "allow")
-        self.assertEqual(agent["permission"]["bash"], "deny")
-        self.assertEqual(agent["permission"]["edit"], "deny")
-        self.assertEqual(agent["permission"]["write"], "deny")
-        self.assertEqual(agent["permission"]["webfetch"], "deny")
-        self.assertEqual(agent["permission"]["websearch"], "deny")
-        self.assertEqual(agent["permission"]["task"], "deny")
-        self.assertEqual(agent["permission"]["skill"], "deny")
+        self.assertEqual(config["permissions"], session["permissions"])
+        self.assertIn(
+            {"action": "external_directory", "resource": "*", "effect": "deny"},
+            config["permissions"],
+        )
+        for name in (
+            "OPENCODE_CONFIG_PROJECT_DISABLE",
+            "OPENCODE_DISABLE_FFF",
+            "OPENCODE_FILEWATCHER_DISABLE",
+            "OPENCODE_PRINT_LOGS",
+        ):
+            self.assertIn(name + "=1", cli_env)
+        self.assertIn("OPENCODE_LOG_LEVEL=INFO", cli_env)
+        self.assertIn("OPENCODE_PASSWORD=", cli_env)
+        selected = Path(str(meta["selected_dir"]))
+        self.assertEqual(selected.parent.name, "opencode-home")
 
     def test_opencode_relative_output_dir_sends_an_unduplicated_review_root(self) -> None:
         """A relative AI_REVIEW_OUTPUT_DIR must not double the review root.
@@ -1002,8 +857,10 @@ printf '%s\n' "$result"
                 self.assertEqual(batch["adapter_status"], "success")
                 config = meta["opencode_config"]
                 assert isinstance(config, dict)
-                agent = config["agent"]["ai-reviewer"]
-                self.assertEqual(agent["reasoningEffort"], configured)
+                model = config["providers"]["openrouter"]["models"][_SHIPPED["opencode"]["model"]]
+                self.assertEqual(
+                    model["variants"][0]["settings"]["reasoning"]["effort"], configured
+                )
 
     def test_opencode_max_effort_reaches_reasoning_effort(self) -> None:
         batch, _cli_args, _cli_env, meta = self._run_with_fake_cli(
@@ -1015,7 +872,12 @@ printf '%s\n' "$result"
         self.assertEqual(batch["adapter_status"], "success")
         config = meta["opencode_config"]
         assert isinstance(config, dict)
-        self.assertEqual(config["agent"]["ai-reviewer"]["reasoningEffort"], "max")
+        self.assertEqual(
+            config["providers"]["openrouter"]["models"][_SHIPPED["opencode"]["model"]]["variants"][
+                0
+            ]["settings"]["reasoning"]["effort"],
+            "max",
+        )
 
     def test_codex_critique_runs_without_repo_access(self) -> None:
         batch, cli_args, _cli_env, meta = self._run_with_fake_cli(
@@ -1042,16 +904,12 @@ printf '%s\n' "$result"
         self.assertIn("critiques", batch)
         # Same as codex: the working root is empty for critique, so read/glob/grep
         # have nothing to explore.
-        self.assertIn(
-            "--pure serve --print-logs --log-level INFO --hostname 127.0.0.1 --port ", cli_args
-        )
+        self.assertIn("serve --stdio --hostname 127.0.0.1 --port 0", cli_args)
         requests = meta["opencode_requests"]
         assert isinstance(requests, list)
         self.assertEqual(requests[0]["body"]["title"], "code-tribunal-ai-review")
-        self.assertEqual(
-            requests[1]["body"]["format"]["schema"]["$id"], "raw_critique_batch.schema.json"
-        )
-        self.assertNotIn("$schema", requests[1]["body"]["format"]["schema"])
+        self.assertIn("<POOLED_FINDINGS_JSON>", requests[1]["body"]["text"])
+        self.assertNotIn("format", requests[1]["body"])
         self.assertEqual(meta["workspace_entries"], set())
 
     def test_cli_reviewer_env_is_isolated_from_unrelated_secrets(self) -> None:
@@ -1175,7 +1033,7 @@ printf '%s\n' "$result"
         opencode_config = meta["opencode_config"]
         assert isinstance(opencode_config, dict)
         self.assertEqual(
-            opencode_config["provider"]["openrouter"]["options"]["baseURL"],
+            opencode_config["providers"]["openrouter"]["settings"]["baseURL"],
             "https://openrouter.ai/api/v1",
         )
         self.assertNotIn("OPENROUTER_BASE_URL=", cli_env)
@@ -1207,12 +1065,12 @@ printf '%s\n' "$result"
         requests = meta["opencode_requests"]
         assert isinstance(requests, list)
         self.assertEqual(
-            requests[1]["body"]["model"],
-            {"providerID": "openrouter", "modelID": "google/custom-model"},
+            requests[0]["body"]["model"],
+            {"providerID": "openrouter", "id": "google/custom-model", "variant": "low"},
         )
         # The generated opencode config JSON reflects the overridden model.
         self.assertIn('"google/custom-model"', cli_env)
-        self.assertIn('"openrouter/google/custom-model"', cli_env)
+        self.assertIn('"openrouter/google/custom-model#low"', cli_env)
         self.assertNotIn(_SHIPPED["opencode"]["model"], cli_env)
         config = meta["opencode_config"]
         assert isinstance(config, dict)

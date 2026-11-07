@@ -1196,7 +1196,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             _write_adapter(
                 paths["adapter_dir"],
                 "codex",
-                f"#!/bin/sh\ncat <<'EOF'\n{raw}\nEOF\ncat <<'EOF' >&2\n{diagnostic}\nEOF\n",
+                # Emit diagnostics before stdout can trigger process termination.
+                f"#!/bin/sh\ncat <<'EOF' >&2\n{diagnostic}\nEOF\ncat <<'EOF'\n{raw}\nEOF\n",
             )
             self._set_env(paths, config_path)
             with (

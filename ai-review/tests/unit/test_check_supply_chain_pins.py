@@ -223,11 +223,11 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         package = json.loads(_read(pins.PACKAGE_JSON))
         self.assertEqual(pins._npm_issues(reviewer, package), [])
         self.assertTrue(pins._npm_issues(reviewer.replace("npm ci", "npm install -g"), package))
-        package["dependencies"]["opencode-ai"] = "^1.0.0"
+        package["dependencies"]["@opencode/cli"] = "^1.0.0"
         self.assertTrue(pins._npm_issues(reviewer, package))
 
     def test_pin_files_reject_placeholders_and_missing_fields(self) -> None:
-        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["opencode-ai"]
+        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["@opencode/cli"]
         for name, path in (
             ("cursor-agent.pin", pins.CURSOR_AGENT_PIN),
             ("ripgrep.pin", pins.RIPGREP_PIN),
@@ -249,17 +249,17 @@ class SupplyChainPinCheckTests(unittest.TestCase):
 
     def test_ripgrep_pin_binary_digest_and_opencode_binding(self) -> None:
         text = _read(pins.RIPGREP_PIN)
-        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["opencode-ai"]
+        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["@opencode/cli"]
         tarball = text.split("\nsha256=", 1)[1].split("\n", 1)[0]
         binary = text.split("\nbinary_sha256=", 1)[1].split("\n", 1)[0]
         self.assertEqual(
             pins._pin_file_issues("ripgrep.pin", text.replace(binary, tarball), opencode),
             ["ripgrep.pin binary_sha256 must be the extracted rg, not the tarball"],
         )
-        # A Renovate opencode-ai bump must fail until ripgrep.pin is re-observed.
+        # A Renovate @opencode/cli bump must fail until ripgrep.pin is re-observed.
         issues = pins._pin_file_issues("ripgrep.pin", text, "99.0.0")
         self.assertEqual(len(issues), 1)
-        self.assertIn("opencode_version must equal package.json opencode-ai 99.0.0", issues[0])
+        self.assertIn("opencode_version must equal package.json @opencode/cli 99.0.0", issues[0])
 
     def test_script_imports_only_the_standard_library(self) -> None:
         """The image-publishing workflow runs it before any dependency is installed."""

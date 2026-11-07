@@ -16,10 +16,10 @@
       "rangeStrategy": "pin"
     },
     {
-      "description": "ripgrep.pin names the opencode-ai version it belongs to; make supply-chain fails until it is refreshed.",
-      "matchPackageNames": ["opencode-ai"],
+      "description": "ripgrep.pin names the @opencode/cli version it belongs to; make supply-chain fails until it is refreshed.",
+      "matchPackageNames": ["@opencode/cli"],
       "prBodyNotes": [
-        "Refresh `ai-review/images/ripgrep.pin` for this opencode-ai version before merging: see step 6 of `ai-review/images/SUPPLY_CHAIN.md`."
+        "Refresh `ai-review/images/ripgrep.pin` for this @opencode/cli version before merging: see step 6 of `ai-review/images/SUPPLY_CHAIN.md`."
       ]
     }
   ]
