@@ -41,7 +41,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:948374bdc0ec87d374bc9050573153bf9be0b006f7ee32930b68b7e1267dc649
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,7 +91,7 @@ jobs:
     # Outer ceiling for the 1800s review process timeout plus wrapper/artifact
     # overhead.
     timeout-minutes: 40
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:6c4259eb7a3a95b3f2568033856c5c1e50aaefb181b0bcf76b5eb660af911e83
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:4853a5a738a5ed0ec82d5cbfb2840bae98a2afa568e80853a43dab2dd77ef553
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +133,7 @@ jobs:
     # Outer ceiling for the 900s critique process timeout plus wrapper/artifact
     # overhead.
     timeout-minutes: 20
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:6c4259eb7a3a95b3f2568033856c5c1e50aaefb181b0bcf76b5eb660af911e83
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:4853a5a738a5ed0ec82d5cbfb2840bae98a2afa568e80853a43dab2dd77ef553
     strategy:
       fail-fast: false
       matrix:
@@ -178,7 +178,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:948374bdc0ec87d374bc9050573153bf9be0b006f7ee32930b68b7e1267dc649
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -218,7 +218,7 @@ jobs:
     # `prepare` keeps the job skipped for the events `prepare` itself declines.
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-a9208beed5ef0244ebfad9602937c59469fcb944@sha256:46a22aa49e9df4c1a09523df9960bfed0e59772bfef3bdfc7c62ea8d55637dd6
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:948374bdc0ec87d374bc9050573153bf9be0b006f7ee32930b68b7e1267dc649
     steps:
       # Before the downloads: with `always()` this job runs after a failed
       # consensus, and the consensus artifact it needs does not exist. Fail on the
