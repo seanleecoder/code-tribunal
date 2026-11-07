@@ -653,6 +653,9 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg'", text)
         self.assertIn('rg --version | grep -F -- "ripgrep $version"', text)
         self.assertIn("sha256sum -c -", text)
+        # The ripgrep drift check (SUPPLY_CHAIN.md step 6).
+        self.assertIn('for embedded in "ripgrep-$version-" "$sha256"; do', text)
+        self.assertIn("in locked OpenCode; investigate", text)
         self.assertNotIn("opencode --pure run --help 2>&1 | grep -F -- '--title'", text)
 
     def test_templates_do_not_reference_antigravity_or_agy(self) -> None:

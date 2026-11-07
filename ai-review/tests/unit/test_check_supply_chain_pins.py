@@ -6,6 +6,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.support.repository_script import load_repository_script
 
@@ -227,13 +228,12 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         self.assertTrue(pins._npm_issues(reviewer, package))
 
     def test_pin_files_reject_placeholders_and_missing_fields(self) -> None:
-        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["@opencode/cli"]
         for name, path in (
             ("cursor-agent.pin", pins.CURSOR_AGENT_PIN),
             ("ripgrep.pin", pins.RIPGREP_PIN),
         ):
             text = _read(path)
-            self.assertEqual(pins._pin_file_issues(name, text, opencode), [])
+            self.assertEqual(pins._pin_file_issues(name, text), [])
             values = dict(
                 line.split("=", 1) for line in text.splitlines() if line and line[0] != "#"
             )
@@ -245,21 +245,27 @@ class SupplyChainPinCheckTests(unittest.TestCase):
             ]
             for mutated in mutations:
                 with self.subTest(name=name, mutated=mutated[-200:]):
-                    self.assertTrue(pins._pin_file_issues(name, mutated, opencode))
+                    self.assertTrue(pins._pin_file_issues(name, mutated))
 
-    def test_ripgrep_pin_binary_digest_and_opencode_binding(self) -> None:
+    def test_ripgrep_pin_binary_digest_is_the_extracted_rg(self) -> None:
         text = _read(pins.RIPGREP_PIN)
-        opencode = json.loads(_read(pins.PACKAGE_JSON))["dependencies"]["@opencode/cli"]
         tarball = text.split("\nsha256=", 1)[1].split("\n", 1)[0]
         binary = text.split("\nbinary_sha256=", 1)[1].split("\n", 1)[0]
         self.assertEqual(
-            pins._pin_file_issues("ripgrep.pin", text.replace(binary, tarball), opencode),
-            ["ripgrep.pin binary_sha256 must be the extracted rg, not the tarball"],
+            pins._pin_file_issues("ripgrep.pin", text.replace(binary, tarball)),
+            ["ripgrep.pin binary_sha256 must be the extracted binary, not the archive"],
         )
-        # A Renovate @opencode/cli bump must fail until ripgrep.pin is re-observed.
-        issues = pins._pin_file_issues("ripgrep.pin", text, "99.0.0")
-        self.assertEqual(len(issues), 1)
-        self.assertIn("opencode_version must equal package.json @opencode/cli 99.0.0", issues[0])
+
+    def test_reviewer_cli_bump_alone_passes(self) -> None:
+        """Renovate bumps a CLI with its lockfile; no .pin file changes with it."""
+        package = json.loads(_read(pins.PACKAGE_JSON))
+        package["dependencies"]["@opencode/cli"] = "99.0.0"
+
+        def read(path: Path) -> str:
+            return json.dumps(package) if path == pins.PACKAGE_JSON else _read(path)
+
+        with mock.patch.object(pins, "_read", read):
+            self.assertEqual(pins.issues(), [])
 
     def test_script_imports_only_the_standard_library(self) -> None:
         """The image-publishing workflow runs it before any dependency is installed."""

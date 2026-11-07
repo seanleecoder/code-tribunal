@@ -178,10 +178,11 @@ are not re-described.
 >   and `lychee.pin` stay, with `lychee.pin` as the only digest authority; the pin
 >   checker's duplicate copy goes.
 > - **No Renovate regex managers for the `.pin` files.** Renovate cannot recompute
->   their SHA-256s. ripgrep must follow the version the pinned `opencode-ai` fetches,
->   not upstream's latest, and Cursor's download host has no datasource. Both stay on
->   the manual refresh steps. The `opencode_version` equality check stays, so a
->   Renovate `opencode-ai` bump fails until `ripgrep.pin` is refreshed.
+>   their SHA-256s. ripgrep follows the release the pinned OpenCode would fetch, not
+>   upstream's latest, and Cursor's download host has no datasource. Both stay on the
+>   manual refresh steps. An OpenCode bump does not touch `ripgrep.pin`: the reviewer
+>   image build flags drift when the locked OpenCode no longer embeds the pinned
+>   ripgrep release name and archive checksum (`SUPPLY_CHAIN.md` step 6).
 >
 > Renovate runs as the hosted Mend app with only `renovate.json` in the repository.
 > zizmor runs offline in `make quality` and online in CI, where
