@@ -20,6 +20,8 @@ versioning.
 
 ### Fixed
 
+- Restore a bounded, redacted preview of malformed OpenCode answers in failure
+  diagnostics so operators can inspect JSON extraction failures.
 - Omit `.gitignore` files from prepared snapshots at every depth so OpenCode's
   isolated Git worktree cannot silently hide reviewed files from search. Changes
   to those files remain visible in the review diff.

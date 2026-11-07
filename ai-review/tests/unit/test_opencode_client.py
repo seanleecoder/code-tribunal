@@ -94,6 +94,30 @@ def test_ambiguous_or_invalid_final_answer_is_refused(text: str) -> None:
         client._normalize_message(answer(text), stage="review")
 
 
+@pytest.mark.parametrize("stage", ["review", "critique"])
+def test_invalid_answer_diagnostic_redacts_before_bounding(stage: str) -> None:
+    secret = "sk-or-v1-" + "a" * 80
+    text = "Malformed answer " + "x" * 465 + " " + secret + " " + "y" * 800 + "END_OF_ANSWER"
+    with (
+        mock.patch.object(
+            client, "run", side_effect=lambda: client._normalize_message(answer(text), stage=stage)
+        ),
+        contextlib.redirect_stdout(io.StringIO()) as output,
+        contextlib.redirect_stderr(io.StringIO()) as errors,
+    ):
+        assert client.main() == 1
+    assert not output.getvalue()
+    diagnostic = errors.getvalue()
+    assert "not one complete reviewer JSON root" in diagnostic
+    preview = diagnostic.split("text_preview=", 1)[1].rstrip("\n")
+    assert "Malformed answer" in preview
+    assert "[REDACTED]" in preview
+    assert secret[:12] not in diagnostic
+    assert "END_OF_ANSWER" not in diagnostic
+    assert preview.endswith("...[truncated]")
+    assert len(preview) <= 514
+
+
 @pytest.mark.parametrize(
     "content",
     [

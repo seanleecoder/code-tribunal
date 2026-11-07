@@ -402,8 +402,11 @@ def _normalize_message(response: dict[str, Any], *, stage: str) -> dict[str, Any
     try:
         payload = json_loads_no_duplicates(extract_json_text(text, stage=stage))
     except Exception as exc:
+        # Redact the complete answer before clipping can split a secret span.
+        preview = _compact(_clean(text), limit=500)
         raise OpenCodeClientError(
-            f"OpenCode answer text was not one complete reviewer JSON root: {exc}"
+            f"OpenCode answer text was not one complete reviewer JSON root: {exc}; "
+            f"text_preview={preview}"
         ) from exc
     if not isinstance(payload, (dict, list)):
         raise OpenCodeClientError("OpenCode answer payload was not an object or array")
