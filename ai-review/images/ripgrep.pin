@@ -3,9 +3,8 @@
 # image's preinstalled verified binary and fails any runtime download attempt.
 #
 # Pin the ripgrep release the locked @opencode/cli would otherwise fetch. The
-# reviewer image build fails when that OpenCode no longer embeds this version and
-# checksum, as a drift signal; the OpenCode image probes establish compatibility. The refresh process
-# is ai-review/images/SUPPLY_CHAIN.md step 6.
+# image build's drift check and the refresh process are in
+# ai-review/images/SUPPLY_CHAIN.md step 6.
 #
 # Two digests, because they cover different things: `sha256` is the release
 # tarball, verified at download time in the ripgrep-bin builder stage;

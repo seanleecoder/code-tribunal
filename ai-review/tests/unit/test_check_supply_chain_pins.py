@@ -253,7 +253,7 @@ class SupplyChainPinCheckTests(unittest.TestCase):
         binary = text.split("\nbinary_sha256=", 1)[1].split("\n", 1)[0]
         self.assertEqual(
             pins._pin_file_issues("ripgrep.pin", text.replace(binary, tarball)),
-            ["ripgrep.pin binary_sha256 must be the extracted rg, not the tarball"],
+            ["ripgrep.pin binary_sha256 must be the extracted binary, not the archive"],
         )
 
     def test_reviewer_cli_bump_alone_passes(self) -> None:

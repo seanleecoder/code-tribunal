@@ -276,8 +276,8 @@ def _pin_file_issues(name: str, text: str) -> list[str]:
     if values.get("version") and values["version"] not in values.get("url", ""):
         issues.append(f"{name} url must contain the pinned version")
     binary = values.get("binary_sha256")
-    if name == "ripgrep.pin" and binary and binary == values.get("sha256"):
-        issues.append("ripgrep.pin binary_sha256 must be the extracted rg, not the tarball")
+    if binary and binary == values.get("sha256"):
+        issues.append(f"{name} binary_sha256 must be the extracted binary, not the archive")
     return issues
 
 

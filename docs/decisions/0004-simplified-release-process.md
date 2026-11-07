@@ -181,9 +181,8 @@ are not re-described.
 >   their SHA-256s. ripgrep follows the release the pinned OpenCode would fetch, not
 >   upstream's latest, and Cursor's download host has no datasource. Both stay on the
 >   manual refresh steps. An OpenCode bump does not touch `ripgrep.pin`: the reviewer
->   image build fails when the locked OpenCode no longer embeds the pinned ripgrep
->   release name and archive checksum. That check only signals drift to investigate;
->   the OpenCode image probes establish compatibility.
+>   image build flags drift when the locked OpenCode no longer embeds the pinned
+>   ripgrep release name and archive checksum (`SUPPLY_CHAIN.md` step 6).
 >
 > Renovate runs as the hosted Mend app with only `renovate.json` in the repository.
 > zizmor runs offline in `make quality` and online in CI, where
