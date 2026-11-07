@@ -46,7 +46,7 @@ CONTAINER_IMAGES = {
 }
 PIN_KEYS = {
     "cursor-agent.pin": ("version", "url", "sha256"),
-    "ripgrep.pin": ("version", "opencode_version", "url", "sha256", "binary_sha256"),
+    "ripgrep.pin": ("version", "url", "sha256", "binary_sha256"),
 }
 
 
@@ -261,7 +261,7 @@ def _npm_issues(reviewer: str, package: dict[str, dict[str, str]]) -> list[str]:
     return issues
 
 
-def _pin_file_issues(name: str, text: str, opencode_version: str) -> list[str]:
+def _pin_file_issues(name: str, text: str) -> list[str]:
     """Reject placeholders and missing fields in the files Renovate does not update."""
     values: dict[str, str] = {}
     for line in text.splitlines():
@@ -275,16 +275,9 @@ def _pin_file_issues(name: str, text: str, opencode_version: str) -> list[str]:
             issues.append(f"{name} {key} must be a real lowercase SHA-256 digest")
     if values.get("version") and values["version"] not in values.get("url", ""):
         issues.append(f"{name} url must contain the pinned version")
-    if name == "ripgrep.pin":
-        if values.get("binary_sha256") and values["binary_sha256"] == values.get("sha256"):
-            issues.append("ripgrep.pin binary_sha256 must be the extracted rg, not the tarball")
-        # The pinned ripgrep is the one this opencode would fetch, so an opencode
-        # bump must fail here until ripgrep.pin is re-observed (SUPPLY_CHAIN.md).
-        if values.get("opencode_version") != opencode_version:
-            issues.append(
-                f"ripgrep.pin opencode_version must equal package.json @opencode/cli "
-                f"{opencode_version}; refresh ripgrep.pin (SUPPLY_CHAIN.md)"
-            )
+    binary = values.get("binary_sha256")
+    if name == "ripgrep.pin" and binary and binary == values.get("sha256"):
+        issues.append("ripgrep.pin binary_sha256 must be the extracted rg, not the tarball")
     return issues
 
 
@@ -292,7 +285,6 @@ def issues() -> list[str]:
     base = _read(BASE_DOCKERFILE)
     reviewer = _read(REVIEWER_DOCKERFILE)
     package = json.loads(_read(PACKAGE_JSON))
-    opencode_version = str(package.get("dependencies", {}).get("@opencode/cli", ""))
     constraints = _read(PYTHON_CONSTRAINTS)
     return [
         *_dockerfile_issues("base.Dockerfile", base),
@@ -304,8 +296,8 @@ def issues() -> list[str]:
         *_exact_requirement_issues("requirements-dev.txt", _read(DEV_REQUIREMENTS), markers=True),
         *_pip_install_issues(base, constraints),
         *_npm_issues(reviewer, package),
-        *_pin_file_issues("cursor-agent.pin", _read(CURSOR_AGENT_PIN), opencode_version),
-        *_pin_file_issues("ripgrep.pin", _read(RIPGREP_PIN), opencode_version),
+        *_pin_file_issues("cursor-agent.pin", _read(CURSOR_AGENT_PIN)),
+        *_pin_file_issues("ripgrep.pin", _read(RIPGREP_PIN)),
     ]
 
 

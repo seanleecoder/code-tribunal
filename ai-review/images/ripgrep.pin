@@ -2,17 +2,10 @@
 # release download. V2 verifies the downloaded archive, but Tribunal requires the
 # image's preinstalled verified binary and fails any runtime download attempt.
 #
-# Keep the version equal to the one the pinned @opencode/cli would fetch, so the
-# reviewer runs the ripgrep OpenCode was tested against. The version here and the
-# port of the artifact URL are bound to @opencode/cli's downloads; refresh steps,
-# including how to observe the version opencode would fetch, live in
-# ai-review/images/SUPPLY_CHAIN.md.
-#
-# opencode_version must equal the @opencode/cli version in
-# ai-review/images/package.json, and check_supply_chain_pins.py enforces that
-# equality. It is what makes a future opencode bump fail the pin check until the
-# ripgrep version it fetches has been re-observed, instead of silently stranding
-# the reviewer on a mismatched ripgrep.
+# Pin the ripgrep release the locked @opencode/cli would otherwise fetch. The
+# reviewer image build fails when that OpenCode no longer embeds this version and
+# checksum, as a drift signal; the OpenCode image probes establish compatibility. The refresh process
+# is ai-review/images/SUPPLY_CHAIN.md step 6.
 #
 # Two digests, because they cover different things: `sha256` is the release
 # tarball, verified at download time in the ripgrep-bin builder stage;
@@ -20,7 +13,6 @@
 # again in the final image stage and at preflight, so what actually resolves on
 # the adapter's PATH is checked rather than merely what was downloaded.
 version=15.1.0
-opencode_version=2.2.5
 url=https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz
 sha256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
 binary_sha256=ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2

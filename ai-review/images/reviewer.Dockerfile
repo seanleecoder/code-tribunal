@@ -140,12 +140,23 @@ RUN set -eu; \
 # not merely present somewhere in the image. The binary digest is re-checked here
 # rather than only in the builder stage, because what matters is the identity of
 # the file that ended up on PATH after the COPY, not what was downloaded.
+#
+# The locked OpenCode binary embeds the ripgrep release name and archive checksum of
+# its fallback download. Their absence flags a likely ripgrep drift to investigate
+# (SUPPLY_CHAIN.md step 6). This only detects missing strings: it cannot prove the
+# fallback uses them, and an absence may be a change of embedding rather than of
+# ripgrep. The OpenCode image probes establish compatibility.
 RUN --mount=type=bind,source=ai-review/images/ripgrep.pin,target=/tmp/ripgrep.pin set -eu; \
     resolved="$(env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c 'command -v rg')"; \
     test "$resolved" = "/usr/local/bin/rg"; \
     . /tmp/ripgrep.pin; \
     echo "$binary_sha256  /usr/local/bin/rg" | sha256sum -c -; \
-    rg --version | grep -F -- "ripgrep $version"
+    rg --version | grep -F -- "ripgrep $version"; \
+    opencode="$(readlink -f /usr/local/bin/opencode)"; \
+    grep -aqF -- "ripgrep-$version-" "$opencode" \
+      || { echo "cannot confirm ripgrep $version in locked OpenCode; investigate (SUPPLY_CHAIN.md step 6)" >&2; exit 1; }; \
+    grep -aqF -- "$sha256" "$opencode" \
+      || { echo "cannot confirm ripgrep archive sha256 in locked OpenCode; investigate (SUPPLY_CHAIN.md step 6)" >&2; exit 1; }
 
 # Build-time probes share one RUN so a single pair of tmpfs mounts keeps the CLIs'
 # first-run state (install IDs, configs, logs, caches) out of every image layer.
