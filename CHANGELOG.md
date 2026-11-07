@@ -9,14 +9,27 @@ versioning.
 
 ### Changed
 
-- Migrate the OpenCode seat from `opencode-ai@1.19.5` to `@opencode/cli@2.2.5`.
+- Migrate the OpenCode seat from `opencode-ai@1.19.5` to `@opencode/cli@2.2.6`.
   Both stages use a private authenticated v2 session and return final-answer JSON
   through the existing extractor and schema validation. V2 removes generation-time
   schema enforcement; public finding/critique schemas and model/effort settings
   remain unchanged. The workspace is beneath isolated HOME, with explicit
   external-directory denial, a fresh Git boundary and disabled ancestor project
   configuration discovery. Malformed-answer diagnostics keep a bounded preview,
-  redacted before clipping. Offline image probes now cover both stages and the v2 isolation/failure paths.
+  redacted before clipping. Offline image probes now cover both stages and the
+  v2 isolation/failure paths.
+- Omit OpenCode v2's `.agents` project directory from prepared snapshots at every
+  depth, alongside the other reviewer agent files, so repository content cannot
+  supply OpenCode instructions or configuration.
+- The reviewer image build checks that the locked OpenCode binary still embeds
+  the release name and archive checksum pinned in `ripgrep.pin`, and fails with
+  an investigate diagnostic on drift. An OpenCode bump no longer needs a
+  `ripgrep.pin` change while OpenCode keeps fetching the pinned release.
+- Upgraded reviewer CLIs to Claude Code 2.1.319, Codex 0.167.0 and OpenCode
+  (`@opencode/cli`) 2.2.6; Cursor Agent is unchanged. Refreshed the Python,
+  Node 26.13.0 builder and Debian base image digests, pip to 26.3, and
+  the development tools Ruff 0.17.4, zizmor 1.32.0 and types-PyYAML
+  6.0.12.20261103. OpenCode remains paired with ripgrep 15.1.0.
 
 ### Fixed
 
