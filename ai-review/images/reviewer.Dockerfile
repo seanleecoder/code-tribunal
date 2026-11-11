@@ -1,7 +1,7 @@
 ARG AI_REVIEW_BASE_IMAGE=python:3.15.2-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 # Codex's native package directory, shared by the builder prune and the final-stage shim.
 ARG CODEX_VENDOR=@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl
-FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS reviewer-clis
+FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS reviewer-clis
 ARG CODEX_VENDOR
 
 WORKDIR /opt/ai-review/reviewer-clis
