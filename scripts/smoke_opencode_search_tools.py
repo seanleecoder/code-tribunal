@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn
@@ -161,6 +162,25 @@ def _client_server_env_and_root() -> tuple[dict[str, str], Path]:
     return client._server_env(tmp_dir, api_key=PROBE_API_KEY, config=config), root
 
 
+def _wait_for_reviewer(base_url: str, *, password: str) -> None:
+    """Agent catalogs return partial snapshots while v2.2.7 plugins activate."""
+    client = shipped_client()
+    deadline = time.monotonic() + 30.0
+    while (remaining := deadline - time.monotonic()) > 0:
+        response = client._request_json(
+            base_url, "GET", "api/agent", password=password, timeout=remaining
+        )
+        agents = response.get("data")
+        if not isinstance(agents, list) or any(
+            not isinstance(agent, dict) or not isinstance(agent.get("id"), str) for agent in agents
+        ):
+            fail("OpenCode did not return a native agent list")
+        if any(agent["id"] == "ai-reviewer" for agent in agents):
+            return
+        time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
+    fail("OpenCode did not register ai-reviewer within 30 seconds")
+
+
 def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     client = shipped_client()
     password = env["OPENCODE_PASSWORD"]
@@ -172,9 +192,7 @@ def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     except client.OpenCodeClientError as exc:
         fail(f"{exc}{client._server_log_detail(logs)}")
     try:
-        # In v2.2.5 agent.list awaits location plugin activation; agent.get
-        # reads immediately and can race the config plugin on a cold server.
-        client._request_json(base_url, "GET", "api/agent", password=password, timeout=30.0)
+        _wait_for_reviewer(base_url, password=password)
         agent = client._response_data(
             client._request_json(
                 base_url,

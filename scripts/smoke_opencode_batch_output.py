@@ -31,7 +31,7 @@ EXTERNAL_MARKER = "PREFLIGHT_EXTERNAL_SECRET"
 ANCESTOR_MARKER = "PREFLIGHT_ANCESTOR_INSTRUCTION"
 CLIENT_TIMEOUT_SECONDS = 180
 CLIENT_WITH_CONFIG = """
-import contextlib, json, os, sys
+import contextlib, json, os, sys, time
 from pathlib import Path
 from urllib.parse import urlsplit
 from ai_review import opencode_client as client
@@ -65,12 +65,27 @@ def recorded_start(*args, **kwargs):
         raise RuntimeError("critique root contains repository files")
     result = original_start(*args, **kwargs)
     print("OPENCODE_V2_EVIDENCE " + json.dumps({"startup": {"url": result[1]}}), file=sys.stderr)
-    agents = client._request_json(result[1], "GET", "api/agent",
-                                 password=env["OPENCODE_PASSWORD"], timeout=30)
-    if "tribunal-injected-agent" in json.dumps(agents):
+    try:
+        # v2.2.7 lists partial catalogs. Wait for the config agent before
+        # asserting absence of agents that ancestor discovery could supply.
+        deadline = time.monotonic() + 30
+        while (remaining := deadline - time.monotonic()) > 0:
+            agents = client._request_json(result[1], "GET", "api/agent",
+                                         password=env["OPENCODE_PASSWORD"], timeout=remaining)
+            entries = agents.get("data")
+            if not isinstance(entries, list) or any(
+                    not isinstance(agent, dict) or not isinstance(agent.get("id"), str)
+                    for agent in entries):
+                raise RuntimeError("OpenCode did not return a native agent list")
+            if "tribunal-injected-agent" in json.dumps(agents):
+                raise RuntimeError("ancestor agent configuration loaded")
+            if any(agent["id"] == "ai-reviewer" for agent in entries):
+                return result
+            time.sleep(min(.025, max(0, deadline - time.monotonic())))
+        raise RuntimeError("OpenCode did not register ai-reviewer within 30 seconds")
+    except BaseException:
         client._stop_server(result[0], result[2])
-        raise RuntimeError("ancestor agent configuration loaded")
-    return result
+        raise
 client._start_server = recorded_start
 raise SystemExit(client.main())
 """
