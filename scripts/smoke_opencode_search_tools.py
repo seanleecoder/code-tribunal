@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn
@@ -172,9 +173,18 @@ def _prove_effective_permissions(env: dict[str, str], root: Path) -> None:
     except client.OpenCodeClientError as exc:
         fail(f"{exc}{client._server_log_detail(logs)}")
     try:
-        # In v2.2.5 agent.list awaits location plugin activation; agent.get
-        # reads immediately and can race the config plugin on a cold server.
-        client._request_json(base_url, "GET", "api/agent", password=password, timeout=30.0)
+        # Since v2.2.7 agent.list returns the agents loaded so far and agent.get
+        # never waited, so poll until the config plugin has registered ours.
+        deadline = time.monotonic() + 30.0
+        while not any(
+            entry.get("id") == "ai-reviewer"
+            for entry in client._request_json(
+                base_url, "GET", "api/agent", password=password, timeout=30.0
+            )["data"]
+        ):
+            if time.monotonic() > deadline:
+                fail("OpenCode did not register ai-reviewer within 30 seconds")
+            time.sleep(0.05)
         agent = client._response_data(
             client._request_json(
                 base_url,

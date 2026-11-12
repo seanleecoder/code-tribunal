@@ -65,13 +65,24 @@ def recorded_start(*args, **kwargs):
         raise RuntimeError("critique root contains repository files")
     result = original_start(*args, **kwargs)
     print("OPENCODE_V2_EVIDENCE " + json.dumps({"startup": {"url": result[1]}}), file=sys.stderr)
-    agents = client._request_json(result[1], "GET", "api/agent",
-                                 password=env["OPENCODE_PASSWORD"], timeout=30)
-    if "tribunal-injected-agent" in json.dumps(agents):
-        client._stop_server(result[0], result[2])
-        raise RuntimeError("ancestor agent configuration loaded")
+    started.append((result[1], env["OPENCODE_PASSWORD"]))
     return result
 client._start_server = recorded_start
+started = []
+original_stop = client._stop_server
+def checked_stop(*args):
+    # Since v2.2.7 agent.list returns the agents loaded so far, so inspect the
+    # catalog at teardown, after the prompt. Asking at startup would also hold
+    # back the cold session creation that the shipped client performs.
+    try:
+        agents = started and client._request_json(
+            started[0][0], "GET", "api/agent", password=started[0][1], timeout=30)
+    finally:
+        original_stop(*args)
+    if started and ("tribunal-injected-agent" in json.dumps(agents) or not any(
+            agent.get("id") == "ai-reviewer" for agent in agents["data"])):
+        raise RuntimeError("AGENT_CATALOG_VIOLATION: ancestor agent loaded or ai-reviewer absent")
+client._stop_server = checked_stop
 raise SystemExit(client.main())
 """
 
@@ -262,9 +273,18 @@ def _client_config(effort: str | None = None) -> str:
 
 
 def _run_client(
-    provider_url: str, label: str, stage: str = "review", effort: str | None = None
+    provider_url: str,
+    label: str,
+    stage: str = "review",
+    effort: str | None = None,
+    *,
+    inject_agent: bool = False,
 ) -> tuple[int, str, str]:
     config = patch_provider_base_url(_client_config(effort), provider_url)
+    if inject_agent:
+        parsed = json.loads(config)
+        parsed["agents"]["tribunal-injected-agent"] = parsed["agents"]["ai-reviewer"]
+        config = json.dumps(parsed)
     work = SMOKE_DIR / f"client-{label}"
     snapshot = work / "inputs" / "repo_snapshot"
     source = work / "source"
@@ -330,6 +350,10 @@ def _run_client(
     for line in result.stderr.splitlines():
         if line.startswith("OPENCODE_V2_EVIDENCE "):
             print(line, flush=True)
+    # Checked here, for every case: the controls that expect a failing client
+    # would otherwise accept a catalog violation as their expected failure.
+    if ("AGENT_CATALOG_VIOLATION" in result.stderr) != inject_agent:
+        fail(f"agent catalog check was wrong for {label}: {result.stderr}")
     return result.returncode, result.stdout, result.stderr
 
 
@@ -399,6 +423,14 @@ def _prove_failures() -> None:
             code, stdout, stderr = _run_client(stub.base_url, label)
         if not stub.requests or code == 0 or stdout.strip():
             fail(f"invalid {label} case was accepted or never reached the provider: {stderr}")
+
+
+def _prove_agent_catalog_check_fires() -> None:
+    # Positive control: an agent the real server loads must fail the client.
+    with _StubProvider(probe_batch("review")) as stub:
+        code, _stdout, stderr = _run_client(stub.base_url, "injected-agent", inject_agent=True)
+    if not stub.requests or code == 0:
+        fail(f"a loaded injected agent did not fail the client after its prompt: {stderr}")
 
 
 def _prove_external_and_mutation_denial() -> None:
@@ -493,6 +525,7 @@ def main() -> int:
     for effort in sorted(shipped_client().EFFORT_LEVELS):
         _prove_batch("critique", effort=effort)
     _prove_failures()
+    _prove_agent_catalog_check_fires()
     _prove_external_and_mutation_denial()
     _prove_rg_execution_and_credential_scrubbing()
     _prove_rg_absent_is_a_client_failure()

@@ -135,6 +135,20 @@ def test_failure_control_cannot_pass_when_no_provider_was_reached() -> None:
         smoke._prove_failures()
 
 
+@pytest.mark.parametrize("result", [(0, "{}", ""), (1, "", "failed before any prompt")])
+def test_injected_agent_control_cannot_pass_vacuously(result: tuple[int, str, str]) -> None:
+    stub = mock.MagicMock()
+    stub.__enter__.return_value = stub
+    stub.requests = [{"model": smoke.PROBE_MODEL}] if result[0] == 0 else []
+    with (
+        mock.patch.object(smoke, "_StubProvider", return_value=stub),
+        mock.patch.object(smoke, "_run_client", return_value=result) as run_client,
+        pytest.raises(SystemExit, match="did not fail the client after its prompt"),
+    ):
+        smoke._prove_agent_catalog_check_fires()
+    assert run_client.call_args.kwargs == {"inject_agent": True}
+
+
 def test_both_image_gates_are_unconditional_and_network_disabled() -> None:
     workflow = (ROOT / ".github/workflows/publish-ai-review-images.yml").read_text()
     for name in ("batch_output", "search_tools"):
