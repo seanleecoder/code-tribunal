@@ -18,6 +18,9 @@ decisions are recorded below.
 
 - [Prepare missing-ledger check](PREPARE_MISSING_LEDGER.md): deferred compatible
   follow-up after 3.0; posting already fails closed.
+- [`refuted` human disposition](REFUTED_DISPOSITION.md): proposed; records a
+  false positive distinctly from an accepted-risk `wontfix`. One release, four
+  boundary PRs.
 
 SPEC-66 (run health in the summary comment) shipped in 2.1.0; see
 [`CHANGELOG.md`](../../CHANGELOG.md).
