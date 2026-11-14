@@ -11,6 +11,9 @@ from typing import Any, cast, get_args
 from .canonical import canonical_json_text
 from .config import ReviewConfig, StateRetention
 from .memory import (
+    COMMAND_STATUS,
+    HUMAN_HELD_STATUSES,
+    SETTLED_STATUSES,
     compact_state,
     find_matching_record,
     is_auto_resolved,
@@ -53,11 +56,7 @@ class InlinePlan:
     @property
     def settled(self) -> bool:
         """A claimed settled finding posts no inline thread."""
-        return self.record is not None and self.record["status"] in {
-            "wontfix",
-            "refuted",
-            "resolved",
-        }
+        return self.record is not None and self.record["status"] in SETTLED_STATUSES
 
 
 @dataclass
@@ -295,7 +294,7 @@ def _desired_discussion_resolved(
     record: StateRecord,
     prior_status: dict[str, StateRecordStatus | None],
 ) -> bool | None:
-    if record.get("status") in {"resolved", "wontfix", "refuted"} and prior_status.get(
+    if record.get("status") in SETTLED_STATUSES and prior_status.get(
         record["issue_id"]
     ) != record.get("status"):
         return True
@@ -390,15 +389,9 @@ def _plan_stale_records(
         # A human command names this thread, so it applies even when an ambiguous
         # match protects the record; protection only blocks absence resolution.
         command = human_commands.get(issue_id)
-        if command == "reopen":
-            updated["status"] = "open"
-            updated["human_disposition"] = "reopen"
-        elif command in {"wontfix", "refuted"}:
-            updated["status"] = command
+        if command is not None:
+            updated["status"] = COMMAND_STATUS[command]
             updated["human_disposition"] = command
-        elif command == "resolve":
-            updated["status"] = "resolved"
-            updated["human_disposition"] = "resolve"
         elif issue_id in protected_issue_ids:
             if updated.get("status") == "open":
                 updated["status"] = "stale"
@@ -503,23 +496,17 @@ def plan_state(
             continue
         if previous is not None and previous.get("discussion_id") is not None:
             planning_used_discussion_ids.add(previous.get("discussion_id"))
-        status = "open"
+        status: StateRecordStatus = "open"
         human_disposition: str | None = previous.get("human_disposition") if previous else None
         command = human_commands.get(issue_id)
         if command is None and previous is not None:
             command = human_commands.get(previous["issue_id"])
-        if command in {"wontfix", "refuted"}:
-            status = command
+        if command is not None:
+            status = COMMAND_STATUS[command]
             human_disposition = command
-        elif command == "resolve":
-            status = "resolved"
-            human_disposition = "resolve"
-        elif command == "reopen":
-            status = "open"
-            human_disposition = "reopen"
-        elif previous is not None and previous.get("status") in {"wontfix", "refuted"}:
+        elif previous is not None and previous.get("status") in HUMAN_HELD_STATUSES:
             status = previous["status"]
-            human_disposition = previous.get("human_disposition") or status
+            human_disposition = human_disposition or status
         group_plan.record = cast(
             StateRecord,
             _record_for_group(

@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ai_review.memory import decode_state_note_body, state_note_candidates
+from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
@@ -255,7 +255,11 @@ def lifecycle_reviewer_results(findings: dict[str, Any]) -> dict[str, dict[str, 
 
 
 def saved_disposition(
-    notes: list[dict[str, Any]], *, project_id: str, change_id: str, root_note_id: int,
+    notes: list[dict[str, Any]],
+    *,
+    project_id: str,
+    change_id: str,
+    root_note_id: int,
     disposition: str,
 ) -> dict[str, Any]:
     """Return the persisted disposition record for one finding thread.
@@ -280,8 +284,10 @@ def saved_disposition(
     record = records[0]
     if not record["discussion_id"]:
         raise LifecycleFailure("saved record has no discussion identity")
-    status = "open" if disposition == "reopen" else disposition
-    if record["status"] != status or record["human_disposition"] != disposition:
+    if (
+        record["status"] != COMMAND_STATUS[disposition]
+        or record["human_disposition"] != disposition
+    ):
         raise LifecycleFailure(
             f"saved record does not retain the {disposition} status and human disposition"
         )
@@ -432,9 +438,7 @@ class Lifecycle:
         expect(not post.get("warnings"), "reopen reported warnings")
         expect(not self.resolved(), "thread is still resolved after reopen")
         expect(len(self.threads()) == 1, "reopen created a new thread")
-        return {
-            self.run_key: run, "state": self.saved_disposition("reopen"), **post_counts(post)
-        }
+        return {self.run_key: run, "state": self.saved_disposition("reopen"), **post_counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
         expect("BLOCKER" in str(self.thread()["body"]), "the thread is not blocker severity")

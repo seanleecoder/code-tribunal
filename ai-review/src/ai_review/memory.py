@@ -11,7 +11,26 @@ from .anchors import anchor_path_key
 from .canonical import canonical_json, canonical_json_text, sha256_hex
 from .notes import LEDGER_CONTAINER_RE, STATE_MARKER_RE, SUMMARY_MARKER_RE, note_author_id
 from .schema import now_iso, validate_instance
-from .types import FindingGroup, MatchPrecedence, State, StateMatchStatus, StateRecord
+from .types import (
+    FindingGroup,
+    MatchPrecedence,
+    State,
+    StateMatchStatus,
+    StateRecord,
+    StateRecordStatus,
+)
+
+# Human dispositions that become the record status and persist across reruns.
+HUMAN_HELD_STATUSES: frozenset[StateRecordStatus] = frozenset({"wontfix", "refuted"})
+# Settled findings post no inline thread and resolve their discussion.
+SETTLED_STATUSES: frozenset[StateRecordStatus] = HUMAN_HELD_STATUSES | {"resolved"}
+# Keys are the HumanDisposition values accepted as /ai-review commands.
+COMMAND_STATUS: dict[str, StateRecordStatus] = {
+    "resolve": "resolved",
+    "wontfix": "wontfix",
+    "refuted": "refuted",
+    "reopen": "open",
+}
 
 MATCH_PRECEDENCE: tuple[MatchPrecedence, ...] = (
     "exact_issue_id",
@@ -441,7 +460,7 @@ def prior_decisions_from_state(state: dict[str, Any]) -> dict[str, Any]:
             "path": anchor.get("new_path") or anchor.get("old_path") or "",
             "context_hash": first_context_hash,
         }
-        if record.get("status") in {"wontfix", "refuted", "resolved"}:
+        if record.get("status") in SETTLED_STATUSES:
             settled.append(item)
         elif record.get("status") == "open":
             open_records.append({key: value for key, value in item.items() if key != "status"})

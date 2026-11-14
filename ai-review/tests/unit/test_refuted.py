@@ -23,6 +23,8 @@ from ai_review.memory import (
 from ai_review.prompt_render import render_critique_prompt, render_review_prompt
 
 from tests.support.config_yaml import runtime_config
+from tests.support.fake_github import FakeGitHubClient
+from tests.support.fake_gitlab import FakeGitLabClient
 
 # Frozen from e6127cb: test evidence for the previous reader, never a runtime authority.
 OLD_SCHEMA = json.loads(
@@ -61,7 +63,6 @@ def test_refuted_roundtrip_compaction_history_and_prompts(tmp_path: Path) -> Non
     (tmp_path / "mr.diff").write_text("")
     findings = tmp_path / "findings"
     findings.mkdir()
-    config = runtime_config()
     review = render_review_prompt(tmp_path, config, "claude")
     critique, _ = render_critique_prompt(tmp_path, config, "claude", findings)
     for prompt in (review, critique):
@@ -78,9 +79,6 @@ def test_refuted_roundtrip_compaction_history_and_prompts(tmp_path: Path) -> Non
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 @pytest.mark.parametrize("access", [40, 10, None])
 def test_refuted_authorization(platform: str, access: int | None) -> None:
-    from tests.support.fake_github import FakeGitHubClient
-    from tests.support.fake_gitlab import FakeGitLabClient
-
     cls = FakeGitHubClient if platform == "github" else FakeGitLabClient
     client = cls(head_sha="head", diff_text="")
     client.member_access_level = Mock(return_value=access)
