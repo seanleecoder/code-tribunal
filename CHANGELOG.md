@@ -7,6 +7,22 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `/ai-review refuted` records a maintainer's rejection of a finding's validity,
+  distinct from accepted-risk `wontfix`. It resolves and retains the matching
+  finding until a later authorized command, and carries `refuted` into settled
+  review and critique history. Existing `wontfix` records are unchanged.
+- GitHub and GitLab lifecycle canaries exercise refuting, an unchanged rerun,
+  and reopening the same thread.
+
+### Upgrade
+
+Ship all `refuted` changes together. After a `refuted` command has been posted,
+rollback to an older image requires converting affected dispositions to `wontfix`
+while still on new images and verifying the exact rollback image; follow the
+[rollback procedure](docs/operations.md#rollback-after-refuted-has-been-used).
+
 ## [3.0.1] - 2026-11-07
 
 ### Changed

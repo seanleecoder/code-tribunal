@@ -46,7 +46,7 @@ from candidate_canary_common import (
     poll,
     read_state,
     run_lifecycle_steps,
-    saved_wontfix,
+    saved_disposition,
     write_state,
 )
 from pipeline_trust import REVIEW_DAG_PATH, ROOT, find_trust_issues
@@ -566,7 +566,7 @@ class GitLabLifecycle(Lifecycle):
             payload={"body": text},
         )
 
-    def saved_wontfix(self) -> dict[str, Any]:
+    def saved_disposition(self, disposition: str) -> dict[str, Any]:
         notes = [
             note
             for note in _request(
@@ -574,8 +574,9 @@ class GitLabLifecycle(Lifecycle):
             )
             if note.get("author", {}).get("id") == self.root["author_id"]
         ]
-        return saved_wontfix(
-            notes, project_id=DEMO_PROJECT, change_id=self.mr, root_note_id=self.root["id"]
+        return saved_disposition(
+            notes, project_id=DEMO_PROJECT, change_id=self.mr, root_note_id=self.root["id"],
+            disposition=disposition,
         )
 
     def merge_state(self) -> tuple[dict[str, str], bool | None]:

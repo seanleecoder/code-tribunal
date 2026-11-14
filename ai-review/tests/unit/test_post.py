@@ -1241,7 +1241,7 @@ class PostTests(PostCase):
                 return UnauthorizedResponse()
 
         for mode in ("github_reviews", "gitlab_discussions"):
-            for command in ("resolve", "wontfix", "reopen"):
+            for command in ("resolve", "wontfix", "refuted", "reopen"):
                 with self.subTest(platform=mode, command=command):
                     session = UnauthorizedSession()
                     if mode == "github_reviews":
@@ -1256,8 +1256,8 @@ class PostTests(PostCase):
                     manifest = dict(self._manifest("head"), project_id="owner/repo")
                     consensus = self._consensus()
                     record = self._state_record(consensus["groups"][0])
-                    prior_status = "resolved" if command == "reopen" else "open"
-                    prior_disposition = "resolve" if command == "reopen" else None
+                    prior_status = "refuted" if command == "reopen" else "open"
+                    prior_disposition = "refuted" if command == "reopen" else None
                     record.update(status=prior_status, human_disposition=prior_disposition)
                     state = self._state_with_records([record])
                     config = self._config(mode=mode)

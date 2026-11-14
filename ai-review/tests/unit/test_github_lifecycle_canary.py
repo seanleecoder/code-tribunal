@@ -247,6 +247,24 @@ class WontfixStepTests(unittest.TestCase):
             self.assertIn("--slurp", call.args)
             self.assertIn(f"repos/{lifecycle.DEMO_REPOSITORY}/issues/7/comments", call.args)
 
+    def test_refuted_record_survives_without_another_resolution(self) -> None:
+        pages = [[_state_note(status="refuted", human_disposition="refuted")]]
+        self.json.side_effect = [pages, pages]
+        observed = self.driver.step_refuted()
+        self.assertEqual(observed["state"]["status"], "refuted")
+        self.assertEqual(observed["persisted_state"], observed["state"])
+        self.assertEqual(observed["persisted"]["resolved_discussions"], 0)
+
+    def test_reopen_checks_the_saved_open_disposition(self) -> None:
+        self.json.side_effect = [[[_state_note(status="open", human_disposition="reopen")]]]
+        with (
+            mock.patch.object(self.driver, "resolved", return_value=False),
+            mock.patch.object(self.driver, "threads", return_value=[self.driver.root]),
+        ):
+            observed = self.driver.step_reopen()
+        self.assertEqual(observed["state"]["status"], "open")
+        self.assertEqual(observed["state"]["human_disposition"], "reopen")
+
     def test_resolved_thread_cannot_hide_a_missing_disposition(self) -> None:
         self.json.side_effect = [[[_state_note(status="resolved", human_disposition=None)]]]
         with self.assertRaises(lifecycle.LifecycleFailure):
@@ -558,6 +576,8 @@ class LifecycleStepTests(unittest.TestCase):
                 "changed_body",
                 "wontfix",
                 "reopen",
+                "refuted",
+                "reopen_after_refuted",
                 "stale_head",
                 "blocker_does_not_block",
             ],

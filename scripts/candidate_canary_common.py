@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ai_review.memory import decode_state_note_body, state_note_candidates
+from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
@@ -254,14 +254,19 @@ def lifecycle_reviewer_results(findings: dict[str, Any]) -> dict[str, dict[str, 
     return results
 
 
-def saved_wontfix(
-    notes: list[dict[str, Any]], *, project_id: str, change_id: str, root_note_id: int
+def saved_disposition(
+    notes: list[dict[str, Any]],
+    *,
+    project_id: str,
+    change_id: str,
+    root_note_id: int,
+    disposition: str,
 ) -> dict[str, Any]:
-    """Return the persisted wontfix record for one finding thread.
+    """Return the persisted disposition record for one finding thread.
 
     ``notes`` must already be limited to the review bot's own notes. Raises
     ``LifecycleFailure`` unless exactly one state note decodes, validates, belongs to
-    this change, and records a human wontfix disposition for ``root_note_id``.
+    this change, and records the requested human disposition for ``root_note_id``.
     """
     candidates, _ = state_note_candidates(notes)
     if len(candidates) != 1:
@@ -279,9 +284,12 @@ def saved_wontfix(
     record = records[0]
     if not record["discussion_id"]:
         raise LifecycleFailure("saved record has no discussion identity")
-    if record["status"] != "wontfix" or record["human_disposition"] != "wontfix":
+    if (
+        record["status"] != COMMAND_STATUS[disposition]
+        or record["human_disposition"] != disposition
+    ):
         raise LifecycleFailure(
-            "saved record does not retain the wontfix status and human disposition"
+            f"saved record does not retain the {disposition} status and human disposition"
         )
     keys = ("issue_id", "discussion_id", "root_note_id", "status", "human_disposition")
     return {"state_note_id": note["id"], **{key: record[key] for key in keys}}
@@ -333,7 +341,7 @@ class Lifecycle:
     def reply(self, text: str) -> None:
         raise NotImplementedError
 
-    def saved_wontfix(self) -> dict[str, Any]:
+    def saved_disposition(self, disposition: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def merge_state(self) -> tuple[dict[str, str], bool | None]:
@@ -392,23 +400,29 @@ class Lifecycle:
         return {self.run_key: run, **post_counts(post)}
 
     def step_wontfix(self) -> dict[str, Any]:
-        self.reply("/ai-review wontfix")
+        return self._step_settled("wontfix")
+
+    def step_refuted(self) -> dict[str, Any]:
+        return self._step_settled("refuted")
+
+    def _step_settled(self, disposition: str) -> dict[str, Any]:
+        self.reply(f"/ai-review {disposition}")
         run, post = self.review(self.rerun("blocking"))
         # A failed resolution is only a post_result warning, so an expired resolve
         # token must be caught here rather than by a green run.
         expect(not post.get("warnings"), "post reported warnings; check the resolve token")
-        expect((post.get("resolved_discussions") or 0) >= 1, "wontfix resolved nothing")
-        expect(self.resolved(), "thread is not resolved after wontfix")
-        saved = self.saved_wontfix()
+        expect((post.get("resolved_discussions") or 0) >= 1, f"{disposition} resolved nothing")
+        expect(self.resolved(), f"thread is not resolved after {disposition}")
+        saved = self.saved_disposition(disposition)
         persist, persisted = self.review(self.rerun("blocking"))
-        expect(not persisted.get("warnings"), "wontfix rerun reported warnings")
+        expect(not persisted.get("warnings"), f"{disposition} rerun reported warnings")
         expect(
             not post_mutated(persisted),
-            "wontfix rerun mutated the review instead of preserving the disposition",
+            f"{disposition} rerun mutated the review instead of preserving the disposition",
         )
-        saved_after = self.saved_wontfix()
-        expect(saved_after == saved, "wontfix rerun changed the saved finding identity")
-        expect(self.resolved(), "wontfix did not persist")
+        saved_after = self.saved_disposition(disposition)
+        expect(saved_after == saved, f"{disposition} rerun changed the saved finding identity")
+        expect(self.resolved(), f"{disposition} did not persist")
         return {
             self.run_key: run,
             f"persist_{self.run_key}": persist,
@@ -421,9 +435,10 @@ class Lifecycle:
     def step_reopen(self) -> dict[str, Any]:
         self.reply("/ai-review reopen")
         run, post = self.review(self.rerun("blocking"))
+        expect(not post.get("warnings"), "reopen reported warnings")
         expect(not self.resolved(), "thread is still resolved after reopen")
         expect(len(self.threads()) == 1, "reopen created a new thread")
-        return {self.run_key: run, **post_counts(post)}
+        return {self.run_key: run, "state": self.saved_disposition("reopen"), **post_counts(post)}
 
     def step_blocker_does_not_block(self) -> dict[str, Any]:
         expect("BLOCKER" in str(self.thread()["body"]), "the thread is not blocker severity")
@@ -446,5 +461,7 @@ class Lifecycle:
             ("changed_body", self.step_changed_body),
             ("wontfix", self.step_wontfix),
             ("reopen", self.step_reopen),
+            ("refuted", self.step_refuted),
+            ("reopen_after_refuted", self.step_reopen),
             ("blocker_does_not_block", self.step_blocker_does_not_block),
         )

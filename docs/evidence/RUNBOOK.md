@@ -202,7 +202,12 @@ at every step:
    disposition persists on a further unchanged rerun;
 5. reopen through the platform API or `/ai-review reopen`, then rerun `blocking`:
    the same discussion is active again;
-6. (GitHub) push a new head mid-run: `post` reports `status: stale_head`, writes
+6. reply `/ai-review refuted`, then rerun `blocking`: the same discussion is
+   resolved and the saved status and human disposition are both `refuted`; an
+   unchanged rerun preserves its identity without inline or resolution mutations;
+7. reply `/ai-review reopen`, then rerun `blocking`: the same discussion is
+   active and the saved record is `open/reopen`;
+8. (GitHub) push a new head mid-run: `post` reports `status: stale_head`, writes
    nothing, and exits 0.
 
 ### GitLab hostile-MR checklist

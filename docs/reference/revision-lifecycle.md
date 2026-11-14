@@ -33,8 +33,17 @@ with a command on its own line. GitLab requires Developer access or higher;
 GitHub accepts Write, Maintain, or Admin.
 
 - `/ai-review resolve`
-- `/ai-review wontfix`
+- `/ai-review wontfix` — settle a concern without fixing it (accepted risk).
+- `/ai-review refuted` — settle a finding whose validity a maintainer rejects.
 - `/ai-review reopen`
+
+Both `wontfix` and `refuted` resolve the discussion, suppress inline publication
+of matching findings, and persist across revisions and absence. `reopen` restores
+an open record; `resolve` or `wontfix` can replace `refuted`. Existing `wontfix`
+records retain their original disposition. Commands are case-insensitive; the
+last command within a note and then the latest authorized note win. Access that
+cannot be verified leaves the disposition unchanged. A failed platform resolution
+preserves the previous disposition for retry.
 
 Resolving a thread only through the platform UI does not create the durable
 `wontfix` disposition. Deleting the root GitHub review comment also removes the
@@ -50,7 +59,10 @@ the summary note both carry a hash of their rendered text alone. When a release
 renders an unchanged finding differently, each surfaced bot-authored inline
 thread receives one content refresh on its next run; issue IDs, state records,
 and resolution status remain unchanged. A rollback causes one reverse refresh
-of surfaced threads; `wontfix` and resolved threads are not re-rendered. Rolling
-back across the state v2 cutover requires restoring the saved v1 state with the
+of surfaced threads; `wontfix`, `refuted` and resolved threads are not re-rendered.
+Rolling back across the state v2 cutover requires restoring the saved v1 state with the
 old images while reviews are paused; see the
 [migration and rollback procedure](../operations.md#state-v2-migration).
+
+Rollback after using `refuted` requires the
+[disposition rollback procedure](../operations.md#rollback-after-refuted-has-been-used).

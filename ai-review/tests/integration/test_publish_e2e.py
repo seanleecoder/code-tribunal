@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import json
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 from ai_review.anchors import context_hash_from_unified_diff
 from ai_review.config import ReviewConfig, load_config, validate_config
 from ai_review.consensus import build_consensus
@@ -118,6 +120,111 @@ class PublishEndToEndTests(unittest.TestCase):
                 ledger = decode_state_note_body(client.state_notes[0]["body"])
                 self.assertEqual(ledger["records"][0]["status"], "wontfix")
                 self.assertEqual(ledger["records"][0]["root_note_id"], root_id)
+
+    def test_refuted_lifecycle_and_rollback_conversion_on_both_platforms(self) -> None:
+        old_schema = json.loads(
+            (FIXTURE_ROOT / "compatibility/state-pre-refuted.schema.json").read_text()
+        )
+
+        for mode in ("gitlab_discussions", "github_reviews"):
+            for earlier in ("resolve", "wontfix", "reopen"):
+                for absent in (False, True):
+                    with (
+                        self.subTest(mode=mode, earlier=earlier, absent=absent),
+                        tempfile.TemporaryDirectory() as tmp,
+                    ):
+                        config, manifest, diff_text = self._prepare_bundle(Path(tmp))
+                        config = replace(config, posting=replace(config.posting, mode=mode))
+                        if mode == "github_reviews":
+                            manifest = dict(manifest, project_id="octo/repo")
+                            client = FakeGitHubClient(
+                                head_sha=manifest["head_sha"],
+                                diff_text=diff_text,
+                                user_permissions={7: 40},
+                            )
+                        else:
+                            client = FakeGitLabClient(
+                                head_sha=manifest["head_sha"], diff_text=diff_text
+                            )
+                        consensus = build_consensus(manifest, self._blocking_batches(), config)
+                        project, change = manifest["project_id"], manifest["merge_request_iid"]
+                        post_consensus(client, config, manifest, consensus)
+                        thread = client.list_threads(project, change)[0]
+                        root = thread["notes"][0]["id"]
+                        identity = str(thread["id"])
+                        sequence = [earlier, "refuted", "reopen", "refuted", "wontfix"]
+                        for index, command in enumerate(sequence):
+                            if mode == "github_reviews":
+                                client.add_reply(
+                                    root,
+                                    f"/ai-review {command}",
+                                    author_id=7,
+                                    author_login="writer",
+                                )
+                            else:
+                                client.discussions[0]["notes"].append(
+                                    {
+                                        "id": 10000 + index,
+                                        "body": f"/ai-review {command}",
+                                        "author": {"id": 7, "username": "writer"},
+                                    }
+                                )
+                            current = (
+                                dict(consensus, groups=[]) if absent and index >= 3 else consensus
+                            )
+                            result = post_consensus(client, config, manifest, current)
+                            self.assertEqual(result["status"], "success")
+                            ledger = decode_state_note_body(client.state_notes[0]["body"])
+                            record = ledger["records"][0]
+                            expected = {"resolve": "resolved", "reopen": "open"}.get(
+                                command, command
+                            )
+                            self.assertEqual(record["status"], expected)
+                            self.assertEqual(record["human_disposition"], command)
+                            self.assertEqual(record["discussion_id"], identity)
+                            self.assertEqual(record["root_note_id"], root)
+                            threads = [
+                                t
+                                for t in client.list_threads(project, change)
+                                if parse_marker(t["notes"][0]["body"])
+                            ]
+                            self.assertEqual(len(threads), 1)
+                            self.assertEqual(threads[0]["resolved"], command != "reopen")
+                            if command == "refuted":
+                                with self.assertRaises(jsonschema.ValidationError):
+                                    jsonschema.validate(ledger, old_schema)
+                                # After the first refutation, model the next revision.
+                                if index == 1:
+                                    manifest = dict(manifest, head_sha="d" * 40, run_id="next-run")
+                                    client.head_sha = manifest["head_sha"]
+                                    consensus = dict(
+                                        consensus,
+                                        head_sha=manifest["head_sha"],
+                                        run_id=manifest["run_id"],
+                                    )
+                                current = dict(
+                                    current,
+                                    head_sha=manifest["head_sha"],
+                                    run_id=manifest["run_id"],
+                                )
+                                rerun = post_consensus(client, config, manifest, current)
+                                for field in (
+                                    "created_discussions",
+                                    "updated_discussions",
+                                    "resolved_discussions",
+                                ):
+                                    self.assertEqual(rerun[field], 0)
+                            if index == len(sequence) - 1:
+                                jsonschema.validate(ledger, old_schema)
+                                # Historical refuted commands precede the rollback command.
+                                rerun = post_consensus(client, config, manifest, current)
+                                self.assertEqual(rerun["status"], "success")
+                                self.assertEqual(
+                                    decode_state_note_body(client.state_notes[0]["body"])[
+                                        "records"
+                                    ][0]["status"],
+                                    "wontfix",
+                                )
 
     def test_fyi_only_consensus_posts_summary_and_exits_zero(self) -> None:
         client, consensus, post_result, exit_code = self._run_e2e(self._fyi_batches())

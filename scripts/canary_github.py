@@ -41,7 +41,7 @@ from candidate_canary_common import (
     read_state,
     reviewer_ids,
     run_lifecycle_steps,
-    saved_wontfix,
+    saved_disposition,
     write_state,
 )
 from release_common import GITHUB_CALLER, GITHUB_WORKFLOW, ROOT
@@ -514,7 +514,7 @@ class GitHubLifecycle(Lifecycle):
             f"body={text}",
         )
 
-    def saved_wontfix(self) -> dict[str, Any]:
+    def saved_disposition(self, disposition: str) -> dict[str, Any]:
         pages = _json(
             "gh",
             "api",
@@ -530,8 +530,9 @@ class GitHubLifecycle(Lifecycle):
             for note in page
             if note.get("user", {}).get("login") == BOT_LOGIN
         ]
-        return saved_wontfix(
-            notes, project_id=DEMO_REPOSITORY, change_id=self.pr, root_note_id=self.root["id"]
+        return saved_disposition(
+            notes, project_id=DEMO_REPOSITORY, change_id=self.pr, root_note_id=self.root["id"],
+            disposition=disposition,
         )
 
     def merge_state(self) -> tuple[dict[str, str], bool | None]:
@@ -596,6 +597,8 @@ class GitHubLifecycle(Lifecycle):
             ("changed_body", self.step_changed_body),
             ("wontfix", self.step_wontfix),
             ("reopen", self.step_reopen),
+            ("refuted", self.step_refuted),
+            ("reopen_after_refuted", self.step_reopen),
             ("stale_head", self.step_stale_head),
             ("blocker_does_not_block", self.step_blocker_does_not_block),
         )

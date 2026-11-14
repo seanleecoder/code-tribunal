@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, get_args
 
 from .notes import parse_marker
 from .platform import ReviewPlatform
 from .redact import redact_text
+from .types import HumanDisposition
 
-COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
+COMMAND_RE = re.compile(
+    rf"(?im)^\s*/ai-review\s+({'|'.join(get_args(HumanDisposition.__value__))})\s*$"
+)
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
 # Pinned to the "ai_review.post" name rather than __name__. The command-ignored

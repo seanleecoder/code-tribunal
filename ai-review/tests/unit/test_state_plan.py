@@ -203,6 +203,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         issue_id = "a" * 64
         for command, expected in (
             ("wontfix", "wontfix"),
+            ("refuted", "refuted"),
             ("resolve", "resolved"),
             ("reopen", "open"),
         ):
@@ -228,6 +229,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         gone = "d" * 64
         for command, expected in (
             ("wontfix", "wontfix"),
+            ("refuted", "refuted"),
             ("resolve", "resolved"),
             ("reopen", "open"),
         ):
@@ -250,6 +252,31 @@ class PlanStateWithoutClientTests(unittest.TestCase):
 
         self.assertEqual(self._status_of(plan, issue_id), "wontfix")
         self.assertEqual(plan.inline_plans[0].record["issue_id"], issue_id)
+
+    def test_refuted_survives_regrouping_absence_fyi_and_degraded_runs(self) -> None:
+        issue_id = "a" * 64
+        record = _matching_record(issue_id, status="refuted", human_disposition="refuted")
+        for placement in ("inline", "fyi", "absent", "ambiguous"):
+            for eligible in ([], ["claude"]):
+                with self.subTest(placement=placement, eligible=eligible):
+                    records = [record]
+                    groups = (
+                        {}
+                        if placement == "absent"
+                        else {"inline" if placement == "inline" else "fyi": [_group("9" * 64)]}
+                    )
+                    if placement == "ambiguous":
+                        records = [record, _matching_record("2" * 64)]
+                    plan = _plan(
+                        persisted=records, consensus=_consensus(eligible=eligible), **groups
+                    )
+                    saved = self._record_of(plan, issue_id)
+                    self.assertEqual(saved["status"], "refuted")
+                    self.assertEqual(saved["human_disposition"], "refuted")
+                    self.assertEqual(saved["discussion_id"], "discussion")
+                    if placement == "inline":
+                        self.assertTrue(plan.inline_plans[0].settled)
+                    self.assertIn(issue_id, {r["issue_id"] for r in plan.planned_state["records"]})
 
     def _ambiguous_candidates(self) -> list[dict[str, Any]]:
         return [
@@ -296,6 +323,10 @@ class PlanStateWithoutClientTests(unittest.TestCase):
         candidate = "1" * 64
         for command, prior, expected in (
             ("wontfix", "open", "wontfix"),
+            ("refuted", "open", "refuted"),
+            ("reopen", "refuted", "open"),
+            ("resolve", "refuted", "resolved"),
+            ("wontfix", "refuted", "wontfix"),
             ("resolve", "open", "resolved"),
             ("reopen", "resolved", "open"),
         ):
