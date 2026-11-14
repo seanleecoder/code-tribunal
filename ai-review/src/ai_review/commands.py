@@ -16,7 +16,7 @@ from .notes import parse_marker
 from .platform import ReviewPlatform
 from .redact import redact_text
 
-COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(wontfix|reopen|resolve)\s*$")
+COMMAND_RE = re.compile(r"(?im)^\s*/ai-review\s+(resolve|wontfix|refuted|reopen)\s*$")
 ACCESS_OWNER = 50
 MIN_COMMAND_ACCESS = 30
 # Pinned to the "ai_review.post" name rather than __name__. The command-ignored

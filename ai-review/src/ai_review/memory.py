@@ -441,7 +441,7 @@ def prior_decisions_from_state(state: dict[str, Any]) -> dict[str, Any]:
             "path": anchor.get("new_path") or anchor.get("old_path") or "",
             "context_hash": first_context_hash,
         }
-        if record.get("status") in {"wontfix", "resolved"}:
+        if record.get("status") in {"wontfix", "refuted", "resolved"}:
             settled.append(item)
         elif record.get("status") == "open":
             open_records.append({key: value for key, value in item.items() if key != "status"})

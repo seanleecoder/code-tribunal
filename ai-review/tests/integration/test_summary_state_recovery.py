@@ -583,3 +583,36 @@ def test_supported_maximum_thread_ids_fit_the_preflight_reservation() -> None:
     record = decode_state_note_body(client.state_notes[0]["body"])["records"][0]
     assert len(record["discussion_id"]) == 128
     assert record["root_note_id"] == (1 << 64) - 1
+
+
+@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
+def test_refuted_overflow_fails_before_resolving_or_writing(mode: str) -> None:
+    from dataclasses import replace
+
+    config, manifest, client, consensus = _setup(mode)
+    if mode == "github_reviews":
+        client.user_permissions[7] = 40
+    assert post_consensus(client, config, manifest, consensus)["status"] == "success"
+    thread = next(t for t in client.list_threads("1", "2") if t["notes"][0].get("position"))
+    root = thread["notes"][0]["id"]
+    if mode == "github_reviews":
+        client.add_reply(root, "/ai-review refuted", author_id=7)
+    else:
+        client.discussions[0]["notes"].append({
+            "id": 10000, "body": "/ai-review refuted", "author": {"id": 7},
+        })
+    original_summary = client.state_notes[0]["body"]
+    config = replace(config, state=replace(
+        config.state, retention=replace(config.state.retention, max_records=0),
+    ))
+    with (
+        patch.object(client, "resolve_thread", wraps=client.resolve_thread) as resolve,
+        patch.object(client, "update_comment", wraps=client.update_comment) as update,
+        patch.object(client, "create_inline_comment", wraps=client.create_inline_comment) as create,
+    ):
+        result = post_consensus(client, config, manifest, consensus)
+    assert result["status"] == "state_overflow"
+    resolve.assert_not_called()
+    update.assert_not_called()
+    create.assert_not_called()
+    assert client.state_notes[0]["body"] == original_summary

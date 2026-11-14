@@ -46,10 +46,11 @@ type StateRecordStatus = Literal[
     "open",
     "resolved",
     "wontfix",
+    "refuted",
     "stale",
     "stale_unverified",
 ]
-type HumanDisposition = Literal["wontfix", "reopen", "resolve"]
+type HumanDisposition = Literal["wontfix", "refuted", "reopen", "resolve"]
 
 
 class LineRef(TypedDict):

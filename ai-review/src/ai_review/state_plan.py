@@ -52,8 +52,12 @@ class InlinePlan:
 
     @property
     def settled(self) -> bool:
-        """A claimed resolved or wontfix finding posts no inline thread."""
-        return self.record is not None and self.record["status"] in {"wontfix", "resolved"}
+        """A claimed settled finding posts no inline thread."""
+        return self.record is not None and self.record["status"] in {
+            "wontfix",
+            "refuted",
+            "resolved",
+        }
 
 
 @dataclass
@@ -291,7 +295,7 @@ def _desired_discussion_resolved(
     record: StateRecord,
     prior_status: dict[str, StateRecordStatus | None],
 ) -> bool | None:
-    if record.get("status") in {"resolved", "wontfix"} and prior_status.get(
+    if record.get("status") in {"resolved", "wontfix", "refuted"} and prior_status.get(
         record["issue_id"]
     ) != record.get("status"):
         return True
@@ -389,9 +393,9 @@ def _plan_stale_records(
         if command == "reopen":
             updated["status"] = "open"
             updated["human_disposition"] = "reopen"
-        elif command == "wontfix":
-            updated["status"] = "wontfix"
-            updated["human_disposition"] = "wontfix"
+        elif command in {"wontfix", "refuted"}:
+            updated["status"] = command
+            updated["human_disposition"] = command
         elif command == "resolve":
             updated["status"] = "resolved"
             updated["human_disposition"] = "resolve"
@@ -500,22 +504,22 @@ def plan_state(
         if previous is not None and previous.get("discussion_id") is not None:
             planning_used_discussion_ids.add(previous.get("discussion_id"))
         status = "open"
-        human_disposition = previous.get("human_disposition") if previous else None
+        human_disposition: str | None = previous.get("human_disposition") if previous else None
         command = human_commands.get(issue_id)
         if command is None and previous is not None:
             command = human_commands.get(previous["issue_id"])
-        if command == "wontfix":
-            status = "wontfix"
-            human_disposition = "wontfix"
+        if command in {"wontfix", "refuted"}:
+            status = command
+            human_disposition = command
         elif command == "resolve":
             status = "resolved"
             human_disposition = "resolve"
         elif command == "reopen":
             status = "open"
             human_disposition = "reopen"
-        elif previous is not None and previous.get("status") == "wontfix":
-            status = "wontfix"
-            human_disposition = previous.get("human_disposition") or "wontfix"
+        elif previous is not None and previous.get("status") in {"wontfix", "refuted"}:
+            status = previous["status"]
+            human_disposition = previous.get("human_disposition") or status
         group_plan.record = cast(
             StateRecord,
             _record_for_group(

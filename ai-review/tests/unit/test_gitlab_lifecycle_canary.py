@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from ai_review.memory import empty_state, encode_state_note, normalize_state_record
+
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -82,6 +84,31 @@ class LifecycleStepTests(unittest.TestCase):
         driver = lifecycle.GitLabLifecycle({"mr_iid": "3"}, time.monotonic() + 60)
         driver.root = {"id": 11, "discussion_id": "d1", "author_id": 42}
         return driver
+
+    def test_saved_disposition_checks_refuted_and_reopened_records(self) -> None:
+        driver = self._driver()
+        for disposition, status in (("refuted", "refuted"), ("reopen", "open")):
+            with self.subTest(disposition=disposition):
+                state = empty_state(
+                    project_id=lifecycle.DEMO_PROJECT, merge_request_iid="3", head_sha="head"
+                )
+                state["records"] = [
+                    normalize_state_record(
+                        {
+                            "issue_id": "a" * 64,
+                            "discussion_id": "d1",
+                            "root_note_id": 11,
+                            "status": status,
+                            "human_disposition": disposition,
+                        }
+                    )
+                ]
+                notes = [{"id": 21, "author": {"id": 42}, "body": encode_state_note(state)}]
+                with mock.patch.object(lifecycle, "_request", return_value=notes):
+                    saved = driver.saved_disposition(disposition)
+                self.assertEqual(saved["status"], status)
+                self.assertEqual(saved["human_disposition"], disposition)
+                self.assertEqual(saved["discussion_id"], "d1")
 
     def test_rerun_sets_the_scenario_before_starting_a_pipeline(self) -> None:
         driver = self._driver()
@@ -311,6 +338,8 @@ class LifecycleStepTests(unittest.TestCase):
                 "changed_body",
                 "wontfix",
                 "reopen",
+                "refuted",
+                "reopen_after_refuted",
                 "blocker_does_not_block",
             ],
         )

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "state.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "state_schema_version",
+    "project_id",
+    "merge_request_iid",
+    "last_head_sha",
+    "written_by_pipeline_id",
+    "updated_at",
+    "records",
+    "state_hash"
+  ],
+  "properties": {
+    "state_schema_version": { "const": 2 },
+    "project_id": { "type": "string" },
+    "merge_request_iid": { "type": "string" },
+    "last_head_sha": { "type": "string" },
+    "written_by_pipeline_id": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue_id",
+          "category",
+          "aliases",
+          "discussion_id",
+          "root_note_id",
+          "status",
+          "last_seen_sha",
+          "first_seen_sha",
+          "anchor",
+          "last_posted_body_hash",
+          "last_decision",
+          "last_final_severity",
+          "created_by_pipeline_id",
+          "updated_by_pipeline_id",
+          "human_disposition",
+          "last_matched_run_id"
+        ],
+        "properties": {
+          "issue_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "title": { "type": "string" },
+          "category": {
+            "enum": [
+              "security",
+              "correctness",
+              "performance",
+              "maintainability",
+              "style",
+              "test",
+              "other"
+            ]
+          },
+          "aliases": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_finding_ids",
+              "context_hashes"
+            ],
+            "properties": {
+              "source_finding_ids": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "context_hashes": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              }
+            }
+          },
+          "discussion_id": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_:-]+$" },
+          "root_note_id": { "type": ["integer", "null"], "minimum": 1, "maximum": 18446744073709551615 },
+          "status": {
+            "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified"]
+          },
+          "last_seen_sha": { "type": "string" },
+          "first_seen_sha": { "type": "string" },
+          "anchor": { "type": "object" },
+          "last_posted_body_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "last_decision": { "enum": ["surface", "fyi"] },
+          "last_final_severity": { "enum": ["info", "minor", "major", "blocker"] },
+          "created_by_pipeline_id": { "type": "string" },
+          "updated_by_pipeline_id": { "type": "string" },
+          "human_disposition": {
+            "type": ["string", "null"],
+            "enum": ["wontfix", "reopen", "resolve", null]
+          },
+          "last_matched_run_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "state_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

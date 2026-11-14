@@ -105,8 +105,10 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile
     same head without a commit.
   - The steps are create on an added file, unchanged rerun, changed body in place,
     `wontfix` (a `post_result` warning fails the step, which catches an expired
-    resolve token), reopen, a stale-head no-op, and a `blocker` thread that leaves
-    the pull request mergeable.
+    resolve token), reopen, `refuted` with an unchanged rerun, reopen again,
+    a stale-head no-op, and a `blocker` thread that leaves the pull request
+    mergeable. Both settled steps verify the saved disposition and thread
+    identity, with no repeated mutations on rerun.
   - On GitLab the temporary template branch runs every seat in mock mode. The
     scenario is a temporary `AI_REVIEW_MOCK_SCENARIO` project variable on the demo,
     deleted at cleanup (so the canary's GitLab token needs Maintainer access).

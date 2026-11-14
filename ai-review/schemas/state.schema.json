@@ -78,7 +78,7 @@
           "discussion_id": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_:-]+$" },
           "root_note_id": { "type": ["integer", "null"], "minimum": 1, "maximum": 18446744073709551615 },
           "status": {
-            "enum": ["open", "resolved", "wontfix", "stale", "stale_unverified"]
+            "enum": ["open", "resolved", "wontfix", "refuted", "stale", "stale_unverified"]
           },
           "last_seen_sha": { "type": "string" },
           "first_seen_sha": { "type": "string" },
@@ -90,7 +90,7 @@
           "updated_by_pipeline_id": { "type": "string" },
           "human_disposition": {
             "type": ["string", "null"],
-            "enum": ["wontfix", "reopen", "resolve", null]
+            "enum": ["wontfix", "refuted", "reopen", "resolve", null]
           },
           "last_matched_run_id": { "type": ["string", "null"] }
         }

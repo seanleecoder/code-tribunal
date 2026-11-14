@@ -262,3 +262,31 @@ Uninstall instructions are in the platform getting-started guides.
 6. Patch, rebuild from a reviewed commit, rerun hostile and functional evidence,
    and only then restore review triggers.
 7. Report product vulnerabilities through [SECURITY.md](../SECURITY.md).
+
+## Rollback after `refuted` has been used
+
+Images predating `refuted` reject a v2 ledger containing that status or human
+disposition. They fail closed; new images continue to read old v2 ledgers.
+Ship the command, state handling, documentation and canary changes together in
+one release. No intermediate reader image establishes a rollback floor: old
+command collectors ignore `refuted` and may replay an earlier recognized command.
+Before any `refuted` command is posted, rollback is unaffected. After one is
+posted, use this procedure while still running the new images:
+
+1. Pause automatic triggers and drain jobs.
+2. Export each affected summary and ledger with note and author identities,
+   following the [state v2 migration](#state-v2-migration) backup procedure.
+3. Post an authorized `/ai-review wontfix` on every refuted finding and run
+   controlled reviews until neither ledger field contains `refuted`. Include
+   absent findings and threads with earlier `resolve`, `reopen` or `wontfix`
+   commands; the new `wontfix` must be the latest authorized command.
+4. Read each ledger back and verify that the exact rollback image admits it.
+   Rehearse command collection, planning and publication on isolated changes on
+   both platforms: records must remain `wontfix`, threads resolved and identities
+   unchanged. Without conversion the old image must refuse the ledger with no
+   writes.
+5. Restore the old image pins and workflow/template version together, then resume.
+
+The live ledger loses the distinction; the export and discussions retain it.
+An inaccessible thread blocks rollback until repaired, or restored from backup
+with reconciliation. Never delete the ledger to make an old image run.
