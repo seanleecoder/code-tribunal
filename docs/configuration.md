@@ -176,12 +176,12 @@ OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
 retain the generic effort support described below.
 
 For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
-`xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, last confirmed by
-`cursor-agent --list-models` on CLI `2026.10.01-e373342`. That CLI exposes
-`grok-4.7-{low,medium,high,xhigh}` and corresponding `-fast` variants; it does
-not list a bare `grok-4.7` selector. The
-[pinned CLI](../ai-review/images/cursor-agent.pin) has moved since, so resolve
-the selector on the pinned version before relying on it.
+`xhigh`, or choose a higher-effort Cursor variant such as `grok-4.7-xhigh`.
+Cursor selectors change between CLI releases: resolve the exact one with
+`cursor-agent --list-models` on the
+[pinned CLI](../ai-review/images/cursor-agent.pin), as the
+[Cursor model-specific check](evidence/RUNBOOK.md#cursor-model-specific-check)
+describes.
 Cursor has no separate Code Tribunal effort variable;
 reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
 and compatibility. `auto` remains a supported operator override, but should not
