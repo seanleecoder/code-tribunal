@@ -7,6 +7,14 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Prepare fails with the `missing-ledger-repair` error when older bot review
+  threads exist without a ledger, before any reviewer runs. Posting already
+  refused this history and keeps its check; a clean first run and a retry of an
+  interrupted first publication on the same revision are unaffected. When no
+  ledger loads, prepare now also lists the change's review threads.
+
 ### Removed
 
 - Release publication accepts tags from `v3.0.0` on. The copied-template checks

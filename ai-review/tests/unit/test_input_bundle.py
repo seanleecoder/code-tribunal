@@ -184,6 +184,9 @@ class InputBundleLimitTests(unittest.TestCase):
             def list_state_notes(self, project_id: str, change_id: str) -> list:
                 return []
 
+            def list_threads(self, project_id: str, change_id: str) -> list:
+                return []
+
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch.dict(
@@ -221,6 +224,7 @@ class PrepareStateLoadTests(unittest.TestCase):
         def __init__(self, notes: list[dict[str, object]] | Exception) -> None:
             self.notes = notes
             self.list_calls = 0
+            self.thread_list_calls = 0
 
         def current_user_id(self) -> int:
             return 10
@@ -231,12 +235,17 @@ class PrepareStateLoadTests(unittest.TestCase):
                 raise self.notes
             return self.notes
 
+        def list_threads(self, project_id: str, change_id: str) -> list[dict[str, object]]:
+            self.thread_list_calls += 1
+            return []
+
     def _load(self, client: object) -> dict[str, object]:
         return _load_platform_state(
             client,
             self._default_state(),
             project_id="1",
             change_id="2",
+            head_sha="head",
             bind_project_id=True,
         )
 
@@ -249,6 +258,7 @@ class PrepareStateLoadTests(unittest.TestCase):
         loaded = self._load(client)
 
         self.assertEqual(client.list_calls, 1)
+        self.assertEqual(client.thread_list_calls, 0)
         self.assertEqual(loaded["last_head_sha"], "stored")
 
     def test_successful_lookup_without_a_valid_note_returns_the_default(self) -> None:
@@ -257,6 +267,7 @@ class PrepareStateLoadTests(unittest.TestCase):
         loaded = self._load(client)
 
         self.assertEqual(client.list_calls, 1)
+        self.assertEqual(client.thread_list_calls, 1)
         self.assertEqual(loaded, self._default_state())
 
     def test_load_error_always_propagates(self) -> None:

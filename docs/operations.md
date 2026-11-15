@@ -253,6 +253,9 @@ A failed first summary write can leave inline threads without any ledger, and a
 2.1.x failed state write can leave a summary without its separate v1 state note.
 After another push, neither case can be repaired by the v1 converter: there is
 no ledger to convert. The `missing-ledger-repair` error identifies this path.
+Prepare raises it before any reviewer runs: when no ledger loads, it lists the
+change's threads and applies the rule post applies. Post keeps the same check for
+history that changes after prepare.
 
 1. Pause review triggers and wait for active jobs to finish. Export all bot
    comments, inline thread roots, replies and human commands across every page.

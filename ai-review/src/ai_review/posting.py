@@ -27,9 +27,9 @@ from .state_plan import (
     StatePlan,
     _pipeline_id,
     _process_state_for_persistence,
-    open_at_head,
     plan_state,
     planned_thread_resolutions,
+    reject_ledger_free_history,
     rolled_back_resolution,
     state_from_existing_discussions,
 )
@@ -461,14 +461,9 @@ def prepare_post_context(
         bind_project_id=posting_mode != "github_reviews",
     )
     indexed = index_ai_review_discussions(raw_discussions)
-    if ledger is None and any(
-        discussion.author_id == bot_author_id
-        and not open_at_head(discussion, manifest["head_sha"])
-        for discussion in indexed
-    ):
-        raise ValueError(
-            "existing review history has no ledger; restore state from an export "
-            "or follow docs/operations.md#missing-ledger-repair"
+    if ledger is None:
+        reject_ledger_free_history(
+            indexed, bot_author_id=bot_author_id, head_sha=manifest["head_sha"]
         )
     persisted_state = normalize_state(
         ledger.state if ledger else None, manifest=manifest, pipeline_id=_pipeline_id(manifest)
