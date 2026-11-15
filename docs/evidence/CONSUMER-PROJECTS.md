@@ -315,3 +315,43 @@ with full health. Its prepared model and effort routes match the shipped
 defaults, so it supplies default-route evidence without a separate three-seat
 run. The temporary mock caller checks prove forwarding and state handling, not
 provider behavior for non-default efforts or the pending live fork skip.
+
+## Refuted rollback rehearsal (3.1.0, 2026-11-15)
+
+The isolated [GitHub PR #56](https://github.com/seanleecoder/code-tribunal-demo/pull/56)
+and [GitLab MR !62](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/62)
+rehearsed the [rollback procedure](../operations.md#rollback-after-refuted-has-been-used)
+with deterministic mock reviewers. Earlier authorized `wontfix`, `reopen` and
+`resolve` replies preceded `refuted`. On both platforms, refutation resolved the
+same thread and survived an unchanged rerun without publication mutations.
+
+The new-image pair came from refuted source
+`79377edbd1f4f030acbcadfd0e6fafcc7d0c8890`, published and attested by
+[run 43652775495](https://github.com/seanleecoder/code-tribunal/actions/runs/43652775495).
+Its exact references were:
+
+- Base: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-79377edbd1f4f030acbcadfd0e6fafcc7d0c8890@sha256:4914cedd05df55d92ef223b7814491d3cbbf222496cf3d7978f4a49e25f03349`.
+- Reviewer: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-79377edbd1f4f030acbcadfd0e6fafcc7d0c8890@sha256:dbd1d9b40beb0f5f3655c350adffa9c61e13fd97ac39b08bfb96c3509615cf74`.
+
+The final 3.1 runtime source `a7066d427cb0f35e96b0c40f3eacaad9cfaa6634`
+only changes the image tag series; application code, schemas and canary drivers
+are identical. The exact rollback pair and workflow/template were taken from
+[v3.0.1](https://github.com/seanleecoder/code-tribunal/tree/v3.0.1):
+
+- Base: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:948374bdc0ec87d374bc9050573153bf9be0b006f7ee32930b68b7e1267dc649`.
+- Reviewer: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-05fe58a65aee5ab1e0538d32b7c183653d4821d4@sha256:4853a5a738a5ed0ec82d5cbfb2840bae98a2afa568e80853a43dab2dd77ef553`.
+
+| Check | GitHub run | GitLab pipeline | Outcome |
+|---|---|---|---|
+| Unconverted negative control | [43728953713](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/43728953713) | [3070666219](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3070666219) | Old prepare refused the refuted ledger at schema validation; later stages were skipped and review state was unchanged. |
+| Conversion on new images, with the finding absent | [43729504125](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/43729504125) | [3070677330](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3070677330) | A latest authorized `wontfix` replaced both refuted ledger fields. |
+| Old-image replay, finding present | [43729826912](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/43729826912) | [3070681204](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3070681204) | Command collection, planning and publication succeeded; `wontfix` persisted with no inline or resolution mutations. |
+| Old-image replay, finding absent | [43730089679](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/43730089679) | [3070686783](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3070686783) | The retained record remained `wontfix`, with no inline or resolution mutations. |
+
+Summary and discussion exports before and after conversion retained note and
+author identities outside version control. Both replays retained the issue,
+discussion, root-note and state-note identities and resolved state. The negative
+controls compared comment bodies, authors, timestamps and state; platform-managed
+commit/head metadata changed with the pin commits, as expected. No ledger was
+deleted. Both fixtures were closed without merging, their temporary branches
+removed and GitLab's scenario variable deleted; demo preflight passed afterwards.
