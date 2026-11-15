@@ -21,5 +21,5 @@ uncertainty justify it. The consensus decision policy would remain unchanged.
 
 ## Dependencies
 
-The existing hermetic post→gate harness and labeled grouping corpus are useful
-prerequisites. This plan does not depend on any other archived plan.
+The existing hermetic publish end-to-end harness and labeled grouping corpus are
+useful prerequisites. This plan does not depend on any other archived plan.

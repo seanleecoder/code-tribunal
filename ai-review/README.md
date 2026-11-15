@@ -20,9 +20,11 @@ Internal implementation directories:
 
 - [`src/ai_review/`](src/ai_review/) — prepare, consensus, posting, state,
   platform, and schema code.
-- [`adapters/`](adapters/) — reviewer process wrappers and environment
-  isolation.
-- [`prompts/`](prompts/) — review and critique prompts.
+- [`adapters/`](adapters/) — command-only reviewer shells. They check
+  prerequisites and invoke each CLI; the Python runner builds the arguments and
+  the isolated environment.
+- [`prompts/`](prompts/) and [`rules/`](rules/) — review and critique prompts
+  and the review rules rendered into them.
 - [`tests/`](tests/) — unit, contract, integration, and security tests.
 
 The Python modules are loaded from `/opt/ai-review/src` inside the supported

@@ -65,7 +65,8 @@ Rules, all enforced at config load with a loud `ConfigError`:
   `enabled: false` or the roster variable to disable one.
 - `AI_REVIEW_REVIEWERS` is the only environment-level panel selector. The YAML
   `enabled` values provide the default when it is unset. Retired per-seat
-  `AI_REVIEW_<REVIEWER>_ENABLED` variables are rejected by name.
+  `AI_REVIEW_<REVIEWER>_ENABLED` variables fail prepare like any other unknown
+  `AI_REVIEW_` variable.
 - Each selected seat needs the credential fixed for it by the trusted image:
   `OPENROUTER_API_KEY` for Claude, Codex, and OpenCode, or `CURSOR_API_KEY` for
   Cursor. If it is absent, that seat fails and the panel degrades. The canonical
@@ -175,10 +176,12 @@ OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
 retain the generic effort support described below.
 
 For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
-`xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, confirmed by
+`xhigh`. For Cursor Grok 4.7 / `xhigh`, use `grok-4.7-xhigh`, last confirmed by
 `cursor-agent --list-models` on CLI `2026.10.01-e373342`. That CLI exposes
 `grok-4.7-{low,medium,high,xhigh}` and corresponding `-fast` variants; it does
-not list a bare `grok-4.7` selector. Recheck the list when refreshing the CLI.
+not list a bare `grok-4.7` selector. The
+[pinned CLI](../ai-review/images/cursor-agent.pin) has moved since, so resolve
+the selector on the pinned version before relying on it.
 Cursor has no separate Code Tribunal effort variable;
 reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
 and compatibility. `auto` remains a supported operator override, but should not
@@ -314,7 +317,7 @@ artifacts.
 | `AI_REVIEW_OPENCODE_EFFORT` | `low` (YAML) | Closed enum; `low`, `medium`, `high`, `xhigh`, and `max` reach OpenCode unchanged as `reasoningEffort`, or `unset`; see [effort inheritance and clearing](#effort-inheritance-and-clearing). The selected model route must accept the forwarded level; provider rejection fails the reviewer. |
 | `AI_REVIEW_POSTING_MODE` | YAML | `gitlab_discussions` or `github_reviews`. |
 | `AI_REVIEW_MANUAL` | unset | CI trigger control; only exact `true` selects manual behavior. |
-| `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of GitHub state comments. |
+| `AI_REVIEW_GITHUB_BOT_LOGIN` | `github-actions[bot]` in canonical workflow | Expected author of the GitHub summary comment that holds review state. |
 
 #### Effort inheritance and clearing
 

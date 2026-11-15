@@ -7,8 +7,8 @@ for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
 older-format threads that the body-refresh check depends on.
 
-Deployment observations below are dated evidence through the 3.0 acceptance on
-2026-11-01, not a fresh inspection of either service. Before each campaign, run
+Deployment observations below are dated evidence, the latest being the 3.1.0
+rollback rehearsal on 2026-11-15, not a fresh inspection of either service. Before each campaign, run
 `make demo-preflight` (step 0 of the
 [per-release setup checklist](#per-release-setup-checklist)) for credentials and variables, and recheck by
 hand what it does not inspect: branch protection, project settings and pins. The

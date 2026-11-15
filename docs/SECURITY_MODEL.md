@@ -138,8 +138,9 @@ Post reads and updates only a summary comment the bot authored; another
 participant's note carrying the summary marker is ignored with a warning.
 Human commands require platform authorization. Cross-stage run/config bindings
 prevent accidental evidence mixing: review, critique, consensus, and post each
-verify that their effective config reproduces the manifest's
-`effective_config_sha256` before consequential work, and post refuses a
+admit the manifest's complete resolved configuration and verify that it
+reproduces the manifest's `effective_config_sha256` before consequential work.
+They resolve no configuration of their own. Post refuses a
 consensus artifact whose `run_id`, `head_sha`, or `input_manifest_sha256` does
 not match the manifest. These bindings detect misconfiguration and mixed runs;
 they are not tamper protection, because whoever writes an artifact also chooses
