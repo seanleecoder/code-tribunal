@@ -109,12 +109,11 @@ repository, pull/merge-request or user data and avoids automatic title inference
 model controls; configured effort is passed unchanged through a model variant's
 native OpenRouter `reasoning.effort` setting.
 
-V2 no longer exposes the v1 session JSON-schema generation API. OpenCode returns
-final-answer text JSON, which uses the same extractor and authoring-schema
-validation as the other text seats. Reasoning, tool arguments, incomplete
-answers and failed/interrupted sessions are never accepted as answers. This
-preserves the public finding and critique schemas; generation itself is no
-longer schema-enforced. The image's offline probes verify both stages, exact
+OpenCode returns final-answer text JSON, which uses the same extractor and
+authoring-schema validation as the other text seats; generation itself is not
+schema-enforced. Reasoning, tool arguments, incomplete answers and
+failed/interrupted sessions are never accepted as answers. The image's offline
+probes verify both stages, exact
 batch output and failure cases; real-provider reliability is a Candidate Canary
 check before release.
 
@@ -239,11 +238,9 @@ Persistent cross-run state is always active and has no backend setting.
 `posting.mode` selects the adapter that stores it inside the bot's summary
 comment on GitLab or GitHub. Checksums and author checks are mandatory. Prepare
 and post stop on inaccessible, corrupt, duplicate, or unmigrated existing state.
-Remove `state.checksum_required`, `state.fail_closed_on_load_error`,
-`state.recover_from_discussion_markers`, the per-status retention keys, and
-`state.retention.max_state_bytes` when upgrading; the platform comment limit
-bounds the ledger, and a summary whose health section and complete ledger
-cannot fit fails before any platform write. Interrupted publication is
+The platform comment limit bounds the ledger, and a summary whose health section
+and complete ledger cannot fit fails before any platform write. Interrupted
+publication is
 reconciled from bot-authored thread markers on the current revision. Active
 records and human dispositions are always kept; only the newest five
 automatically resolved records are retained.
@@ -459,15 +456,19 @@ that already controls a trusted job. Trusted CI delivery remains the boundary.
 
 ## Migrate to 3.0
 
-Remove the entire `critique` section (including
-`critique.allow_severity_downgrade`) and `posting.inline_multiline` from custom
-YAML before upgrading. Both are rejected by the ordinary unsupported-key error.
-Severity suggestions remain informational; new inline comments always use a
-single line with range context in the body. Absence-based resolution is unchanged.
+This is the configuration step of the [3.0 upgrade](operations.md#upgrade-to-30),
+which covers the installation, state migration and rollback. Existing v3
+configuration and old run artifacts are rejected; removed keys get the ordinary
+unsupported-key error.
 
-Upgrade the canonical workflow/include and both images together and start a new
-run at prepare. Existing v3 configuration and old run artifacts are rejected.
-
+- Remove the entire `critique` section (including
+  `critique.allow_severity_downgrade`) and `posting.inline_multiline`. Severity
+  suggestions remain informational; new inline comments always use a single line
+  with range context in the body. Absence-based resolution is unchanged.
+- Remove `state.checksum_required`, `state.fail_closed_on_load_error`,
+  `state.recover_from_discussion_markers`, the per-status retention keys, and
+  `state.retention.max_state_bytes`. Integrity checks are mandatory and the
+  platform comment limit bounds the ledger.
 - Set `schema_version: review_config.v4`. Retain supported reviewer overrides,
   resolution threshold, resource limits, state record cap and posting mode. Sparse reviewer configuration now inherits image defaults;
   use `effort: null` to clear a shipped effort in YAML.
@@ -480,7 +481,5 @@ run at prepare. Existing v3 configuration and old run artifacts are rejected.
 - Remove `--config` from consensus and post commands; only prepare accepts it.
   Keep operator overrides visible to prepare. Re-running a downstream job uses
   the prepared policy; start again at prepare to change it.
-- Upgrading from 1.x requires rebuilding configuration from these supported keys,
-  removing the old merge-gate job and any branch protection that requires it,
-  and completing the explicit [state migration](operations.md#state-v2-migration).
-  Runtime no longer contains per-version removal tables or environment tombstones.
+- Upgrading from 1.x requires rebuilding configuration from these supported keys;
+  runtime contains no per-version removal tables or environment tombstones.

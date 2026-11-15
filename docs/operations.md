@@ -1,36 +1,5 @@
 # Operations
 
-## Upgrade to 3.0
-
-1. Save the current workflow/include SHA, image digests, custom configuration
-   and CI variables for rollback.
-2. Pause reviews and complete the [state v2 migration](#state-v2-migration).
-   Preserve its exports through the rollback window.
-3. Remove retired settings using the
-   [configuration migration](configuration.md#migrate-to-30).
-4. Upgrade the canonical workflow/include and both images together. Update any
-   required check to `ai-review / post`.
-5. Resume with fresh artifacts from prepare through post; verify thread identity
-   and human dispositions. The runtime does not replay pre-cutover artifacts.
-
-A rollback restores the complete saved deployment, configuration and v1 state
-together.
-
-For a 1.x deployment, also remove the retired merge-gate job and any required
-`gate` check before upgrading; Code Tribunal publishes informational review
-output and never decides whether a change may merge.
-
-## Version 3.0: consensus artifact cutover
-
-Run prepare through post with one image pair and generate fresh artifacts.
-`consensus.v3` replaces v2, requires `run_health`, and removes `issue_id_source`,
-`state_match`, `group.body_hash`, `summary.drop_count` and the `drop` decision.
-Remove `--state` from custom consensus commands. Prepare no longer writes
-`state_aliases.json`; posting reads the latest platform state itself and keeps
-historical thread IDs and commands. Ambiguous matches appear in the summary
-without mutating or automatically resolving their candidate threads. Persisted
-state uses version 2 inside the summary comment; see the migration below.
-
 ## Failure behavior
 
 | Failure class | Behavior | Operator action |
@@ -60,107 +29,6 @@ A failed thread resolution or reopening also reports `partial_failed`. The state
 retains the previous status and human disposition, so repairing platform access
 and rerunning can retry the command. The structured result includes the platform
 error before the CLI exits nonzero.
-
-## State v2 migration
-
-Version 3.0 stores its checksummed ledger inside the bot's summary,
-with one top-level bot comment per change request. Runtime accepts only v2.
-Existing v1 ledgers must be converted before switching images; never delete a
-ledger and start empty. Keep the original export for rollback. State v2 cannot
-be read by 2.1.x: rollback requires restoring the exported v1 note and summary
-while reviews are paused. Keep reviews paused while restoring the original v1
-summary and state-note bodies from the exports, read each restored body back,
-remove the v2 container only when it is a separate newly created note, then
-restore the old workflow/include and images together. Verify there is exactly
-one authenticated v1 ledger before resuming. Restore the saved note IDs where
-possible; if the old state note was deleted, inspect any recreated-note ID
-binding before running 2.1.x. Do not run an old image against v2 or synthesize an
-empty ledger. If reviews have already recorded new dispositions after migration,
-reconcile those decisions before restoring an older export.
-
-The first v2 release must rehearse this migration on both platforms; the
-[release checklist](development/release-process.md#release-pull-request-checklist)
-lists what to verify and record.
-
-For each open change request with previous state:
-
-1. Pause all review triggers and wait for active prepare/post jobs to finish.
-2. Export **all pages** of top-level comments/notes from the platform API using
-   the bot identity. Keep author IDs and note IDs. For GitHub, for example:
-   `gh api --paginate --slurp repos/OWNER/REPO/issues/NUMBER/comments > notes.json`.
-   For GitLab, export every page of
-   `projects/PROJECT/merge_requests/IID/notes` into one JSON array. Keep this
-   original export until the upgrade and any rollback window have closed.
-3. From the new source checkout, run the offline converter:
-
-   ```sh
-   PYTHONPATH=ai-review/src .venv/bin/python scripts/migrate_state_v2.py \
-     --notes notes.json --bot-author-id BOT_USER_ID \
-     --project-id OWNER/REPO --change-id NUMBER \
-     --posting-mode github_reviews --out update.json
-   ```
-
-   For GitLab, use the ledger's project ID and MR IID and
-   `--posting-mode gitlab_discussions`. The command emits a `{"body": ...}`
-   API update payload and prints the existing target note ID and obsolete IDs.
-   It sends no requests. Missing/ambiguous ledgers, corrupt checksums, wrong
-   change identities, invalid records, and oversized summaries stop conversion
-   without writing an update. Resolve ambiguity from the preserved evidence;
-   the converter never guesses which ledger to keep.
-4. Review `update.json`. Update the printed target through the platform API,
-   read it back, and verify its body equals the emitted body. Then delete only
-   the printed obsolete state-note IDs. The existing summary is reused when
-   present; otherwise the old state note becomes the summary. Resume with the
-   new images only after both steps succeed. A failed update leaves the v1
-   ledger intact; a failed deletion leaves reviews paused until cleanup finishes.
-5. Remove retired state controls listed in [configuration](configuration.md#posting-and-state),
-   rerun from prepare, and verify thread IDs and human dismissals remain intact.
-
-The conversion preserves every record and disposition, maps old `drop` decisions
-to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
-No online legacy decoder or automatic migration runs during prepare/post.
-
-If publication fails after creating threads but before writing the combined
-summary, a retry reconciles bot-authored thread roots on that same revision.
-With an existing ledger, recovery is limited to current findings or authorized
-commands. Without a ledger, every eligible open root is recovered so absent
-findings can be resolved with resolution quorum, or tracked as `stale_unverified`
-without it. Recovered open records are saved before any ledger-free thread is
-resolved, so repeated summary-write failures remain retryable. GitHub checks
-GraphQL resolution before reusing a root; a resurfaced
-finding whose compacted thread is already resolved gets a new visible thread.
-It never replaces authoritative ledger records or human dispositions. Missing
-older history requires the deliberate repair below; corrupt state is not
-treated as absence.
-
-### Missing ledger repair
-
-A failed first summary write can leave inline threads without any ledger, and a
-2.1.x failed state write can leave a summary without its separate v1 state note.
-After another push, neither case can be repaired by the v1 converter: there is
-no ledger to convert. The `missing-ledger-repair` error identifies this path.
-
-1. Pause review triggers and wait for active jobs to finish. Export all bot
-   comments, inline thread roots, replies and human commands across every page.
-   The migration's top-level-comment export alone does not include GitHub inline
-   review threads. Keep the exports until the repair is verified.
-2. If a ledger previously existed, restore that authenticated ledger from the
-   latest good export. Do not replace durable dispositions with empty state.
-3. If the first ledger was never written, inspect the orphaned findings and
-   record any human dispositions and command replies. Delete only the bot's
-   orphaned inline root comments using the platform's comment deletion action.
-   Also delete its ledger-free summary, if present. Preserve unrelated comments
-   and the exported thread/reply history. This deliberately retires those
-   orphaned thread IDs; fresh findings receive new IDs on publication.
-4. Rerun from prepare on the current head with the new images. Confirm that one
-   combined summary/ledger is written, then reapply any recorded human commands
-   to the appropriate new finding threads and verify their saved dispositions.
-
-Runtime never performs this deletion or silently starts over when older review
-history exists. With an existing ledger, same-revision reconciliation reuses
-roots needed by current findings or explicit authorized commands. It does not
-re-import absent, automatically resolved threads that state compaction already
-retired.
 
 ## Concurrency
 
@@ -244,7 +112,9 @@ Restore the previous complete workflow/template SHA and its matching images.
 Start again at prepare and do not reuse artifacts from the failed version. A
 credential rotation may change the platform bot identity; on GitLab that makes
 old bot state untrusted and can cause a one-time repost. Preserve previous state
-until the rollback run is verified.
+until the rollback run is verified. Rolling back across the 3.0 state cutover,
+or after `refuted` has been used, needs the procedures under
+[upgrades and rollbacks](#upgrades-and-rollbacks).
 
 Uninstall instructions are in the platform getting-started guides.
 
@@ -263,7 +133,150 @@ Uninstall instructions are in the platform getting-started guides.
    and only then restore review triggers.
 7. Report product vulnerabilities through [SECURITY.md](../SECURITY.md).
 
-## Rollback after `refuted` has been used
+## Upgrades and rollbacks
+
+Version-specific procedures. Ordinary pin updates and rollbacks are covered
+under [rollback and cleanup](#rollback-and-cleanup) and in the platform
+getting-started guides.
+
+### Upgrade to 3.0
+
+1. Save the current workflow/include SHA, image digests, custom configuration
+   and CI variables for rollback.
+2. Pause reviews and complete the [state v2 migration](#state-v2-migration).
+   Preserve its exports through the rollback window.
+3. Remove retired settings using the
+   [configuration migration](configuration.md#migrate-to-30). Remove `--state`
+   from custom consensus commands and `--config` from custom consensus and post
+   commands.
+4. Replace the installation:
+   - **GitHub:** replace the copied workflow with the SHA-pinned caller from the
+     [installation guide](getting-started/github.md#install-the-workflow). Remove
+     the old `post` requirement from rulesets or branch protection before
+     switching, then select `ai-review / post` after the first run.
+   - **GitLab:** [protect the composition](getting-started/gitlab.md#protect-the-ci-composition)
+     and restrict pipeline variables first. Replace the `ai_review` trigger job
+     and its two nested includes with the top-level
+     [direct include](getting-started/examples/gitlab-direct.yml), pinned to the
+     reviewed template project's full SHA, and keep `ai_review` in the stage
+     list. Review jobs run in the merge-request pipeline itself. Remove `--mode`
+     from trust-auditor commands; the auditor accepts only the direct include.
+5. Upgrade the workflow/include and both images together, then resume with fresh
+   artifacts from prepare through post. Verify thread identity and human
+   dispositions. The runtime does not replay pre-cutover artifacts.
+
+A rollback restores the complete saved deployment, configuration and v1 state
+together: the previous caller or copied workflow on GitHub, the previous
+template SHA and composition on GitLab.
+
+For a 1.x deployment, also remove the retired merge-gate job, any required
+`gate` check, and custom jobs, `needs` or rules that reference `ai_review_gate`
+before upgrading; Code Tribunal publishes informational review output and never
+decides whether a change may merge.
+
+### State v2 migration
+
+Version 3.0 stores its checksummed ledger inside the bot's summary,
+with one top-level bot comment per change request. Runtime accepts only v2.
+Existing v1 ledgers must be converted before switching images; never delete a
+ledger and start empty. Keep the original export for rollback. State v2 cannot
+be read by 2.1.x: rollback requires restoring the exported v1 note and summary
+while reviews are paused. Keep reviews paused while restoring the original v1
+summary and state-note bodies from the exports, read each restored body back,
+remove the v2 container only when it is a separate newly created note, then
+restore the old workflow/include and images together. Verify there is exactly
+one authenticated v1 ledger before resuming. Restore the saved note IDs where
+possible; if the old state note was deleted, inspect any recreated-note ID
+binding before running 2.1.x. Do not run an old image against v2 or synthesize an
+empty ledger. If reviews have already recorded new dispositions after migration,
+reconcile those decisions before restoring an older export.
+
+The 3.0.0 release rehearsed this migration on both platforms; the retained
+[cutover acceptance](evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
+records what was verified.
+
+For each open change request with previous state:
+
+1. Pause all review triggers and wait for active prepare/post jobs to finish.
+2. Export **all pages** of top-level comments/notes from the platform API using
+   the bot identity. Keep author IDs and note IDs. For GitHub, for example:
+   `gh api --paginate --slurp repos/OWNER/REPO/issues/NUMBER/comments > notes.json`.
+   For GitLab, export every page of
+   `projects/PROJECT/merge_requests/IID/notes` into one JSON array. Keep this
+   original export until the upgrade and any rollback window have closed.
+3. From the new source checkout, run the offline converter:
+
+   ```sh
+   PYTHONPATH=ai-review/src .venv/bin/python scripts/migrate_state_v2.py \
+     --notes notes.json --bot-author-id BOT_USER_ID \
+     --project-id OWNER/REPO --change-id NUMBER \
+     --posting-mode github_reviews --out update.json
+   ```
+
+   For GitLab, use the ledger's project ID and MR IID and
+   `--posting-mode gitlab_discussions`. The command emits a `{"body": ...}`
+   API update payload and prints the existing target note ID and obsolete IDs.
+   It sends no requests. Missing/ambiguous ledgers, corrupt checksums, wrong
+   change identities, invalid records, and oversized summaries stop conversion
+   without writing an update. Resolve ambiguity from the preserved evidence;
+   the converter never guesses which ledger to keep.
+4. Review `update.json`. Update the printed target through the platform API,
+   read it back, and verify its body equals the emitted body. Then delete only
+   the printed obsolete state-note IDs. The existing summary is reused when
+   present; otherwise the old state note becomes the summary. Resume with the
+   new images only after both steps succeed. A failed update leaves the v1
+   ledger intact; a failed deletion leaves reviews paused until cleanup finishes.
+5. Remove the retired state controls listed in the
+   [configuration migration](configuration.md#migrate-to-30),
+   rerun from prepare, and verify thread IDs and human dismissals remain intact.
+
+The conversion preserves every record and disposition, maps old `drop` decisions
+to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
+No online legacy decoder or automatic migration runs during prepare/post.
+
+If publication fails after creating threads but before writing the combined
+summary, a retry reconciles bot-authored thread roots on that same revision.
+With an existing ledger, recovery is limited to current findings or authorized
+commands. Without a ledger, every eligible open root is recovered so absent
+findings can be resolved with resolution quorum, or tracked as `stale_unverified`
+without it. Recovered open records are saved before any ledger-free thread is
+resolved, so repeated summary-write failures remain retryable. GitHub checks
+GraphQL resolution before reusing a root; a resurfaced
+finding whose compacted thread is already resolved gets a new visible thread.
+It never replaces authoritative ledger records or human dispositions. Missing
+older history requires the deliberate repair below; corrupt state is not
+treated as absence.
+
+### Missing ledger repair
+
+A failed first summary write can leave inline threads without any ledger, and a
+2.1.x failed state write can leave a summary without its separate v1 state note.
+After another push, neither case can be repaired by the v1 converter: there is
+no ledger to convert. The `missing-ledger-repair` error identifies this path.
+
+1. Pause review triggers and wait for active jobs to finish. Export all bot
+   comments, inline thread roots, replies and human commands across every page.
+   The migration's top-level-comment export alone does not include GitHub inline
+   review threads. Keep the exports until the repair is verified.
+2. If a ledger previously existed, restore that authenticated ledger from the
+   latest good export. Do not replace durable dispositions with empty state.
+3. If the first ledger was never written, inspect the orphaned findings and
+   record any human dispositions and command replies. Delete only the bot's
+   orphaned inline root comments using the platform's comment deletion action.
+   Also delete its ledger-free summary, if present. Preserve unrelated comments
+   and the exported thread/reply history. This deliberately retires those
+   orphaned thread IDs; fresh findings receive new IDs on publication.
+4. Rerun from prepare on the current head with the new images. Confirm that one
+   combined summary/ledger is written, then reapply any recorded human commands
+   to the appropriate new finding threads and verify their saved dispositions.
+
+Runtime never performs this deletion or silently starts over when older review
+history exists. With an existing ledger, same-revision reconciliation reuses
+roots needed by current findings or explicit authorized commands. It does not
+re-import absent, automatically resolved threads that state compaction already
+retired.
+
+### Rollback after `refuted` has been used
 
 Images predating `refuted` reject a v2 ledger containing that status or human
 disposition. They fail closed; new images continue to read old v2 ledgers.
