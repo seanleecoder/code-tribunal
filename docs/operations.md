@@ -32,11 +32,14 @@ error before the CLI exits nonzero.
 
 ## Concurrency
 
-GitLab serializes post per project/MR through a resource group. GitHub groups
-workflow runs by PR and does not cancel an in-progress run; the stale-head guard
-prevents an older run from mutating the newer revision. Custom invocation of the
-Python post module has no distributed lock and must supply equivalent
-serialization.
+GitLab serializes prepare and post per project/MR through the same resource
+group. This keeps prepare's state discovery from reading an unfinished first
+publication's threads before its ledger exists. Review and critique jobs can
+still run concurrently. GitHub groups workflow runs by PR
+and does not cancel an in-progress run; the stale-head guard prevents an older
+run from mutating the newer revision. Custom invocation of the Python prepare
+and post modules has no distributed lock and must supply equivalent
+serialization of state discovery and publication.
 
 ## Observability and artifacts
 

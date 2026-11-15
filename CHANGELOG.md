@@ -13,7 +13,9 @@ versioning.
   threads exist without a ledger, before any reviewer runs. Posting already
   refused this history and keeps its check; a clean first run and a retry of an
   interrupted first publication on the same revision are unaffected. When no
-  ledger loads, prepare now also lists the change's review threads.
+  ledger loads, prepare now also lists the change's review threads. GitLab
+  prepare shares post's per-MR resource group so an unfinished first publication
+  cannot be mistaken for lost state.
 - Production model recommendations (reviewed 2026-11-15): Budget is Haiku 5.5 /
   `xhigh`, GPT-6.1 Terra / `high`, Gemini 4 Hydrogen / `medium` and Composer 2.5;
   Value / Balance is Sonnet 5.5 / `high`, GPT-6.1 Sol / `high`, Gemini 4 Hydrogen

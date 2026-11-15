@@ -41,6 +41,9 @@ prepare_ai_review:
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
+  # Share post's lock so state discovery cannot mistake an in-flight first
+  # publication (threads created, ledger not yet written) for lost state.
+  resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
   script:
     - python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
   artifacts:
@@ -151,8 +154,8 @@ post_ai_review:
   extends: .ai_review_rules
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: false
-  # Serializes concurrent posting for one merge request. Unrelated to merge
-  # enforcement; keep it.
+  # Serialize publication with other posts and prepare's state discovery for
+  # one merge request. Unrelated to merge enforcement; keep it.
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"
   needs:
     - job: prepare_ai_review
