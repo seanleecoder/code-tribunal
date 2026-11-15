@@ -328,6 +328,11 @@ same thread and survived an unchanged rerun without publication mutations.
 The new-image pair came from refuted source
 `79377edbd1f4f030acbcadfd0e6fafcc7d0c8890`, published and attested by
 [run 43652775495](https://github.com/seanleecoder/code-tribunal/actions/runs/43652775495).
+Its exact references were:
+
+- Base: `ghcr.io/seanleecoder/code-tribunal/ai-review-base:3.0-79377edbd1f4f030acbcadfd0e6fafcc7d0c8890@sha256:4914cedd05df55d92ef223b7814491d3cbbf222496cf3d7978f4a49e25f03349`.
+- Reviewer: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.0-79377edbd1f4f030acbcadfd0e6fafcc7d0c8890@sha256:dbd1d9b40beb0f5f3655c350adffa9c61e13fd97ac39b08bfb96c3509615cf74`.
+
 The final 3.1 runtime source `a7066d427cb0f35e96b0c40f3eacaad9cfaa6634`
 only changes the image tag series; application code, schemas and canary drivers
 are identical. The exact rollback pair and workflow/template were taken from
