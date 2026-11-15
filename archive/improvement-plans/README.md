@@ -15,6 +15,5 @@ Runtime placeholders for these ideas were removed on 2026-07-14. Any future
 proposal must start with a new compatibility and migration review rather than
 assuming the removed configuration or artifact fields still exist.
 
-The [legacy monolithic implementation specification](legacy-ai-review-implementation-ready-spec.md)
-is archived for provenance. It predates the cleanup and is not a current product
-contract.
+The legacy monolithic implementation specification and the 1.0.0 pipeline
+walkthrough were deleted on 2026-11-15; git history retains them at `ef8a13b`.
