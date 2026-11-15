@@ -8,7 +8,7 @@ who owns it, when it goes, and where to find it.
 
 | ID | Owner | Introduced | Code references | Removal condition | Target release/issue |
 |---|---|---|---|---|---|
-| COMPAT-009 | State maintainers | S14, state v2 | [`scripts/migrate_state_v2.py`](../../scripts/migrate_state_v2.py), an offline v1 decoder only; `memory.decode_state_note_body` redirects unmigrated v1 ledgers to it | Every supported deployment has completed the explicit v1 → v2 summary migration; ordinary runtime has no v1 decoder | 3.0.0 opens the upgrade window; explicit maintainer closure after supported v1 deployments migrate |
+| COMPAT-009 | State maintainers | S14, state v2 | [`scripts/migrate_state_v2.py`](../../scripts/migrate_state_v2.py), an offline v1 decoder only; `memory.decode_state_note_body` redirects unmigrated v1 ledgers to it | Both demo consumers, the only known pre-3.0 deployments, run a 3.x release with migrated state, and one further release has shipped; ordinary runtime has no v1 decoder | Migrate the demo consumers before the next release; delete in the release after that (decided 2026-11-15) |
 | COMPAT-010 | Release maintainers | N03, reusable GitHub workflow | [`scripts/check_release.py`](../../scripts/check_release.py), historical canonical-template/copy reads and byte comparison only | Publication no longer retries releases from the pre-N03 template/copy era | End of publication retry support for 2.1.x |
 | COMPAT-011 | Contributor tooling maintainers | 2026-10-27 | [`MYPY_FLAGS`](../../Makefile) and the explicit Termux profile in [setup](setup.md) | The pinned ast-serialize has an Android artifact or a provisioned Rust build; delete the local parser override recipe | Recheck when changing the mypy pin |
 
