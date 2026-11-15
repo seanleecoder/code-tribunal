@@ -233,6 +233,10 @@ your own GitLab deployment, or for a fork-based variant.
 
 ## Carried coverage gaps
 
+Reviewed for 3.1.0 on 2026-11-15: the gaps below remain. The separate
+[refuted rollback rehearsal](CONSUMER-PROJECTS.md#refuted-rollback-rehearsal-310-2026-11-15)
+passed on both platforms.
+
 Live-coverage paths no run has exercised yet. The release pull-request checklist's
 **Known limitations** item keeps this table current. Claim limits that no live run
 can close, such as trusted-image enforcement and protected-ref insiders, belong to
