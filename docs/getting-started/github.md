@@ -15,9 +15,10 @@ because GitHub does not expose provider secrets to them.
 
 ## Install the workflow
 
-Version 3.0 replaces the copied workflow with the
-[reusable workflow](../../.github/workflows/ai-review-reusable.yml). For an older
-release, use the installation guide at its tag.
+Consumers call the
+[reusable workflow](../../.github/workflows/ai-review-reusable.yml) from a small
+caller. A deployment that still uses the copied workflow of a release before 3.0
+follows the [3.0 upgrade](../operations.md#upgrade-to-30).
 
 Create `.github/workflows/ai-review.yml` in the consumer repository:
 
@@ -96,9 +97,7 @@ Cursor is off by default; see
 
 Runtime reviewer and policy variables are listed in the
 [environment reference](../configuration.md#environment-variables). Leave them
-unset for shipped defaults. State-load failures always stop prepare; an
-existing installation must complete the [state v2 migration](../operations.md#state-v2-migration)
-before switching to 3.0.
+unset for shipped defaults. State-load failures always stop prepare.
 
 ## Branch protection
 
@@ -108,9 +107,8 @@ is no gate job to require.
 
 If you want the review to have *run* before a merge, you may require the
 `ai-review / post` check instead. This name includes the caller's job ID; confirm
-the exact check name on a completed run if you rename that job. When upgrading
-from a copied workflow, remove the old `post` requirement before switching, then
-select the new check after the first run. Understand what that gives you:
+the exact check name on a completed run if you rename that job. Understand what
+that gives you:
 
 - it reports whether publication completed, not what the review found. A
   `blocker` finding posts a thread and `post` still succeeds;
@@ -149,12 +147,11 @@ project has proven live, and its limits, is indexed in the
 ## Update or roll back
 
 Update the caller's `uses:` SHA to one reviewed Code Tribunal release commit.
-Both images and the implementation move together. Read the
-[upgrade notes](../operations.md#upgrade-to-30) before upgrading; a 1.x
-deployment must first remove the required `gate` check. To roll back,
-restore the previous caller SHA (or the complete copied workflow for a pre-cutover
-release) and rerun against a fresh PR revision;
-do not reuse old prepare/reviewer artifacts across versions.
+Both images and the implementation move together. Upgrading from a release
+before 3.0 follows the [3.0 upgrade](../operations.md#upgrade-to-30). To roll
+back, restore the previous caller SHA and rerun against a fresh PR revision;
+do not reuse old prepare/reviewer artifacts across versions. Some rollbacks need
+[extra steps](../operations.md#upgrades-and-rollbacks).
 
 ## Uninstall
 

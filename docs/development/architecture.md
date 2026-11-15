@@ -52,6 +52,10 @@ from the package at all.
 | Module | Owns | Platform access |
 |---|---|---|
 | `config.py` | Configuration parsing, defaults, frozen runtime settings, and the full-config digest | no |
+| `reviewers.py` | The trusted first-party reviewer registry | no |
+| `input_bundle.py` | `python -m ai_review.input_bundle`; revision binding, diff collection, snapshot containment, and prior-state loading for the manifest | yes |
+| `schema.py` | Schema loading and validation, outcome construction, and authoring finalization | no |
+| `memory.py` | State encoding and decoding, hash and author checks, change binding, and compaction | no |
 | `post.py` | `python -m ai_review.post` entry point only | via `posting` |
 | `posting.py` | Mutation orchestration: the one network layer for posting | yes |
 | `state_plan.py` | Pure state planning and record transitions | **never** |
@@ -59,6 +63,7 @@ from the package at all.
 | `notes.py` | Marker and review-note parsing | **never** |
 | `commands.py` | `/ai-review` command collection and author authorization | yes |
 | `consensus.py` | `python -m ai_review.consensus`; the deterministic reducer API | no |
+| `consensus_policy.py` | The one surface/FYI decision, `apply_group_decision` | no |
 | `grouping.py` | Path/category buckets and complete-link grouping by anchor/fingerprint identity | **never** |
 | `critique.py` | Critique application and group re-decision | **never** |
 | `run_health.py` | Observational run health: job rows, grade, and the job-log rendering; feeds no decision | **never** |
@@ -77,9 +82,10 @@ These rules are worth stating because breaking them is silent:
   once into frozen `ReviewConfig` settings. The complete v4 document travels in
   the manifest; downstream entry points admit it without interpreting their
   environment or reading YAML. Run/config digests still bind evidence at CI
-  transport boundaries. S04 changes the configuration contract, all consumers
-  and canonical invocations together: staging them would require a second
-  loading path for old and new artifacts. There is no online compatibility path.
+  transport boundaries.
+- Artifact versions are not read across image pairs. Producers and consumers run
+  from one pinned pair with fresh artifacts from prepare; there is no online
+  reader for an older configuration, batch, consensus or state version.
 - The reviewer registry selects each seat's launcher (a shell adapter, or a
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
@@ -98,36 +104,24 @@ These rules are worth stating because breaking them is silent:
   resolves locations against the prepared diff, and supplies runtime metadata.
   The critique pool is validated before rendering and retained in runner memory;
   its on-disk copy is diagnostic, never an authority after the model runs.
-  S05 changes the authoring schemas, finalizers and their consumers together:
-  staging them separately would require an old/new contract path. Finding and
-  critique batches move to v2 without changing consensus or persisted state.
 - Consensus uses only current-run evidence and writes signature-derived group
   IDs in `consensus.v3`. Posting matches each group against the complete latest
   state once, preserves a matched thread's historical ID, and routes ambiguous
   or already-claimed matches to the summary without changing the decision.
-  N11 changes prepare, the consensus schema/producer, and posting together:
-  staging the alias-artifact deletion or consumers separately would require a
-  temporary old/new contract path.
-- S14 stores state v2 inside the summary; rendering reserves room for the complete
+- State v2 lives inside the summary; rendering reserves room for the complete
   ledger, supported returned thread-ID sizes, and health section before
-  truncating visible findings. The explicit
-  offline v1 migration preserves record identities without an online decoder.
-  Posting uses the current group's prepared anchor and context aliases (N14),
-  with no additional diff fetch or scan. Prepare, the state schema, publication,
-  and GitHub comment transport change together because an old/new runtime path
-  would otherwise be needed. The offline converter has no platform access.
-  The state schema validates reads and writes and defines the supported ID
-  bounds used by preflight. Change binding lives in `memory.load_state_from_notes`:
-  GitLab project IDs remain strict, while GitHub's authenticated PR comment binds
-  the repository and its mutable owner/name slug is refreshed on load.
-- S06 makes each finding/critique batch the complete execution outcome. `schema`
+  truncating visible findings. Posting uses the current group's prepared anchor
+  and context aliases, with no additional diff fetch or scan. The state schema
+  validates reads and writes and defines the supported ID bounds used by
+  preflight. Change binding lives in `memory.load_state_from_notes`: GitLab
+  project IDs remain strict, while GitHub's authenticated PR comment binds the
+  repository and its mutable owner/name slug is refreshed on load. The v1
+  decoder exists only in the offline converter, which has no platform access.
+- Each finding/critique batch is the complete execution outcome. `schema`
   constructs and validates outcomes, with count arithmetic in `validate_outcome`;
   `outcomes` admits transported files for both critique pooling and consensus.
   One pure quality helper derives eligibility and accepted/omitted counts from
-  the payload. Health reads no files and remains observational. Schemas, runner,
-  consumers, canonical invocations and canaries change together because staging
-  them would require an old/new reader or dual writer. These v2 batches shipped
-  in 3.0.0; generate fresh artifacts with one image pair.
+  the payload. Health reads no files and remains observational.
 - `consensus_errors.py` exists solely to break an import cycle: `critique`
   raises `ConsensusIntegrityError`, and the class is defined partway down
   `consensus.py`, so importing it from there fails on a partially-initialized

@@ -151,10 +151,10 @@ guides.
 Copy this into the release pull-request description. Each item records whether it
 applied, and the review checks the evidence it cites.
 
-- [ ] **Compatibility targets:** cite the current
-  [target audit](temporary-compatibility.md#next-major-target-audit-2026-11-01).
-  Record why COMPAT-009/010/011 remain or have reached their deletion criteria
-  before freezing `R`.
+- [ ] **Compatibility targets:** for each row in the
+  [compatibility register](temporary-compatibility.md), record here why it
+  remains or that it reached its removal condition and was deleted before
+  freezing `R`.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`

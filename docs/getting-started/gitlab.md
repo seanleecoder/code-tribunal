@@ -88,17 +88,8 @@ merge-request variables. Run the auditor from a protected scheduled pipeline or
 as a required check owned by an approval rule, not only ad hoc, so that drift in
 the composition is noticed without someone remembering to look.
 
-### Migrate from the child pipeline
-
-Version 3.0 removes the child wrapper and `parent_pipeline` rules.
-Before upgrading, protect the composition and restrict pipeline variables as
-described above. Replace the `ai_review` trigger job and its two nested includes
-with the top-level [direct include](examples/gitlab-direct.yml), pinned to the
-reviewed template project's full SHA. Keep `ai_review` in the consumer's stage
-list. Review jobs now run in the merge-request pipeline itself.
-
-Remove `--mode` from trust-auditor commands; the auditor accepts only the direct
-include. Complete the state migration below before switching images.
+A deployment that still uses the child pipeline of a release before 3.0 follows
+the [3.0 upgrade](../operations.md#upgrade-to-30).
 
 ## Configure protected variables
 
@@ -124,8 +115,7 @@ project/group variables so prepare records them in the resolved configuration.
 GitLab variable precedence can override the template's
 `AI_REVIEW_LOCAL_MOCK: "0"`, so never set `AI_REVIEW_LOCAL_MOCK` or
 `AI_REVIEW_ALLOW_LOCAL_MOCK` on the project. State-load failures always stop
-prepare. Existing installations must complete the
-[state v2 migration](../operations.md#state-v2-migration) before switching images.
+prepare.
 
 Cursor is off by default; see
 [choosing the panel](../configuration.md#choosing-the-panel) before enabling it.
@@ -177,12 +167,11 @@ prove protected-variable behavior in a particular GitLab deployment.
 ## Update or roll back
 
 Change the template SHA only after reviewing the target revision and its image
-pins. Read the
-[upgrade notes](../operations.md#upgrade-to-30) before upgrading; a 1.x
-deployment must first remove custom jobs, `needs`, or rules that reference
-`ai_review_gate`. A rollback restores the previous
+pins. Upgrading from a release before 3.0 follows the
+[3.0 upgrade](../operations.md#upgrade-to-30). A rollback restores the previous
 template SHA and reruns prepare; never feed artifacts created by one source or
-configuration into another.
+configuration into another. Some rollbacks need
+[extra steps](../operations.md#upgrades-and-rollbacks).
 
 ## Uninstall
 

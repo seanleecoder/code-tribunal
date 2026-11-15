@@ -34,14 +34,12 @@ decision, `panel_status`,
 `failed_reviewers`, resolution eligibility, or an exit code. Post renders it as
 the first section of the summary comment and refuses an artifact without it.
 
-`consensus.v3` removes `issue_id_source`, `state_match`, `group.body_hash`,
-`summary.drop_count` and the `drop` decision. Every group has a signature-derived
-issue ID; posting alone matches it to historical state and chooses a reusable
-thread. Prepare carries no `state_aliases.json`, and consensus accepts no
-`--state` argument. Version 2 consensus artifacts are rejected. Producer and
-consumer must run from one pinned image pair with fresh artifacts from prepare.
-Persisted state uses version 2 inside the summary comment. The v1 ledger is
-converted explicitly before switching images; see the
+Every `consensus.v3` group has a signature-derived issue ID. Consensus reads no
+state; posting alone matches a group to historical state and chooses a reusable
+thread. Producers and consumers must run from one pinned image pair with fresh
+artifacts from prepare: artifacts of an earlier schema version are rejected.
+Persisted state uses version 2 inside the summary comment, and a v1 ledger must
+be converted first; see the
 [state migration](../operations.md#state-v2-migration).
 
 `post_result.json` is the terminal artifact: nothing downstream reads it, and
@@ -64,8 +62,7 @@ pool's internal source-ID mapping or run/config bookkeeping. Finalization maps
 those references through the exact `pooled_findings.v2` pool used to render the
 prompt, held in runner memory and bound to the run, critic and effective config.
 The audit file is never reloaded after the model runs. An unknown target or
-duplicate reference fails the critique batch. Version 1 finding/critique batches
-are rejected; run every stage from one image pair and generate fresh artifacts.
+duplicate reference fails the critique batch.
 Schema validity alone does not make a reviewer resolution-eligible: consensus
 derives eligibility from success status and the payload: a zero-raw empty
 review or at least one accepted finding is eligible. Accepted count is

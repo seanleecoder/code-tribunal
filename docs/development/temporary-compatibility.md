@@ -14,17 +14,3 @@ who owns it, when it goes, and where to find it.
 
 Rows are not permanent promises. When a target arrives, delete the compatibility
 path or move the target explicitly with a recorded rationale.
-
-## Next-major target audit (2026-11-01)
-
-- COMPAT-008's target has arrived: the next-major writer omits `source=`.
-  Historical markers remain permanently readable. Rollback to 2.0.3 is no longer
-  supported; 2.1.x can read the shorter marker, but requires restored v1 state.
-- COMPAT-009 remains: 3.0.0 opens the v1 → v2 upgrade window. Supported v1
-  deployments still need the offline converter. Maintainers must explicitly
-  close that window before deletion; no automatic date or online decoder is added.
-- COMPAT-010 remains: publication retry support for pre-N03 releases has not
-  ended. This is distinct from whether new 2.1.x patches are made.
-- COMPAT-011 remains after rechecking the mypy pin: the local Android parser
-  installation still requires unavailable native build prerequisites. The explicit
-  developer profile is retained; supported CI continues using the native parser.
