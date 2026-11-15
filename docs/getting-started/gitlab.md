@@ -186,8 +186,9 @@ configuration into another.
 
 ## Uninstall
 
-Remove the include or bridge job, remove `ai_review` from a consumer-only stage
+Remove the include, remove `ai_review` from a consumer-only stage
 list if unused, delete Code Tribunal variables, and review whether **Pipelines
 must succeed** still has another required pipeline. Also delete any custom
 `needs` or script still referring to `post_ai_review`. Existing discussions and
-state notes remain until removed under project policy.
+the summary note, which holds the review state, remain until removed under
+project policy.

@@ -129,7 +129,8 @@ Open a same-repository pull request with a small, reviewable change. Confirm:
 
 1. `prepare`, reviewer, `consensus`, and `post` jobs ran.
 2. `ai-review-inputs`, reviewer, consensus, and post artifacts exist.
-3. The state comment is authored by `github-actions[bot]`.
+3. The summary comment, which holds the review state, is authored by
+   `github-actions[bot]`.
 4. Any surfaced finding is posted once and rerunning updates rather than
    duplicates it.
 5. `out/post/post_result.json` reports `status: success` and the `post` job
