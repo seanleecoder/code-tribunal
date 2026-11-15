@@ -14,6 +14,9 @@ from tests.support.repository_script import load_repository_script
 
 REPO = Path(__file__).resolve().parents[3]
 tool = load_repository_script("check_release", REPO / "scripts/check_release.py")
+GITHUB_CALLER = load_repository_script(
+    "release_common", REPO / "scripts/release_common.py"
+).GITHUB_CALLER
 PUBLISH_WORKFLOW = REPO / ".github/workflows/publish-release.yml"
 CANARY_WORKFLOW = REPO / tool.CANARY_WORKFLOW
 TEMPLATES = (tool.GITHUB_WORKFLOW, tool.GITLAB_TEMPLATE)
@@ -52,7 +55,7 @@ class ReleaseRepository:
         for relative in TEMPLATES:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / relative, root / relative)
-        shutil.copyfile(REPO / tool.GITHUB_CALLER, root / tool.GITHUB_CALLER)
+        shutil.copyfile(REPO / GITHUB_CALLER, root / GITHUB_CALLER)
         (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
         (root / "runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
         self.shipped_source = tool.gitlab_image_pins(
@@ -76,13 +79,6 @@ class ReleaseRepository:
     def release_commit(self) -> str:
         self.repin(self.runtime_source)
         return self.commit("P")
-
-    def use_legacy_layout(self) -> tuple[str, ...]:
-        """COMPAT-010: replace the reusable workflow with a pre-N03 template and copy."""
-        legacy = self.root / tool.LEGACY_GITHUB_TEMPLATE
-        (self.root / tool.GITHUB_WORKFLOW).rename(legacy)
-        shutil.copyfile(legacy, self.root / tool.GITHUB_CALLER)
-        return (tool.LEGACY_GITHUB_TEMPLATE, tool.GITHUB_CALLER, tool.GITLAB_TEMPLATE)
 
 
 class ReleasePinsTests(unittest.TestCase):
@@ -108,31 +104,22 @@ class ReleasePinsTests(unittest.TestCase):
             tool.release_pins(self.repo.root, "HEAD")
 
     def test_changing_the_caller_requires_a_new_runtime_source(self) -> None:
-        caller = self.repo.root / tool.GITHUB_CALLER
+        caller = self.repo.root / GITHUB_CALLER
         caller.write_text(caller.read_text() + "# untested caller change\n")
         self.repo.release_commit()
-        with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_CALLER):
+        with self.assertRaisesRegex(tool.ReleaseValidationError, GITHUB_CALLER):
             tool.release_pins(self.repo.root, "HEAD")
 
-    def test_restoring_legacy_files_cannot_remove_the_reusable_workflow(self) -> None:
-        paths = self.repo.use_legacy_layout()
-        self.repo.repin(self.repo.runtime_source, paths)
-        self.repo.commit("P restores the legacy layout after an N03 R")
+    def test_a_release_commit_without_the_reusable_workflow_is_rejected(self) -> None:
+        # The copied-template layout of releases before 3.0.0 is no longer read.
+        template = self.repo.root / "ai-review/ci/review.github-actions.yml"
+        (self.repo.root / tool.GITHUB_WORKFLOW).rename(template)
+        shutil.copyfile(template, self.repo.root / GITHUB_CALLER)
+        self.repo.runtime_source = self.repo.commit("copied-template R")
+        self.repo.repin(self.repo.runtime_source, (str(template.relative_to(self.repo.root)),
+                                                   GITHUB_CALLER, tool.GITLAB_TEMPLATE))
+        self.repo.commit("copied-template P")
         with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_WORKFLOW):
-            tool.release_pins(self.repo.root, "HEAD")
-
-    def test_pre_n03_tags_retain_their_pin_and_byte_parity_checks(self) -> None:
-        # COMPAT-010: publication retries read the old layout without executing it.
-        paths = self.repo.use_legacy_layout()
-        caller = self.repo.root / tool.GITHUB_CALLER
-        self.repo.runtime_source = self.repo.commit("pre-N03 R")
-        self.repo.repin(self.repo.runtime_source, paths)
-        self.repo.commit("pre-N03 P")
-        _, pins = tool.release_pins(self.repo.root, "HEAD")
-        self.assertEqual(pins.runtime_source, self.repo.runtime_source)
-        caller.write_bytes(caller.read_bytes().replace(b"\n", b"\r\n"))
-        self.repo.commit("pre-N03 P with byte drift")
-        with self.assertRaisesRegex(tool.ReleaseValidationError, "differs from"):
             tool.release_pins(self.repo.root, "HEAD")
 
     def test_a_trusted_sha_that_disagrees_with_the_image_tags_is_rejected(self) -> None:
@@ -225,11 +212,12 @@ class ReleaseTagTests(unittest.TestCase):
 
 
 class TagVersionTests(unittest.TestCase):
-    def test_tag_versions_start_at_the_first_release_under_adr_0004(self) -> None:
-        self.assertEqual(tool.tag_version("v2.1.0-rc.1"), "2.1.0-rc.1")
+    def test_tag_versions_start_at_the_first_reusable_workflow_release(self) -> None:
+        self.assertEqual(tool.tag_version("v3.0.0-rc.1"), "3.0.0-rc.1")
         self.assertEqual(tool.tag_version("v10.0.0"), "10.0.0")
-        for tag, error in (("v2.0.3", "retired process"), ("v2.0.4-rc.1", "retired process"),
-                           ("2.1.0", "v-prefixed"), ("v2.1", "v-prefixed")):
+        for tag, error in (("v2.0.3", "predates 3.0.0"), ("v2.1.0", "predates 3.0.0"),
+                           ("v2.1.1-rc.1", "predates 3.0.0"),
+                           ("3.0.0", "v-prefixed"), ("v3.0", "v-prefixed")):
             with self.subTest(tag=tag), self.assertRaisesRegex(tool.ReleaseValidationError, error):
                 tool.tag_version(tag)
 

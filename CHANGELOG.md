@@ -7,6 +7,12 @@ versioning.
 
 ## [Unreleased]
 
+### Removed
+
+- Release publication accepts tags from `v3.0.0` on. The copied-template checks
+  kept for retrying 2.1.x publication (COMPAT-010) are removed; `v2.1.0` is
+  published and is never republished.
+
 ## [3.1.0] - 2026-11-15
 
 ### Added

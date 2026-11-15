@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing signed release tag (v2.1.0 or later) to publish using current main
+        description: Existing signed release tag (v3.0.0 or later) to publish using current main
         required: true
         type: string
       latest:
