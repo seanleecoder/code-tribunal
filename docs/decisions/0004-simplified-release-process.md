@@ -112,15 +112,15 @@ Keep the two-commit flow:
 - P must be merged with a merge commit.
 
 `check_release.py pins` replaces the inputs checker. It is about 60 lines and
-checks four things:
+checks three things:
 
 - one base ref and one reviewer ref are used across all jobs;
-- for pre-N03 tags only (COMPAT-010), the installed GitHub copy matches the
-  canonical template;
 - `AI_REVIEW_TRUSTED_IMAGE_SHA` equals the R embedded in the image tags;
 - R is an ancestor of P, and `git diff --name-only R..P` stays within the
-  reusable GitHub workflow, the GitLab template, `CHANGELOG.md` and `docs/`
-  (plus the canonical template and installed copy for pre-N03 tags).
+  reusable GitHub workflow, the GitLab template, `CHANGELOG.md` and `docs/`.
+
+The copy-parity check for tags that predate the reusable workflow ended with
+2.1.x publication retry support on 2026-11-15.
 
 The old finalizer reviewed R..P semantically; the new check is path-only. The
 release pull-request review takes over the semantic part.
@@ -150,7 +150,7 @@ are not re-described.
 - **Prerelease flag:** derived from the semver prerelease suffix.
 - **Latest:** GitHub's default "latest", with a manual `latest=false` input for
   backports.
-- **Retries:** dispatch the workflow from main, for tags v2.1.0 and later only.
+- **Retries:** dispatch the workflow from main, for tags v3.0.0 and later only.
 - **Image tag series:** single source in the publish workflow's `IMAGE_VERSION`,
   bumped to `2.1` for the first release under this ADR. Digest pins are
   unaffected.

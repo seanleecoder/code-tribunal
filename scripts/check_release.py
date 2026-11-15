@@ -29,7 +29,6 @@ from urllib.parse import urlsplit
 from ai_review.canonical import json_loads_no_duplicates
 from check_supply_chain_pins import gitlab_image_pins, image_pin_issues
 from release_common import (
-    GITHUB_CALLER,
     GITHUB_WORKFLOW,
     GITLAB_TEMPLATE,
     REPOSITORY,
@@ -42,16 +41,11 @@ from release_common import (
 )
 from validate_candidate_identity import CANDIDATE_SCHEMA, SIGNER_IDENTITY, SOURCE_REF
 
-# Tags before this were published under the retired release-inputs process.
-FIRST_VERSION = "2.1.0"
+# The first release with the reusable workflow. Earlier tags used the copied
+# template (2.1.0) or the retired release-inputs process; none is republished.
+FIRST_VERSION = "3.0.0"
 # P only re-pins: everything else ships from R, which the canary tested.
-_RELEASE_EXTRAS = (GITLAB_TEMPLATE, "CHANGELOG.md", "docs/")
-RELEASE_PATHS = (GITHUB_WORKFLOW, *_RELEASE_EXTRAS)
-# COMPAT-010: immutable 2.1 release tags still use a canonical template and a
-# byte-identical copy at GITHUB_CALLER, and P may re-pin both.
-LEGACY_GITHUB_TEMPLATE = "ai-review/ci/review.github-actions.yml"
-# Exclude the reusable workflow so this fallback cannot allow its deletion.
-LEGACY_RELEASE_PATHS = (LEGACY_GITHUB_TEMPLATE, GITHUB_CALLER, *_RELEASE_EXTRAS)
+RELEASE_PATHS = (GITHUB_WORKFLOW, GITLAB_TEMPLATE, "CHANGELOG.md", "docs/")
 CANARY_WORKFLOW = ".github/workflows/candidate-canary.yml"
 CANARY_TRAILER = re.compile(r"(?m)^Canary-run: ([1-9][0-9]*)$")
 # Link destinations in Markdown: inline `](dest)` and reference definitions `[x]: dest`.
@@ -134,18 +128,14 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     release_commit = _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
     with tempfile.TemporaryDirectory(prefix="code-tribunal-release-") as temporary:
         tree = Path(temporary)
-        # Whole directories: either layout's files may be absent at this revision.
+        # Whole directories: a missing workflow is reported here, not by git archive.
         _extract(root, release_commit, (".github/workflows", "ai-review/ci"), tree)
+        if not (tree / GITHUB_WORKFLOW).exists():
+            raise ReleaseValidationError(f"release commit has no {GITHUB_WORKFLOW}")
         gitlab = (tree / GITLAB_TEMPLATE).read_text(encoding="utf-8")
-        issues = []
-        if (tree / GITHUB_WORKFLOW).exists():
-            github_path, release_paths = tree / GITHUB_WORKFLOW, RELEASE_PATHS
-        else:
-            # COMPAT-010: read-only check for pre-N03 tags.
-            github_path, release_paths = tree / LEGACY_GITHUB_TEMPLATE, LEGACY_RELEASE_PATHS
-            if github_path.read_bytes() != (tree / GITHUB_CALLER).read_bytes():
-                issues.append(f"{GITHUB_CALLER} differs from {LEGACY_GITHUB_TEMPLATE}")
-        issues += image_pin_issues(gitlab, github_path.read_text(encoding="utf-8"))
+        issues = image_pin_issues(
+            gitlab, (tree / GITHUB_WORKFLOW).read_text(encoding="utf-8")
+        )
     if issues:
         raise ReleaseValidationError("\n".join(issues))
     pins, _ = gitlab_image_pins(gitlab)
@@ -155,7 +145,7 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     outside = [
         path for path in diff_paths(root, runtime_source, release_commit)
         if not any(path == item or (item.endswith("/") and path.startswith(item))
-                   for item in release_paths)
+                   for item in RELEASE_PATHS)
     ]
     if outside:
         raise ReleaseValidationError(
@@ -175,10 +165,10 @@ def tag_version(tag: str) -> str:
         version = validate_release_version(tag[1:])
     except ReleaseValidationError:
         raise ReleaseValidationError(malformed) from None
-    # Prereleases of the first version, such as 2.1.0-rc.1, are new-process too.
+    # Prereleases of the first version, such as 3.0.0-rc.1, are accepted too.
     if compare_release_versions(version.partition("-")[0], FIRST_VERSION) < 0:
         raise ReleaseValidationError(
-            f"{tag} predates {FIRST_VERSION}; it was published by the retired process"
+            f"{tag} predates {FIRST_VERSION}; this process does not publish or retry it"
         )
     return version
 

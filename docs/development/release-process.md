@@ -21,9 +21,9 @@ alphanumeric identifiers such as `alpha01` remain valid. Build metadata such as
 `2.1.0+build.1` is rejected. A version with a prerelease suffix is published as a
 GitHub prerelease and never as latest.
 
-This process publishes `v2.1.0` and later, including prereleases of 2.1.0. Tags
-before that were published by the retired release-inputs process and are never
-republished.
+This process publishes `v3.0.0` and later, including prereleases. Earlier tags
+are never republished: `v2.1.0` predates the reusable workflow, and tags before
+it were published by the retired release-inputs process.
 
 The image tag series is the single `IMAGE_VERSION` in
 `.github/workflows/publish-ai-review-images.yml`. Images are tagged `<series>-<R>`;
@@ -82,8 +82,7 @@ row whose target has arrived, and remove completed spec files from the active
    of `P`; and `R..P` within
    the allowed paths. The check is path-only. The pull-request review carries the
    semantic part: `R..P` only re-pins and documents. Caller changes belong in `R`,
-   so the canary tests them. Retrying a pre-N03 release still verifies its old
-   canonical-template/copy parity (COMPAT-010).
+   so the canary tests them.
 
    Nothing else may land on `main` between `R` and `P`, because `R..P` would then
    carry it. If something does, build a new `R` and re-run the canary.

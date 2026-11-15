@@ -20,8 +20,8 @@ GitHub has one reusable implementation in
 [`.github/workflows/ai-review-reusable.yml`](../../.github/workflows/ai-review-reusable.yml).
 Consumers call it at a release SHA; this repository's small caller uses the same
 commit. The canary installs a candidate-pinned reusable workflow
-and caller in its temporary demo branch. Only publication retries read the old
-template/copy layout (COMPAT-010); no synchronization writer remains.
+and caller in its temporary demo branch. No copied template or synchronization
+writer remains.
 
 ## Compatibility boundary
 
