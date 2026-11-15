@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-15
+
 ### Added
 
 - `/ai-review refuted` records a maintainer's rejection of a finding's validity,
@@ -16,12 +18,24 @@ versioning.
 - GitHub and GitLab lifecycle canaries exercise refuting, an unchanged rerun,
   and reopening the same thread.
 
+### Changed
+
+- Upgrade reviewer CLIs to Claude Code 2.1.325, Codex 0.169.0 and OpenCode
+  (`@opencode/cli`) 2.3.0. Refresh the Python base image digest, Node builder
+  to 26.13.1, Ruff to 0.17.5 and types-PyYAML to 6.0.12.20261113.
+
 ### Upgrade
 
 Ship all `refuted` changes together. After a `refuted` command has been posted,
 rollback to an older image requires converting affected dispositions to `wontfix`
 while still on new images and verifying the exact rollback image; follow the
 [rollback procedure](docs/operations.md#rollback-after-refuted-has-been-used).
+
+### Known limitations
+
+The [carried live-coverage gaps](docs/evidence/RUNBOOK.md#carried-coverage-gaps)
+remain, including fork-based platform checks and Cursor's runtime deny policy.
+Cursor remains outside the default roster.
 
 ## [3.0.1] - 2026-11-07
 
