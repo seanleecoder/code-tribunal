@@ -21,6 +21,17 @@ sequence.
 - [Prepare missing-ledger check](PREPARE_MISSING_LEDGER.md): deferred compatible
   follow-up after 3.0; posting already fails closed.
 
+## Open follow-ups
+
+- **Demo consumer migration.** Before the next release, move both
+  [demo consumers](../evidence/CONSUMER-PROJECTS.md) from their 2.0.0 resting
+  deployments to the current release, following the
+  [3.0 upgrade](../operations.md#upgrade-to-30). Then drop the
+  legacy-deployment caveats from `CONSUMER-PROJECTS.md`.
+- **COMPAT-009 closure.** In the release after that migration, delete the
+  offline v1 state converter and the 3.0 upgrade material, as the
+  [compatibility register](../development/temporary-compatibility.md) records.
+
 ## Simplification work
 
 The [simplification audit](simplification-audit/README.md) lists the items that
@@ -76,6 +87,12 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | 3.0 upgrade material | Consolidate in `operations.md` | One "Upgrades and rollbacks" section holds it while COMPAT-009's window is open; install guides link there. The configuration key migration stays in `configuration.md`, where runtime errors point. |
 | Shipped-change narrative | Condense to the current contract | `architecture.md` and the artifacts reference state invariants without staging rationale or version deltas. |
 | Compatibility target audit | Drop the dated section | The register table is the single source; the release checklist records why each row remains or was deleted. |
+| Historical evidence redirect | Delete | `docs/history/evidence/README.md` served one link in the frozen `release/1.0.0.md`; frozen notes are not link-checked. |
+| Cursor selector detail | Drop version-specific text | `configuration.md` points at `cursor-agent --list-models` on the pinned CLI instead of listing selectors for one CLI version. |
+| Demo consumers | Migrate before the next release | Tracked under [open follow-ups](#open-follow-ups); not part of the documentation sweep because it changes live external projects. |
+| COMPAT-009 window | Close one release after the demo migration | The register row carries the target. |
+| Retained decision rows | Keep the eight above | Each records a rejected or deliberately limited option that current docs do not otherwise explain. |
+| ADR-0002 index row | State what is in force | Decision 1 in force, 2 withdrawn, 3 superseded, 4–5 unbuilt. The ADR text is unchanged. |
 
 ## Standing obligations
 
