@@ -7,16 +7,16 @@ for the whole 1.0.0 campaign and are the projects to reuse for every subsequent
 release — re-creating them from scratch each release wastes hours and loses the
 older-format threads that the body-refresh check depends on.
 
-Deployment observations below are dated evidence, the latest being the 3.1.0
-rollback rehearsal on 2026-11-15, not a fresh inspection of either service. Before each campaign, run
+Deployment observations below are dated evidence, the latest being the
+[3.1.0 adoption](#resting-deployment-adoption-310-2026-11-15) on 2026-11-15, not
+a fresh inspection of either service. Before each campaign, run
 `make demo-preflight` (step 0 of the
 [per-release setup checklist](#per-release-setup-checklist)) for credentials and variables, and recheck by
-hand what it does not inspect: branch protection, project settings and pins. The
-historical resting deployments may still need migration to 3.0.
+hand what it does not inspect: branch protection, project settings and pins.
 
 | Platform | Project | Role |
 |---|---|---|
-| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow caller, secrets, repository variables; older recorded deployments use a copy |
+| GitHub | <https://github.com/seanleecoder/code-tribunal-demo> | consumer: workflow caller, secrets, repository variables |
 | GitLab | <https://gitlab.com/seanleecoder/code-tribunal-demo> (project id `84667714`) | consumer: `.gitlab-ci.yml`, protected/masked variables, runner |
 | GitLab | `seanleecoder/code-tribunal-ci-template` (project id `84667707`) | protected template project holding `ai-review/ci/` |
 
@@ -29,11 +29,10 @@ content from these projects regardless.
 ## GitHub consumer — `seanleecoder/code-tribunal-demo`
 
 Public, default branch `main`. Contains a small `src/` + `tests/` Python fixture tree.
-The recorded pre-N03 deployment has a single copied workflow,
-`.github/workflows/ai-review.yml`. N03's temporary canary branches install a caller
-and reusable workflow. When upgrading the persistent consumer to 3.0 or later,
-replace the recorded copy with a release-SHA caller, following the
-[GitHub installation guide](../getting-started/github.md).
+`.github/workflows/ai-review.yml` is the release-SHA caller from the
+[GitHub installation guide](../getting-started/github.md), with inherited
+secrets. The canary's temporary branches install their own caller and
+candidate-pinned reusable workflow, independently of this resting deployment.
 
 **Recorded configuration:**
 
@@ -47,43 +46,31 @@ replace the recorded copy with a release-SHA caller, following the
   workflow adoption as a PR anyway so the caller runs once before it is merged.
 - **Repository variables** (persisted): `AI_REVIEW_MANUAL=false` (the GitHub Chain B procedure re-runs automatic
   `pull_request` runs, which manual mode skips),
-  `AI_REVIEW_CURSOR_MODEL=composer-2.5`, and `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`.
-  The historical deployment also set model/effort overrides for an older image.
-  Inspect their current values before adoption: remove obsolete overrides or align
-  them with the candidate's intended model/effort routes, then verify the resolved
-  manifest. Do not assume the recorded old defaults match current pins. Canaries
-  clear effort variables but retain model variables.
+  `AI_REVIEW_REVIEWERS=claude, codex, opencode, cursor`, and model and effort
+  variables for every seat, set to the shipped defaults as of 3.1.0. When a
+  release changes a default, update them before the canary; canaries clear
+  effort variables but retain model variables.
   The roster variable must include `cursor`: the canonical workflow reads it before exposing
   `CURSOR_API_KEY`. Keep this four-seat resting roster for `make demo-preflight`;
   scope an exact three-seat default smoke to its temporary workflow, then rerun
-  preflight after cleanup. The retired per-seat `AI_REVIEW_*_ENABLED` variables and
-  `AI_REVIEW_MERGE_GATE_ENABLED` were deleted; a current image fails at config
-  load while the merge-gate override is set. During adoption, replace the legacy
-  workflow (including any hard-mapped retired overrides) with the SHA-pinned
-  caller. Verify both automatic and manual review plus secret/variable forwarding
-  through an external caller when adopting the reusable workflow. Retained
-  [3.0 acceptance](#exact-pair-30-cutover-acceptance) records the release-time checks.
-- **Legacy mock mappings:** older workflow copies included mock controls and
-  `AI_REVIEW_REQUIRE_REAL_*`. Replace that workflow during adoption. Production
-  callers do not gain permanent mock controls; deterministic checks use the
-  canary's temporary caller/reusable pair.
+  preflight after cleanup. Retired variables such as the per-seat
+  `AI_REVIEW_*_ENABLED` flags and `AI_REVIEW_MERGE_GATE_ENABLED` are absent and
+  must stay so: a current image fails at config load on any unknown `AI_REVIEW_`
+  variable.
 - **Mock variables were recorded absent**, which is the intended resting state.
-  **Delete them again after every Chain B campaign.** When adopting an image with
-  S03, remove the older workflow's `AI_REVIEW_REQUIRE_REAL_*` mappings: the runner
-  selects mocks only with both `AI_REVIEW_LOCAL_MOCK=1` and
-  `AI_REVIEW_ALLOW_LOCAL_MOCK=true`; real adapters always fail on missing
-  prerequisites.
+  **Delete them again after every Chain B campaign.** The production caller
+  exposes no mock switch; deterministic checks use the canary's temporary
+  caller/reusable pair.
 
-**What changes per release after N03:** the caller's release SHA. Both image pins
+**What changes per release:** the caller's release SHA. Both image pins
 live in the called workflow. Do not paste the reusable implementation into a
 caller file; it has no automatic trigger. Temporary mock checks use the canary's
 caller/reusable pair instead of enabling mocks through the production caller.
 
-**Historical resting deployment:** as of 2026-09-27 `main` pinned the 2.0.0 pair
-`2.0-71dfabcae4d0ae459c10c1a9e1c809b3f8119c1f` (base `sha256:f7028a5a…`, reviewer
-`sha256:292142b7…`), adopted by PR #24 (merge `b44ab38`). This is recorded evidence,
-not a current pin recommendation. The first major adoption also requires the
-[state v2 migration](../operations.md#state-v2-migration).
+**Resting deployment:** as of 2026-11-15 `main` calls the reusable workflow at
+`ef8a13b49c08e625b026f391c646f51a0d012888` (`v3.1.0`), adopted by PR #59 (merge
+`f557518`). The previous deployment was the copied 2.0.0 workflow at `b44ab38`.
+This is recorded evidence, not a current pin recommendation.
 
 ### Branch and PR conventions
 
@@ -108,6 +95,11 @@ identities: the real panel emits a model-authored finding whose identity you do 
 control, so continuing it with the mock opens a new discussion instead of updating
 one.
 
+PRs #9, #10, #14, #18 and #25 were closed on 2026-11-15, before the 3.1.0
+adoption. Each keeps its branch, comments and **v1** state ledger. A 3.x image
+refuses that ledger, so convert it with `scripts/migrate_state_v2.py` from the
+`v3.1.0` tag before reopening one.
+
 ### Threads that must not be deleted
 
 The posted-body refresh check needs a bot-authored thread created by an **older**
@@ -130,27 +122,33 @@ Closing the PR is fine; deleting the comment or the branch is not.
 Public, project id `84667714`. Recorded configuration:
 
 - A runner.
-- `OPENROUTER_API_KEY` and `GITLAB_TOKEN` (`api` scope), both **protected and
-  masked**. Remove the obsolete `AI_REVIEW_CRITIQUE_ENABLED` variable before adopting 3.0 or later;
-  critique always runs. Delete retired per-seat
-  `AI_REVIEW_*_ENABLED` variables; set `AI_REVIEW_REVIEWERS` only to override the
-  packaged roster. `AI_REVIEW_MERGE_GATE_ENABLED` is absent, and must stay so: it
-  is retired and a current image fails at config load while it is set.
+- `OPENROUTER_API_KEY`, `CURSOR_API_KEY` and `GITLAB_TOKEN` (`api` scope), all
+  **protected and masked**. Retired variables such as
+  `AI_REVIEW_CRITIQUE_ENABLED`, the per-seat `AI_REVIEW_*_ENABLED` flags and
+  `AI_REVIEW_MERGE_GATE_ENABLED` are absent and must stay so: a current image
+  fails at config load on any unknown `AI_REVIEW_` variable.
 - Protected, unmasked roster, model, and effort variables with the same values
-  and caveat as the GitHub consumer's repository variables.
+  as the GitHub consumer's repository variables.
+- **Pipeline variables are restricted** (minimum role "no one allowed", set on
+  2026-11-15), the second control in
+  [protect the CI composition](../getting-started/gitlab.md#protect-the-ci-composition).
+  `web` and `api` pipelines therefore cannot supply `CI_MERGE_REQUEST_IID` or
+  override the image pins. The CI file deliberately stays in the demo project,
+  with no external CI configuration, because the hostile campaign must supply
+  its own `.gitlab-ci.yml` on an unprotected branch.
 - `only_allow_merge_if_pipeline_succeeds = true` — this is what withholds the merge
   (`detailed_merge_status: ci_must_pass`). `merge_method = merge`.
 - **Mock variables absent.** `AI_REVIEW_LOCAL_MOCK`, `AI_REVIEW_ALLOW_LOCAL_MOCK`,
-  `AI_REVIEW_REQUIRE_REAL_*`, and `AI_REVIEW_MOCK_SCENARIO` are all gone, which is
-  the correct resting state and means 1.0.0's demo-hygiene item was completed here.
+  and `AI_REVIEW_MOCK_SCENARIO` are all gone, which is the correct resting state.
   Re-verify before every Chain A run regardless — these are project-wide and sticky,
   and a stale `AI_REVIEW_LOCAL_MOCK=1` silently invalidates a real run.
-- The recorded pre-N02 `.gitlab-ci.yml` uses a hardened child trigger with two
-  includes at `f8ae2138261d03447f68e5a30ff9ac44ac202bcb` (2.0.0, consumer commit
-  `5900e34`). N02's temporary canary branches install a direct include at the
-  candidate template SHA, independently of this resting deployment. Migrate the
-  persistent consumer using the [GitLab installation guide](../getting-started/gitlab.md)
-  when upgrading it to 3.0 or later; complete the state v2 migration as well.
+- `.gitlab-ci.yml` on `main` is the documented
+  [direct include](../getting-started/examples/gitlab-direct.yml) of the template
+  at `370da58647aaa88332c4345fbc6d6f31b8859d5e` (3.1.0), adopted by MR `!65`
+  (merge `0197be8`). The previous deployment was the 2.0.0 child trigger at
+  template `f8ae213`, consumer commit `5900e34`. The canary's temporary branches
+  install a direct include at the candidate template SHA, independently of this
+  resting deployment.
 
 Before a direct-include panel or lifecycle campaign, confirm the demo's **Allow
 merge request pipelines to access protected variables and runners** setting is
@@ -190,7 +188,9 @@ MR history: 1.0.0 used `!10` (Chain A, protected), `!11` (Chain B, protected), a
 `!12` (hostile, unprotected `hostile/unprotected-88bc941`). 2.0.0 used canary `!21`,
 `!22` (Chain B, protected `evidence/chain-b-71dfabc`), and `!23` (hostile,
 unprotected `hostile/unprotected-71dfabc`). `!1`–`!9` are the earlier
-P0 symlink and hostile-forwarding fixtures. All are closed; none should be deleted.
+P0 symlink and hostile-forwarding fixtures. `!15` (Chain A at `451472d`) was
+closed on 2026-11-15 and keeps a **v1** state ledger; convert it as described for
+the GitHub chains before reopening it. All are closed; none should be deleted.
 
 Mock toggles go in as **project** CI/CD variables, not manual "Run pipeline"
 variables: project variables apply to push-triggered `merge_request_event`
@@ -214,8 +214,7 @@ candidate refreshed it in place; see the
 1. Dispatch the [Candidate Canary](../../CONTRIBUTING.md#candidate-canary)
    against the new pair. It needs no repin: it pushes its own temporary branch and
    closes its PR/MR afterwards. Do not repin until it is green.
-2. Point the GitHub caller to the reviewed release commit `P`; upgrading a
-   pre-3.0 deployment replaces the old copied workflow. Copy the GitLab template from `P`
+2. Point the GitHub caller to the reviewed release commit `P`. Copy the GitLab template from `P`
    with its three pin variables (`AI_REVIEW_BASE_IMAGE`, `AI_REVIEW_REVIEWER_IMAGE`,
    `AI_REVIEW_TRUSTED_IMAGE_SHA`) set to the tested pair.
    Confirm `AI_REVIEW_MERGE_GATE_ENABLED` is still absent from both consumers; it
@@ -315,6 +314,36 @@ with full health. Its prepared model and effort routes match the shipped
 defaults, so it supplies default-route evidence without a separate three-seat
 run. The temporary mock caller checks prove forwarding and state handling, not
 provider behavior for non-default efforts or the pending live fork skip.
+
+## Resting deployment adoption (3.1.0, 2026-11-15)
+
+Both resting deployments moved from 2.0.0 to the released 3.1.0 pair. The six
+open evidence change requests were closed first (GitHub #9, #10, #14, #18, #25
+and GitLab `!15`), so no v1 ledger met a 3.x image; the preserved refresh
+fixtures already hold state v2 from the
+[3.0 acceptance](#exact-pair-30-cutover-acceptance).
+
+- **Template project:** commit `370da58647aaa88332c4345fbc6d6f31b8859d5e` holds
+  `ai-review/ci/review.gitlab-ci.yml` byte-identical to `v3.1.0` and removes the
+  child wrapper.
+- **GitHub:** [PR #59](https://github.com/seanleecoder/code-tribunal-demo/pull/59)
+  replaced the copied workflow with the caller. Its automatic
+  [run 43758020213](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/43758020213)
+  completed review and critique on all four seats with full health, posted four
+  threads and one summary holding state v2, and reported `status: success` with
+  no warnings.
+- **GitLab:** [MR `!65`](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/65),
+  from a protected branch, replaced the child trigger with the direct include
+  after `scripts/pipeline_trust.py` accepted it.
+  [Pipeline 3071120413](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3071120413)
+  gave the same result: four seats in both stages, full health, four threads, a
+  state v2 summary, `status: success` and no warnings.
+
+Both runs resolved the shipped default models and efforts. They prove secrets,
+variables and posting through the resting deployments; manual dispatch through
+an external caller was last exercised in the 3.0 acceptance. `make
+demo-preflight` passed before and after. Rollback points: GitHub demo `main` at
+`b44ab38`, GitLab demo `main` at `5900e34`, template `main` at `f8ae213`.
 
 ## Refuted rollback rehearsal (3.1.0, 2026-11-15)
 

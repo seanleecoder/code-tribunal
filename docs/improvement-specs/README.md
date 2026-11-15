@@ -23,13 +23,10 @@ sequence.
 
 ## Open follow-ups
 
-- **Demo consumer migration.** Before the next release, move both
-  [demo consumers](../evidence/CONSUMER-PROJECTS.md) from their 2.0.0 resting
-  deployments to the current release, following the
-  [3.0 upgrade](../operations.md#upgrade-to-30). Then drop the
-  legacy-deployment caveats from `CONSUMER-PROJECTS.md`.
-- **COMPAT-009 closure.** In the release after that migration, delete the
-  offline v1 state converter and the 3.0 upgrade material, as the
+- **COMPAT-009 closure.** Both demo consumers moved to 3.1.0 on 2026-11-15; see
+  the [adoption record](../evidence/CONSUMER-PROJECTS.md#resting-deployment-adoption-310-2026-11-15).
+  After the next release ships, delete the offline v1 state converter and the 3.0
+  upgrade material, as the
   [compatibility register](../development/temporary-compatibility.md) records.
 
 ## Simplification work
@@ -89,7 +86,7 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | Compatibility target audit | Drop the dated section | The register table is the single source; the release checklist records why each row remains or was deleted. |
 | Historical evidence redirect | Delete | `docs/history/evidence/README.md` served one link in the frozen `release/1.0.0.md`; frozen notes are not link-checked. |
 | Cursor selector detail | Drop version-specific text | `configuration.md` points at `cursor-agent --list-models` on the pinned CLI instead of listing selectors for one CLI version. |
-| Demo consumers | Migrate before the next release | Tracked under [open follow-ups](#open-follow-ups); not part of the documentation sweep because it changes live external projects. |
+| Demo consumers | Migrate before the next release | Done on 2026-11-15 at 3.1.0. The six open evidence change requests were closed rather than migrated, and GitLab pipeline variables were restricted. |
 | COMPAT-009 window | Close one release after the demo migration | The register row carries the target. |
 | Retained decision rows | Keep the eight above | Each records a rejected or deliberately limited option that current docs do not otherwise explain. |
 | ADR-0002 index row | State what is in force | Decision 1 in force, 2 withdrawn, 3 superseded, 4–5 unbuilt. The ADR text is unchanged. |
