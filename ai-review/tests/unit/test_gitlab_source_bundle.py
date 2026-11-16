@@ -139,6 +139,22 @@ def test_tracked_inputs_directory_is_preserved(repo: Path, prepare) -> None:
     assert (out / "repo_snapshot/inputs/user.txt").read_text() == "user-owned\n"
 
 
+@pytest.mark.parametrize("location", ["checkout", "external"])
+def test_prepare_accepts_host_directory_aliases(
+    repo: Path, prepare, tmp_path: Path, location: str
+) -> None:
+    fake, _, run = prepare
+    alias = tmp_path / "host-alias"
+    alias.symlink_to(tmp_path, target_is_directory=True)
+    out = alias / repo.name / "inputs" if location == "checkout" else alias / "outside-inputs"
+
+    run(out)
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["checkout_head_sha"] == fake.head_sha
+    assert (out / "repo_snapshot/source.txt").read_text() == "source revision\n"
+
+
 @pytest.mark.parametrize("attributes", ["* text", "*.bat text eol=crlf", "*.bat text eol=lf"])
 @pytest.mark.parametrize("modified", [False, True])
 def test_text_attributes_preserve_committed_bytes_and_reject_real_edits(

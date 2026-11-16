@@ -20,9 +20,11 @@ versioning.
   advice applies only to checkout and revision-binding failures. These defaults
   require a new image/template pair; no network fetch or extra credential path is
   introduced.
-- GitHub and GitLab prepare reject symlinks in bundle output paths before cleanup
-  or publication, preventing repository content from redirecting trusted writes.
-  Explicit output-directory symlinks remain supported by local bundle preparation.
+- GitHub and GitLab prepare reject output-directory symlinks and checkout-owned
+  symlinked parents before cleanup or publication, preventing repository content
+  from redirecting trusted writes. Host aliases for workspace and external scratch
+  paths are allowed. Explicit output-directory symlinks remain supported by local
+  bundle preparation.
 - Trusted GitLab Python launches and the reviewer wrapper use safe-path mode.
   The wrapper change takes effect with the rebuilt images, alongside the matching
   template revision.

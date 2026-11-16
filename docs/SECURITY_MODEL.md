@@ -104,10 +104,12 @@ It fetches the diff by immutable base/head SHAs and rechecks the API revision an
 checkout before publishing the manifest. The staged bundle is published only
 after those checks pass.
 
-GitHub and GitLab prepare reject output-directory symlinks and symlinked output
-parents before removing or writing any bundle entries. Repository content cannot
-redirect those writes through a tracked `inputs` link. The local fixture command
-still permits an explicitly selected output-directory symlink to scratch.
+GitHub and GitLab prepare reject output-directory symlinks and checkout-owned
+symlinked parents before removing or writing any bundle entries. Host aliases for
+the workspace or external scratch directories are allowed; links owned by the
+checkout are rejected even when reached through those aliases. Repository content
+cannot redirect those writes through a tracked `inputs` link. The local fixture
+command still permits an explicitly selected output-directory symlink to scratch.
 
 GitLab prepare likewise binds the selected API source revision to a clean Git
 checkout before collecting the diff and rechecks both before publishing inputs.

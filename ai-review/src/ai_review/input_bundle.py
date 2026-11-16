@@ -367,13 +367,16 @@ def _enforce_diff_limits(diff_text: str, config: ReviewConfig) -> None:
 
 
 def _validate_platform_output_path(out_path: Path) -> None:
-    """Reject checkout-controlled output links before any bundle mutation."""
-    checkout_root = Path.cwd()
+    """Reject output links and checkout-owned parents before any bundle mutation."""
+    checkout_root = Path.cwd().resolve()
     absolute_out = out_path.absolute()
     for component in (absolute_out, *absolute_out.parents):
-        if component == checkout_root:
-            break
-        if component.is_symlink():
+        # Resolve the link's parent, not the link: a checkout-owned link can
+        # point outside, while trusted host aliases can lead into the checkout.
+        if component.is_symlink() and (
+            component == absolute_out
+            or component.parent.resolve().is_relative_to(checkout_root)
+        ):
             raise BundleError(f"platform bundle output path rejects symlink: {component}")
 
 

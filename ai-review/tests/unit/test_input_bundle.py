@@ -452,10 +452,10 @@ class BundlePublicationTests(unittest.TestCase):
 class PlatformOutputPathTests(unittest.TestCase):
     def test_output_links_are_rejected_before_platform_access_or_cleanup(self) -> None:
         for prepare in (prepare_github_bundle, prepare_gitlab_bundle):
-            for kind in ("external", "git", "tracked", "dangling", "parent"):
-                for absolute in (False, True):
+            for kind in ("external", "git", "tracked", "dangling", "parent", "outside_output"):
+                for spelling in ("relative", "absolute", "host_alias"):
                     with (
-                        self.subTest(platform=prepare.__name__, kind=kind, absolute=absolute),
+                        self.subTest(platform=prepare.__name__, kind=kind, spelling=spelling),
                         tempfile.TemporaryDirectory() as tmpdir,
                     ):
                         root = Path(tmpdir)
@@ -466,6 +466,8 @@ class PlatformOutputPathTests(unittest.TestCase):
                             "tracked": repo / "tracked",
                         }.get(kind, root / "outside")
                         out = repo / "inputs"
+                        if kind == "outside_output":
+                            out = root / "outside-output"
                         if kind == "parent":
                             (repo / "redirect").symlink_to(target, target_is_directory=True)
                             out = repo / "redirect/inputs"
@@ -480,6 +482,12 @@ class PlatformOutputPathTests(unittest.TestCase):
                             (target / "repo_snapshot/keep.txt").write_text("preserve snapshot\n")
                         client = _github_platform_mock()
                         client.fetch_version.side_effect = ReviewPlatformError("API unavailable")
+                        relative_out = Path(os.path.relpath(out, repo))
+                        selected_out = out if spelling == "absolute" else relative_out
+                        if spelling == "host_alias":
+                            alias = root / "host-alias"
+                            alias.symlink_to(repo, target_is_directory=True)
+                            selected_out = alias / relative_out
                         saved_cwd = Path.cwd()
                         try:
                             os.chdir(repo)
@@ -501,9 +509,7 @@ class PlatformOutputPathTests(unittest.TestCase):
                                 with self.assertRaisesRegex(
                                     BundleError, "output path rejects symlink"
                                 ):
-                                    prepare(
-                                        runtime_config(), out if absolute else out.relative_to(repo)
-                                    )
+                                    prepare(runtime_config(), selected_out)
                                 platform.assert_not_called()
                         finally:
                             os.chdir(saved_cwd)
@@ -844,6 +850,44 @@ class GitHubPrepareTests(unittest.TestCase):
             self.assertEqual(manifest["selected_head_sha"], selected)
             self.assertEqual(manifest["checkout_head_sha"], selected)
             client.fetch_comparison_diff.assert_called_once_with("octo/repo", "0" * 40, selected)
+
+    def test_prepare_accepts_host_aliases_for_checkout_and_external_outputs(self) -> None:
+        for location in ("checkout", "external"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                repo = root / "repo"
+                selected = self._init_git_repo(repo)
+                alias = root / "host-alias"
+                alias.symlink_to(root, target_is_directory=True)
+                out = alias / "repo/inputs" if location == "checkout" else alias / "outside-inputs"
+                client = _github_platform_mock()
+                client.fetch_version.return_value = _pr_version(head_sha=selected)
+                client.fetch_comparison_diff.return_value = ""
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "GITHUB_REPOSITORY": "octo/repo",
+                            "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                            "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": selected,
+                        },
+                        clear=True,
+                    ),
+                    mock.patch("ai_review.input_bundle.Path.cwd", return_value=repo.resolve()),
+                    mock.patch(
+                        "ai_review.input_bundle.create_runtime_platform", return_value=client
+                    ),
+                    mock.patch(
+                        "ai_review.input_bundle._load_platform_state",
+                        side_effect=lambda _client, state, **_kwargs: state,
+                    ),
+                ):
+                    prepare_github_bundle(runtime_config(), out)
+
+                manifest = json.loads((out / "manifest.json").read_text())
+                self.assertEqual(manifest["checkout_head_sha"], selected)
+                self.assertEqual((out / "repo_snapshot/tracked.txt").read_text(), "tracked\n")
+                self.assertFalse((out / "repo_snapshot/inputs").exists())
 
     def test_prepare_rejects_real_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
