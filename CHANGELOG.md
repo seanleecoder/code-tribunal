@@ -9,6 +9,9 @@ versioning.
 
 ### Changed
 
+- Trusted GitLab Python launches and the reviewer wrapper use safe-path mode.
+  The wrapper change takes effect with the rebuilt images, alongside the matching
+  template revision.
 - Prepare fails with the `missing-ledger-repair` error when older bot review
   threads exist without a ledger, before any reviewer runs. Posting already
   refused this history and keeps its check; a clean first run and a retry of an

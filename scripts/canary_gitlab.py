@@ -187,7 +187,7 @@ def candidate_template(template: str, args: argparse.Namespace, *, mock: bool = 
     # environment to every stage so the effective-config digest remains bound.
     canary_env = canary_stage_environment(mock=mock)
     template, python_count = re.subn(
-        r"(?m)^(\s*- )(python -m ai_review\.)", rf"\g<1>{canary_env} \g<2>", template
+        r"(?m)^(\s*- )(python -P -m ai_review\.)", rf"\g<1>{canary_env} \g<2>", template
     )
     template, adapter_count = re.subn(
         r"(?m)^(\s*- )(/opt/ai-review/adapters/run_reviewer\.sh)",

@@ -316,6 +316,52 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("${CI_MERGE_REQUEST_IID}", prepare_group)
         self.assertEqual(template["post_ai_review"]["resource_group"], prepare_group)
 
+    def test_trusted_launches_ignore_checkout_packages(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        wrapper = _REPO_ROOT / "ai-review/adapters/run_reviewer.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted = root / "trusted"
+            checkout = root / "checkout"
+            for location, origin in ((trusted, "trusted"), (checkout, "checkout")):
+                package = location / "ai_review"
+                package.mkdir(parents=True)
+                (package / "__init__.py").touch()
+                for module in ("input_bundle", "consensus", "post", "adapter_runner"):
+                    (package / f"{module}.py").write_text(
+                        "import json, sys\n"
+                        f"print(json.dumps([{origin!r}, sys.flags.safe_path, sys.argv[1:]]))\n",
+                        encoding="utf-8",
+                    )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "python").symlink_to(sys.executable)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "PYTHON": sys.executable,
+                "PYTHONPATH": str(trusted),
+                "AI_REVIEW_CONFIG": "/trusted/review.yaml",
+            }
+            env.pop("PYTHONSAFEPATH", None)
+            commands = [
+                ["sh", "-e", "-c", template[job]["script"][0]]
+                for job in ("prepare_ai_review", "consensus_ai_review", "post_ai_review")
+            ] + [[str(wrapper), "claude", stage] for stage in ("review", "critique")]
+            for command in commands:
+                with self.subTest(command=command):
+                    result = subprocess.run(
+                        command, cwd=checkout, env=env, capture_output=True, text=True, check=True
+                    )
+                    origin, safe_path, _ = json.loads(result.stdout)
+                    self.assertEqual(origin, "trusted")
+                    self.assertTrue(safe_path)
+            control = subprocess.run(
+                [sys.executable, "-m", "ai_review.adapter_runner"],
+                cwd=checkout, env=env, capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(json.loads(control.stdout)[0], "checkout")
+
     def test_prepare_job_supports_manual_trigger_variable(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
         match = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)
