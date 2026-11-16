@@ -449,6 +449,77 @@ class BundlePublicationTests(unittest.TestCase):
             self.assertEqual(published[-1], "manifest.json")
 
 
+class PlatformOutputPathTests(unittest.TestCase):
+    def test_output_links_are_rejected_before_platform_access_or_cleanup(self) -> None:
+        for prepare in (prepare_github_bundle, prepare_gitlab_bundle):
+            for kind in ("external", "git", "tracked", "dangling", "parent"):
+                for absolute in (False, True):
+                    with (
+                        self.subTest(platform=prepare.__name__, kind=kind, absolute=absolute),
+                        tempfile.TemporaryDirectory() as tmpdir,
+                    ):
+                        root = Path(tmpdir)
+                        repo = root / "repo"
+                        repo.mkdir()
+                        target = {
+                            "git": repo / ".git",
+                            "tracked": repo / "tracked",
+                        }.get(kind, root / "outside")
+                        out = repo / "inputs"
+                        if kind == "parent":
+                            (repo / "redirect").symlink_to(target, target_is_directory=True)
+                            out = repo / "redirect/inputs"
+                            target = target / "inputs"
+                        else:
+                            out.symlink_to(target, target_is_directory=True)
+                        if kind != "dangling":
+                            target.mkdir(parents=True)
+                            (target / "manifest.json").write_text("preserve manifest\n")
+                            (target / "mr.diff").write_text("preserve diff\n")
+                            (target / "repo_snapshot").mkdir()
+                            (target / "repo_snapshot/keep.txt").write_text("preserve snapshot\n")
+                        client = _github_platform_mock()
+                        client.fetch_version.side_effect = ReviewPlatformError("API unavailable")
+                        saved_cwd = Path.cwd()
+                        try:
+                            os.chdir(repo)
+                            with (
+                                mock.patch.dict(
+                                    os.environ,
+                                    {
+                                        "GITHUB_REPOSITORY": "octo/repo",
+                                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                                        "CI_PROJECT_ID": "1",
+                                        "CI_MERGE_REQUEST_IID": "2",
+                                    },
+                                ),
+                                mock.patch(
+                                    "ai_review.input_bundle.create_runtime_platform",
+                                    return_value=client,
+                                ) as platform,
+                            ):
+                                with self.assertRaisesRegex(
+                                    BundleError, "output path rejects symlink"
+                                ):
+                                    prepare(
+                                        runtime_config(), out if absolute else out.relative_to(repo)
+                                    )
+                                platform.assert_not_called()
+                        finally:
+                            os.chdir(saved_cwd)
+                        if kind == "dangling":
+                            self.assertFalse(target.exists())
+                        else:
+                            self.assertEqual(
+                                (target / "manifest.json").read_text(), "preserve manifest\n"
+                            )
+                            self.assertEqual((target / "mr.diff").read_text(), "preserve diff\n")
+                            self.assertEqual(
+                                (target / "repo_snapshot/keep.txt").read_text(),
+                                "preserve snapshot\n",
+                            )
+
+
 class GitHubPrepareTests(unittest.TestCase):
     def test_manual_prepare_uses_immutable_diff_and_records_revision_fields(self) -> None:
         client = _github_platform_mock()

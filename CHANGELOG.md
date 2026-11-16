@@ -7,16 +7,6 @@ versioning.
 
 ## [Unreleased]
 
-### Fixed
-
-- GitLab prepare preserves committed file bytes despite repository conversion
-  attributes, avoiding false dirty-checkout failures for older CRLF blobs while
-  still rejecting actual checkout changes.
-- GitLab source-ref recovery advice applies only to checkout and revision-binding
-  failures, rather than unrelated diff, API, or state errors.
-- Local bundle preparation again excludes an output directory symlink to external
-  scratch from its source snapshot.
-
 ### Changed
 
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
@@ -25,8 +15,14 @@ versioning.
   objects fail before reviewer work. Synthetic merge trees and unrelated runner
   files are never substituted for the source tree. Prepare disables inherited
   caches, LFS hydration and submodule initialization; snapshots contain committed
-  LFS pointers and superproject files. These defaults require a new image/template
-  pair; no network fetch or extra credential path is introduced.
+  LFS pointers and superproject files. Repository conversion attributes do not
+  change committed line endings, encodings, or identifiers. Source-ref recovery
+  advice applies only to checkout and revision-binding failures. These defaults
+  require a new image/template pair; no network fetch or extra credential path is
+  introduced.
+- GitHub and GitLab prepare reject symlinks in bundle output paths before cleanup
+  or publication, preventing repository content from redirecting trusted writes.
+  Explicit output-directory symlinks remain supported by local bundle preparation.
 - Trusted GitLab Python launches and the reviewer wrapper use safe-path mode.
   The wrapper change takes effect with the rebuilt images, alongside the matching
   template revision.

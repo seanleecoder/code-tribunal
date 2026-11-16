@@ -366,6 +366,17 @@ def _enforce_diff_limits(diff_text: str, config: ReviewConfig) -> None:
         )
 
 
+def _validate_platform_output_path(out_path: Path) -> None:
+    """Reject checkout-controlled output links before any bundle mutation."""
+    checkout_root = Path.cwd()
+    absolute_out = out_path.absolute()
+    for component in (absolute_out, *absolute_out.parents):
+        if component == checkout_root:
+            break
+        if component.is_symlink():
+            raise BundleError(f"platform bundle output path rejects symlink: {component}")
+
+
 def _remove_bundle_entry(path: Path) -> None:
     """Remove one generated bundle entry regardless of its filesystem type."""
     try:
@@ -703,6 +714,7 @@ def prepare_github_bundle(
     out: str | Path,
 ) -> Path:
     out_path = Path(out)
+    _validate_platform_output_path(out_path)
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not repo:
         raise SystemExit("prepare requires GITHUB_REPOSITORY for github_reviews mode")
@@ -782,6 +794,7 @@ def prepare_gitlab_bundle(
 ) -> Path:
     # Keep the artifact location in the caller's checkout, not the isolated source.
     out_path = Path(out).absolute()
+    _validate_platform_output_path(out_path)
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
