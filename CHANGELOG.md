@@ -7,6 +7,19 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore Codex's native code-mode host, pruned in v3.1.0 even though models such
+  as `openai/gpt-6.1-sol` require it. Affected reviews saw the inline diff but
+  could not use repository tools and could falsely report success with zero
+  findings. Codex execution events now reject missing-host, terminal and wholly
+  failed operational tool runs as `model_error`, excluding the seat from review
+  success and resolution eligibility and exposing it in run health. Empty
+  reviews, tool-free critiques, no-match searches and tool recovery remain valid.
+  An unconditional network-disabled real-CLI image probe guards CLI pin bumps.
+  The fix requires both runtime images rebuilt and a fresh exact-pair canary;
+  existing v3.1.0 tags and digests remain immutable.
+
 ### Changed
 
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit

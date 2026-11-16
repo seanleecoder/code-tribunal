@@ -227,6 +227,17 @@ printf '%s\n' "$result"
             cli.write_text(f"#!{sys.executable}\n" + source.read_text(), encoding="utf-8")
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
             return
+        codex_stream = """
+import json, sys
+payload = open(sys.argv[1]).read()
+for event in [
+    {"type": "thread.started", "thread_id": "fake"},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "answer", "type": "agent_message", "text": payload}},
+    {"type": "turn.completed", "usage": {}},
+]:
+    print(json.dumps(event))
+"""
         cli.write_text(
             "#!/bin/sh\n"
             'args="$*"\n'
@@ -254,9 +265,8 @@ printf '%s\n' "$result"
             '  env | sort > "$out.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$out.key"\n'
             '  printf \'%s\' "$payload" > "$out"\n'
-            "else\n"
-            "  printf '%s' \"$payload\"\n"
-            "fi\n",
+            "fi\n"
+            + f"{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} \"$out\"\n",
             encoding="utf-8",
         )
         cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
@@ -522,7 +532,7 @@ printf '%s\n' "$result"
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
-        self.assertIn(" exec ", cli_args)
+        self.assertIn(" exec --json ", cli_args)
         self.assertIn("--model openai/gpt-6-luna", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)

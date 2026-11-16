@@ -139,12 +139,17 @@ def _model_id_validation_error(model: str) -> str | None:
 
 
 class _AdapterResult:
-    __slots__ = ("returncode", "stdout", "stderr")
+    __slots__ = ("returncode", "stdout", "stderr", "stderr_complete")
 
-    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+    def __init__(
+        self, returncode: int, stdout: str, stderr: str, *, stderr_complete: str = ""
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        # Private execution diagnostics, never printed or persisted wholesale.
+        # A startup failure may precede more than a diagnostic tail of progress.
+        self.stderr_complete = stderr_complete or stderr
 
 
 # Polling bounds temporary disk use in practice; reads are capped independently
@@ -231,7 +236,12 @@ def _run_adapter_process(
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
             )
-        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr)
+        return _AdapterResult(
+            proc.returncode,
+            captured_stdout,
+            captured_stderr,
+            stderr_complete=redact_file_tail(stderr, limit=_ADAPTER_OUTPUT_LIMIT_BYTES + 1),
+        )
 
 
 def _effective_adapter_timeout_seconds(

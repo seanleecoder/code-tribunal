@@ -18,6 +18,7 @@ Deliberately free of filesystem I/O: status and debug artifact writing lives in
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -315,12 +316,122 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
-def _load_adapter_json(stdout: str, *, codec: OutputCodec, stage: str) -> dict[str, Any]:
+_CODEX_HOST_FAILURE = re.compile(
+    r"failed to spawn code-mode host|code.mode host is disabled|"
+    r"code.mode host.*(?:executable was not found|unavailable)",
+    re.IGNORECASE,
+)
+
+
+def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
+    """Admit the pinned exec --json contract; execution health precedes content.
+
+    Command exit codes describe repository programs, not tool availability: grep
+    with no matches is a working tool. A failed command item is operational only
+    when the CLI reports failure to launch, sandbox failure, or shell 126/127.
+    No-tool reviews and critiques remain valid. See captured 0.169.0 fixtures
+    and the real-CLI image gate in scripts/smoke_codex_batch_output.py.
+    """
+    if _CODEX_HOST_FAILURE.search(stderr):
+        raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
+    if returncode:
+        raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
+    thread_started = turn_started = turn_completed = False
+    active: set[str] = set()
+    finished: set[str] = set()
+    # Router failures can precede command events. They count as failed attempts
+    # even when there is no command item; successful command items allow recovery.
+    router_failures = len(
+        re.findall(r"ERROR codex_core::tools::router: error=exec_command failed:", stderr)
+    )
+    attempts = operational_failures = router_failures
+    answer: str | None = None
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json_loads_no_duplicates(line)
+        except ValueError as exc:
+            raise SchemaValidationError("Codex stream contained a non-JSON event") from exc
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise SchemaValidationError("Codex stream event must be an object with a type")
+        kind = event["type"]
+        if kind in {"error", "turn.failed"}:
+            # Do not include raw model/tool diagnostics: they can contain secrets.
+            raise AdapterModelError("Codex stream reported a terminal model failure")
+        if (
+            kind == "item.completed"
+            and isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "error"
+        ):
+            # Startup error items can precede turn.started, with no command
+            # events at all. This also covers missing/disabled host warnings.
+            raise AdapterModelError("Codex emitted an execution error item")
+        if turn_completed:
+            raise SchemaValidationError("Codex stream continued after turn.completed")
+        if kind == "thread.started" and not thread_started and not turn_started:
+            thread_started = True
+        elif kind == "turn.started" and thread_started and not turn_started:
+            turn_started = True
+        elif kind == "turn.completed" and turn_started:
+            turn_completed = True
+        elif kind in {"item.started", "item.updated", "item.completed"} and turn_started:
+            item = event.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise SchemaValidationError("Codex item must have an id")
+            item_id, item_type = item["id"], item.get("type")
+            if item_id in finished:
+                raise SchemaValidationError("Codex stream repeated a completed item")
+            if kind != "item.completed":
+                active.add(item_id)
+                continue
+            active.discard(item_id)
+            finished.add(item_id)
+            if item_type == "agent_message":
+                if not isinstance(item.get("text"), str):
+                    raise SchemaValidationError("Codex agent_message must contain text")
+                answer = item["text"]
+            elif item_type == "command_execution":
+                status, exit_code = item.get("status"), item.get("exit_code")
+                output = item.get("aggregated_output")
+                if status not in {"completed", "failed"} or not isinstance(output, str):
+                    raise SchemaValidationError("Codex command has no terminal execution result")
+                if exit_code is not None and type(exit_code) is not int:
+                    raise SchemaValidationError(
+                        "Codex command exit code must be an integer or null"
+                    )
+                attempts += 1
+                if status == "failed" and (
+                    exit_code in {None, -1, 126, 127}
+                    or re.search(
+                        r"^(?:exec_command failed:|Failed to create unified exec process:|"
+                        r"bwrap:|sandbox-exec:)",
+                        output,
+                        re.IGNORECASE,
+                    )
+                ):
+                    operational_failures += 1
+            elif item_type not in {"reasoning", "todo_list"}:
+                raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")
+        else:
+            raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
+    if not turn_completed or active or answer is None:
+        raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
+    if attempts and attempts == operational_failures:
+        raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    return _load_answer_json(answer, stage=stage)
+
+
+def _load_adapter_json(
+    stdout: str, *, codec: OutputCodec, stage: str, stderr: str = "", returncode: int = 0
+) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
         raw = _load_answer_json(stdout, stage=stage)
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
+    elif codec == "codex_stream_json":
+        raw = _load_codex_stream(stdout, stage=stage, stderr=stderr, returncode=returncode)
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)

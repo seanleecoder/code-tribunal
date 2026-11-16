@@ -11,7 +11,7 @@ from typing import Literal
 
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
-OutputCodec = Literal["batch_json", "claude_stream_json"]
+OutputCodec = Literal["batch_json", "claude_stream_json", "codex_stream_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -102,9 +102,9 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
         "codex": _definition(
             "codex",
             "openrouter",
-            output_codec="batch_json",
+            output_codec="codex_stream_json",
             cli_arguments=(
-                "exec", "--cd", "{root}", "--ephemeral", "--skip-git-repo-check",
+                "exec", "--json", "--cd", "{root}", "--ephemeral", "--skip-git-repo-check",
                 "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
                 "--model", "{model}", "--config", 'model_provider="openrouter"',
                 "--config", 'model_providers.openrouter.name="OpenRouter"',

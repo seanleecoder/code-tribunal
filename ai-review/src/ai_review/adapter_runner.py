@@ -193,7 +193,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         try:
             raw = _load_adapter_json(
-                result.stdout, codec=reviewer_definition.output_codec, stage=stage
+                result.stdout,
+                codec=reviewer_definition.output_codec,
+                stage=stage,
+                stderr=result.stderr_complete,
+                returncode=result.returncode,
             )
             if stage == "review":
                 finalized = finalize_finding_batch(

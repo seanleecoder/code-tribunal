@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -21,7 +22,7 @@ from ai_review.adapter_process import (
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.canonical import stable_json_hash
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig
-from ai_review.reviewers import ReviewerRegistryError
+from ai_review.reviewers import ReviewerRegistryError, get_reviewer_definition
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -591,6 +592,11 @@ class EffortEnvTests(unittest.TestCase):
             try:
                 with mock.patch(
                     "ai_review.adapter_runner.adapter_command", return_value=[str(adapter)]
+                ), mock.patch(
+                    "ai_review.adapter_runner.get_reviewer_definition",
+                    return_value=replace(
+                        get_reviewer_definition("codex"), output_codec="batch_json"
+                    ),
                 ):
                     self.assertEqual(run_prepared_adapter("codex", "review"), 0)
                 seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
@@ -733,6 +739,17 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             ],
         )
         self._adapter_command_patch.start()
+        # These tests exercise generic batch finalization and runner outcomes.
+        # Codex transport admission has its own captured-stream end-to-end suite.
+        registry_lookup = get_reviewer_definition
+        self._codec_patch = mock.patch(
+            "ai_review.adapter_runner.get_reviewer_definition",
+            side_effect=lambda reviewer: replace(
+                registry_lookup(reviewer), output_codec="batch_json"
+            ),
+        )
+        self._codec_patch.start()
+        self.addCleanup(self._codec_patch.stop)
 
     def test_status_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

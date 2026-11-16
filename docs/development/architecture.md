@@ -90,7 +90,12 @@ These rules are worth stating because breaking them is silent:
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
-  another reviewer's transport from stdout.
+  another reviewer's transport from stdout. Codex uses its `exec --json` events;
+  terminal failures, unavailable code-mode host and wholly failed operational tool
+  attempts invalidate even a well-formed final answer. No-tool reviews and
+  critiques, no-match searches and recovery after a failed tool remain usable.
+  Full bounded stderr is retained privately for execution admission before the
+  shorter redacted diagnostic tail is printed; it is never a public artifact.
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and
