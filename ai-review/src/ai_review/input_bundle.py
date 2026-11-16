@@ -8,7 +8,8 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -411,10 +412,16 @@ def _prepare_bound_bundle(
             (staging_path / "mr.diff").write_bytes(bound.diff_text.encode("utf-8"))
 
             snapshot_dir = staging_path / "repo_snapshot"
+            source_root = bound.snapshot_source.resolve()
+            # The isolated GitLab checkout has no bundle output inside it.
+            # An unrelated tracked directory named `inputs` is source content.
+            ignored_output = (
+                {out_path.name} if out_path.resolve().parent == source_root else set()
+            )
             copy_repo_snapshot(
                 bound.snapshot_source,
                 snapshot_dir,
-                ignore_top_level_names={out_path.name},
+                ignore_top_level_names=ignored_output,
             )
 
             state = empty_state(
@@ -538,42 +545,59 @@ def _git_command(repo_path: Path, *args: str) -> str:
     try:
         resolved_repo_path = repo_path.resolve(strict=True)
     except OSError as exc:
-        raise BundleError(f"failed to validate GitHub checkout path {repo_path}: {exc}") from exc
+        raise BundleError(f"failed to validate Git checkout path {repo_path}: {exc}") from exc
     if not resolved_repo_path.is_dir():
         raise BundleError(
-            f"failed to validate GitHub checkout path: not a directory: {resolved_repo_path}"
+            f"failed to validate Git checkout path: not a directory: {resolved_repo_path}"
         )
 
     # Container jobs commonly run as a different uid from the host runner that
     # owns the bind-mounted checkout. Trust only this validated checkout for this
     # invocation; do not mutate global config or weaken Git with safe.directory=*.
     completed = subprocess.run(
-        ["git", "-c", f"safe.directory={resolved_repo_path}", *args],
+        [
+            "git", "-c", f"safe.directory={resolved_repo_path}",
+            "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
+            "-c", "submodule.recurse=false", *args,
+        ],
         cwd=resolved_repo_path,
+        # Git needs no platform/provider credentials or caller Git settings.
+        # In particular, do not inherit filters, helpers, alternate stores,
+        # redirects, tracing or config overrides from the job environment.
+        env={
+            "PATH": os.environ.get("PATH", os.defpath),
+            "LC_ALL": "C",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_ALLOW_PROTOCOL": "",
+            "GIT_LFS_SKIP_SMUDGE": "1",
+        },
         capture_output=True,
         text=True,
         check=False,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
-        raise BundleError(f"failed to validate GitHub checkout with git {' '.join(args)}: {detail}")
+        raise BundleError(f"failed to validate Git checkout with git {' '.join(args)}: {detail}")
     return completed.stdout.strip()
 
 
-def _github_checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha: str) -> str:
+def _checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha: str) -> str:
     """Resolve and validate the exact, clean commit used for the repository snapshot."""
     if not _GIT_OBJECT_SHA_RE.fullmatch(expected_head_sha):
         raise BundleError(
-            "prepare requires AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA to be a full object SHA"
+            "prepare requires the selected head to be a full object SHA"
         )
     checkout_head = _git_command(repo_path, "rev-parse", "--verify", "HEAD^{commit}")
     if not _GIT_OBJECT_SHA_RE.fullmatch(checkout_head):
         raise BundleError(
-            f"GitHub checkout HEAD did not resolve to a full commit SHA: {checkout_head}"
+            f"Git checkout HEAD did not resolve to a full commit SHA: {checkout_head}"
         )
     if checkout_head != expected_head_sha:
         raise BundleError(
-            "stale GitHub input: checkout HEAD differs from the workflow-selected head "
+            "stale input: checkout HEAD differs from the selected head "
             f"(selected={expected_head_sha}, checkout={checkout_head})"
         )
 
@@ -614,11 +638,46 @@ def _github_checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha:
     if dirty:
         first_entry = dirty.splitlines()[0]
         raise BundleError(
-            "GitHub checkout contains uncommitted or ignored input outside the bundle "
+            "Git checkout contains uncommitted or ignored input outside the bundle "
             "output directory; "
             f"refusing a snapshot that is not revision-bound ({first_entry})"
         )
     return checkout_head
+
+
+@contextmanager
+def _gitlab_source_checkout(repo_path: Path, head_sha: str) -> Iterator[Path]:
+    """Check out only the selected local objects, with no runner config or history fetch.
+
+    A temporary alternate object store also works with shallow repositories and
+    checkouts owned by the runner's different uid. No refs/config/hooks are copied;
+    the selected commit and its tree must already be readable locally. The
+    alternate is private scratch, lives only for this bundle, and is never shipped.
+    """
+    if not _GIT_OBJECT_SHA_RE.fullmatch(head_sha):
+        raise BundleError("GitLab selected head must be a full object SHA")
+    objects = Path(
+        _git_command(repo_path, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+    )
+    if "\n" in str(objects) or "\r" in str(objects):
+        raise BundleError("GitLab object directory contains an unsupported newline")
+    object_format = _git_command(repo_path, "rev-parse", "--show-object-format")
+    if object_format not in {"sha1", "sha256"}:
+        raise BundleError("GitLab repository has an unsupported object format")
+    with tempfile.TemporaryDirectory(prefix="ai-review-source-") as temporary:
+        source = Path(temporary)
+        _git_command(source, "init", "--quiet", "--template=", f"--object-format={object_format}")
+        (source / ".git/objects/info/alternates").write_bytes(os.fsencode(objects) + b"\n")
+        _git_command(source, "checkout", "--quiet", "--detach", "--no-recurse-submodules", head_sha)
+        yield source
+
+
+def _gitlab_pipeline_type() -> str:
+    event = os.environ.get("CI_MERGE_REQUEST_EVENT_TYPE", "")
+    if event in {"detached", "merged_result", "merge_train"}:
+        return event
+    pipeline = os.environ.get("CI_PIPELINE_SOURCE", "")
+    return pipeline if pipeline in {"merge_request_event", "web", "api"} else "custom"
 
 
 def prepare_github_bundle(
@@ -636,12 +695,13 @@ def prepare_github_bundle(
         raise SystemExit(f"prepare requires a configured GitHub platform: {exc}") from exc
     if not isinstance(client, ComparisonDiffPlatform):
         raise SystemExit("prepare requires a platform with comparison diff support")
+    _remove_bundle_entry(out_path / "manifest.json")
     version = client.fetch_version(repo, pr_number)
     # The workflow supplies the event SHA for automatic runs and the checked-out
     # PR head for manual runs. Both must match the current API revision.
     selected_head_sha = os.environ.get("AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA", "")
     checkout_root = Path.cwd()
-    checkout_head_sha = _github_checkout_head(
+    checkout_head_sha = _checkout_head(
         checkout_root, out_path, expected_head_sha=selected_head_sha
     )
     if version.head_sha != checkout_head_sha:
@@ -662,7 +722,7 @@ def prepare_github_bundle(
         )
 
     def revalidate() -> None:
-        _github_checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
+        _checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
         current = client.fetch_version(repo, pr_number)
         if current != version:
             raise BundleError(
@@ -702,7 +762,8 @@ def prepare_gitlab_bundle(
     config: ReviewConfig,
     out: str | Path,
 ) -> Path:
-    out_path = Path(out)
+    # Keep the artifact location in the caller's checkout, not the isolated source.
+    out_path = Path(out).absolute()
     project_id = os.environ.get("CI_PROJECT_ID")
     mr_iid = os.environ.get("CI_MERGE_REQUEST_IID")
     if not project_id or not mr_iid:
@@ -714,60 +775,85 @@ def prepare_gitlab_bundle(
         client = create_runtime_platform(config)
     except PlatformRuntimeError as exc:
         raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
+    _remove_bundle_entry(out_path / "manifest.json")
     version = client.fetch_version(project_id, mr_iid)
-    try:
-        diff_text = client.fetch_diff(project_id, mr_iid)
-    except ReviewPlatformError as exc:
-        raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
     selected_revision = (version.base_sha, version.start_sha, version.head_sha)
+    pipeline_type = _gitlab_pipeline_type()
+    runner_root = Path.cwd()
 
-    def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
-        return _load_platform_state(
-            client,
-            default_state,
-            project_id=str(project_id),
-            change_id=str(mr_iid),
-            head_sha=version.head_sha,
-            bind_project_id=True,
-        )
+    try:
+        if pipeline_type in {"detached", "merge_request_event"}:
+            runner_head = _git_command(runner_root, "rev-parse", "--verify", "HEAD^{commit}")
+            if runner_head != version.head_sha:
+                raise BundleError(f"stale runner checkout HEAD={runner_head}")
+        elif pipeline_type in {"merged_result", "merge_train"}:
+            event_source = os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "")
+            if event_source and event_source != version.head_sha:
+                raise BundleError("stale or invalid pipeline source SHA")
 
-    def revalidate() -> None:
-        try:
-            confirmed_version = client.fetch_version(project_id, mr_iid)
-        except ReviewPlatformError as exc:
-            raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
-        confirmed_revision = (
-            confirmed_version.base_sha,
-            confirmed_version.start_sha,
-            confirmed_version.head_sha,
-        )
-        if confirmed_revision != selected_revision:
-            raise BundleError(
-                "merge request version changed during diff collection; "
-                "refusing to combine diff data from different revisions"
+        with _gitlab_source_checkout(runner_root, version.head_sha) as source:
+            checkout_head_sha = _checkout_head(source, out_path, expected_head_sha=version.head_sha)
+            try:
+                diff_text = client.fetch_diff(project_id, mr_iid)
+            except ReviewPlatformError as exc:
+                raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
+
+            def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
+                return _load_platform_state(
+                    client,
+                    default_state,
+                    project_id=str(project_id),
+                    change_id=str(mr_iid),
+                    head_sha=version.head_sha,
+                    bind_project_id=True,
+                )
+
+            def revalidate() -> None:
+                _checkout_head(source, out_path, expected_head_sha=version.head_sha)
+                try:
+                    confirmed_version = client.fetch_version(project_id, mr_iid)
+                except ReviewPlatformError as exc:
+                    raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
+                confirmed_revision = (
+                    confirmed_version.base_sha,
+                    confirmed_version.start_sha,
+                    confirmed_version.head_sha,
+                )
+                if confirmed_revision != selected_revision:
+                    raise BundleError(
+                        "merge request version changed during diff collection; "
+                        "refusing to combine diff data from different revisions"
+                    )
+
+            bound = _BoundRevision(
+                project_id=str(project_id),
+                project_path=os.environ.get("CI_PROJECT_PATH", ""),
+                change_id=str(mr_iid),
+                source_branch=os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
+                target_branch=os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
+                base_sha=version.base_sha,
+                start_sha=version.start_sha,
+                head_sha=version.head_sha,
+                run_id=(
+                    f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-"
+                    f"{os.environ.get('CI_JOB_ID', '0')}"
+                ),
+                state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
+                diff_text=diff_text,
+                snapshot_source=source,
+                manifest_extensions={
+                    "selected_head_sha": version.head_sha,
+                    "checkout_head_sha": checkout_head_sha,
+                },
+                load_state=load_state,
+                revalidate=revalidate,
             )
-
-    bound = _BoundRevision(
-        project_id=str(project_id),
-        project_path=os.environ.get("CI_PROJECT_PATH", ""),
-        change_id=str(mr_iid),
-        source_branch=os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
-        target_branch=os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
-        base_sha=version.base_sha,
-        start_sha=version.start_sha,
-        head_sha=version.head_sha,
-        run_id=(f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-{os.environ.get('CI_JOB_ID', '0')}"),
-        state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
-        diff_text=diff_text,
-        snapshot_source=Path.cwd(),
-        load_state=load_state,
-        revalidate=revalidate,
-    )
-    return _prepare_bound_bundle(
-        bound,
-        config=config,
-        out_path=out_path,
-    )
+            return _prepare_bound_bundle(bound, config=config, out_path=out_path)
+    except BundleError as exc:
+        raise BundleError(
+            f"GitLab {pipeline_type} source input for selected head {version.head_sha}: {exc}; "
+            "use the MR source ref with the exact source commit available locally"
+        ) from exc
 
 
 def cli(argv: list[str] | None = None) -> int:

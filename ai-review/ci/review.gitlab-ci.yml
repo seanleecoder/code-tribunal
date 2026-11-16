@@ -41,6 +41,10 @@ prepare_ai_review:
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_MERGE_REQUEST_IID'
   image: "$AI_REVIEW_BASE_IMAGE"
   interruptible: true
+  cache: []
+  variables:
+    GIT_LFS_SKIP_SMUDGE: "true"
+    GIT_SUBMODULE_STRATEGY: "none"
   # Share post's lock so state discovery cannot mistake an in-flight first
   # publication (threads created, ledger not yet written) for lost state.
   resource_group: "ai-review-mr-${CI_PROJECT_ID}-${CI_MERGE_REQUEST_IID}"

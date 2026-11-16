@@ -9,6 +9,14 @@ versioning.
 
 ### Changed
 
+- GitLab prepare snapshots an isolated checkout of the selected MR source commit
+  using locally available Git objects, and rechecks its identity and the API
+  revision before publishing inputs. Stale detached runs and unavailable source
+  objects fail before reviewer work. Synthetic merge trees and unrelated runner
+  files are never substituted for the source tree. Prepare disables inherited
+  caches, LFS hydration and submodule initialization; snapshots contain committed
+  LFS pointers and superproject files. These defaults require a new image/template
+  pair; no network fetch or extra credential path is introduced.
 - Trusted GitLab Python launches and the reviewer wrapper use safe-path mode.
   The wrapper change takes effect with the rebuilt images, alongside the matching
   template revision.

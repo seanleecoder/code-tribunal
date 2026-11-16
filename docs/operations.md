@@ -9,6 +9,7 @@
 | Critique evidence absent | Consensus uses valid reviewer evidence and reports missing critique jobs in run health | Restore critique execution or retry |
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
 | Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with the intended operator overrides |
+| GitLab source commit unavailable, stale detached checkout, or revision changes during prepare | Prepare fails without a usable input manifest | Start a pipeline on the current MR source ref with its source commit available locally; see [source snapshots](getting-started/gitlab.md#source-revision-and-snapshot) |
 | State is inaccessible, corrupt, duplicated, or still v1 | Prepare/post stop before publication | Restore state/API access or complete the explicit v2 migration |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
 | Head changes before posting | No stale mutation; `post` reports `stale_head` and exits 0 | Let the newer revision's run own the review |
@@ -40,6 +41,16 @@ an in-progress run; the stale-head guard prevents an older run from mutating
 the newer revision. Custom invocation of the Python prepare and post modules
 has no distributed lock and must supply equivalent serialization of state
 discovery and publication.
+
+These locks cover live jobs, not interrupted publication. After a failed or
+partial post, repair the cause and retry post on the same revision with its
+original, coherent manifest and consensus artifacts; a full rerun from prepare
+on that revision is also valid. Do not mix artifacts. If artifacts have expired,
+start from prepare. An interrupted first ledger write followed by another push
+still needs the deliberate [missing-ledger repair](#missing-ledger-repair).
+Writing an empty ledger first would not serialize writers or make thread and
+ledger updates atomic, and could hide orphaned threads. The current protocol and
+caller-supplied serialization requirement remain in force.
 
 ## Observability and artifacts
 

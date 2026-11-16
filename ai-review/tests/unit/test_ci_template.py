@@ -316,6 +316,14 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertIn("${CI_MERGE_REQUEST_IID}", prepare_group)
         self.assertEqual(template["post_ai_review"]["resource_group"], prepare_group)
 
+    def test_prepare_does_not_inherit_caches_or_expand_external_source_content(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        prepare = template["prepare_ai_review"]
+        self.assertEqual(prepare["cache"], [])
+        self.assertEqual(prepare["variables"]["GIT_LFS_SKIP_SMUDGE"], "true")
+        self.assertEqual(prepare["variables"]["GIT_SUBMODULE_STRATEGY"], "none")
+        self.assertNotIn("cache", template["post_ai_review"])
+
     def test_trusted_launches_ignore_checkout_packages(self) -> None:
         template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
         wrapper = _REPO_ROOT / "ai-review/adapters/run_reviewer.sh"
@@ -560,7 +568,7 @@ class GitLabCiTemplateTests(unittest.TestCase):
             "$GITHUB_WORKSPACE:/runner-checkout:ro",
             "checkout owner and container uid to differ",
             "preflight negative control expected dubious ownership",
-            "from ai_review.input_bundle import _github_checkout_head",
+            "from ai_review.input_bundle import _checkout_head",
         ):
             self.assertIn(preflight, build_preflight)
             self.assertNotIn(preflight, publish)

@@ -8,18 +8,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from unittest import mock
 
 from ai_review.config import load_config
 from ai_review.input_bundle import (
     BundleError,
+    _checkout_head,
     _copy_regular_file_nofollow,
     _enforce_diff_limits,
     _external_fork_secrets_blocked,
     _git_command,
-    _github_checkout_head,
     _load_platform_state,
     _publish_staged_bundle,
     copy_repo_snapshot,
@@ -111,6 +111,11 @@ class InputBundleLimitTests(unittest.TestCase):
         config = runtime_config()
         with (
             tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "ai_review.input_bundle._gitlab_source_checkout",
+                side_effect=lambda root, head: nullcontext(root),
+            ),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -144,6 +149,11 @@ class InputBundleLimitTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "ai_review.input_bundle._gitlab_source_checkout",
+                side_effect=lambda root, head: nullcontext(root),
+            ),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -189,6 +199,11 @@ class InputBundleLimitTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "ai_review.input_bundle._gitlab_source_checkout",
+                side_effect=lambda root, head: nullcontext(root),
+            ),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -432,7 +447,7 @@ class GitHubPrepareTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
-            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
                 side_effect=lambda _client, state, **_kwargs: state,
@@ -474,7 +489,7 @@ class GitHubPrepareTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
-            mock.patch("ai_review.input_bundle._github_checkout_head") as checkout,
+            mock.patch("ai_review.input_bundle._checkout_head") as checkout,
             mock.patch("ai_review.input_bundle._prepare_bound_bundle") as package,
         ):
             with self.assertRaisesRegex(ReviewPlatformError, "external fork"):
@@ -496,20 +511,11 @@ class GitHubPrepareTests(unittest.TestCase):
 
             resolved_repo = repo.resolve(strict=True)
             self.assertEqual(output, "abc123")
-            run.assert_called_once_with(
-                [
-                    "git",
-                    "-c",
-                    f"safe.directory={resolved_repo}",
-                    "rev-parse",
-                    "--verify",
-                    "HEAD^{commit}",
-                ],
-                cwd=resolved_repo,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            run.assert_called_once()
+            self.assertEqual(run.call_args.kwargs["cwd"], resolved_repo)
+            self.assertEqual(run.call_args.args[0][-3:], ["rev-parse", "--verify", "HEAD^{commit}"])
+            self.assertIn(f"safe.directory={resolved_repo}", run.call_args.args[0])
+            self.assertEqual(run.call_args.kwargs["env"]["GIT_CONFIG_GLOBAL"], os.devnull)
             command = run.call_args.args[0]
             self.assertNotIn("safe.directory=*", command)
             self.assertNotIn("config", command)
@@ -535,7 +541,7 @@ class GitHubPrepareTests(unittest.TestCase):
             missing = Path(tmpdir) / "missing"
             with (
                 mock.patch("ai_review.input_bundle.subprocess.run") as run,
-                self.assertRaisesRegex(BundleError, r"failed to validate GitHub checkout path"),
+                self.assertRaisesRegex(BundleError, r"failed to validate Git checkout path"),
             ):
                 _git_command(missing, "status")
             run.assert_not_called()
@@ -557,7 +563,7 @@ class GitHubPrepareTests(unittest.TestCase):
             mock.patch("ai_review.input_bundle._git_command", return_value="2" * 40),
             self.assertRaisesRegex(BundleError, "checkout HEAD differs"),
         ):
-            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+            _checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
 
     def test_checkout_rejects_uncommitted_snapshot_input(self) -> None:
         selected = "1" * 40
@@ -568,7 +574,7 @@ class GitHubPrepareTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(BundleError, "uncommitted or ignored input"),
         ):
-            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+            _checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
 
     def test_checkout_rejects_gitignored_snapshot_input(self) -> None:
         selected = "1" * 40
@@ -579,7 +585,7 @@ class GitHubPrepareTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(BundleError, "ignored input"),
         ):
-            _github_checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
+            _checkout_head(Path.cwd(), Path("inputs"), expected_head_sha=selected)
 
     def test_checkout_outside_output_paths_skip_exclusion_pathspec(self) -> None:
         selected = "1" * 40
@@ -593,7 +599,7 @@ class GitHubPrepareTests(unittest.TestCase):
                         "ai_review.input_bundle._git_command",
                         side_effect=[selected, "", ""],
                     ) as git_command:
-                        _github_checkout_head(repo, out_path, expected_head_sha=selected)
+                        _checkout_head(repo, out_path, expected_head_sha=selected)
                     status_args = git_command.call_args_list[1].args[1:]
                     self.assertFalse(any(arg.startswith(":(exclude)") for arg in status_args))
 
@@ -639,7 +645,7 @@ class GitHubPrepareTests(unittest.TestCase):
             out.mkdir()
             (out / "partial-artifact.json").write_text("{}\n", encoding="utf-8")
 
-            self.assertEqual(_github_checkout_head(repo, out, expected_head_sha=selected), selected)
+            self.assertEqual(_checkout_head(repo, out, expected_head_sha=selected), selected)
 
     def test_real_checkout_rejects_ignored_file_before_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -649,7 +655,7 @@ class GitHubPrepareTests(unittest.TestCase):
             out = Path(tmpdir) / "outside-inputs"
 
             with self.assertRaisesRegex(BundleError, r"ignored input.*generated\.cache"):
-                _github_checkout_head(repo, out, expected_head_sha=selected)
+                _checkout_head(repo, out, expected_head_sha=selected)
 
     def _prepare_with_versions(
         self,
@@ -678,7 +684,7 @@ class GitHubPrepareTests(unittest.TestCase):
                 clear=True,
             ),
             mock.patch("ai_review.input_bundle.create_runtime_platform", return_value=client),
-            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="1" * 40),
             mock.patch(
                 "ai_review.input_bundle._load_platform_state",
                 side_effect=lambda _client, state, **_kwargs: state,
@@ -707,7 +713,7 @@ class GitHubPrepareTests(unittest.TestCase):
                 "ai_review.input_bundle.create_runtime_platform",
                 return_value=mock.Mock(spec=[]),
             ),
-            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="1" * 40),
             self.assertRaisesRegex(SystemExit, "comparison diff support"),
         ):
             prepare_github_bundle(runtime_config(), Path(tmpdir) / "inputs")
@@ -1261,7 +1267,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
                     "ai_review.input_bundle.create_runtime_platform",
                     return_value=github_client,
                 ),
-                mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+                mock.patch("ai_review.input_bundle._checkout_head", return_value="1" * 40),
                 mock.patch(
                     "ai_review.input_bundle._load_platform_state",
                     side_effect=lambda _client, state, **_kwargs: state,
@@ -1286,6 +1292,11 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             with (
+                mock.patch(
+                    "ai_review.input_bundle._gitlab_source_checkout",
+                    side_effect=lambda root, head: nullcontext(root),
+                ),
+                mock.patch("ai_review.input_bundle._checkout_head", return_value="h"),
                 mock.patch.dict(
                     "os.environ",
                     {
@@ -1329,7 +1340,7 @@ class PrepareCredentialTests(unittest.TestCase):
         never = mock.Mock(side_effect=AssertionError("constructed a platform client"))
         with (
             mock.patch.dict("os.environ", environment, clear=True),
-            mock.patch("ai_review.input_bundle._github_checkout_head", return_value="1" * 40),
+            mock.patch("ai_review.input_bundle._checkout_head", return_value="1" * 40),
             mock.patch("ai_review.platform.runtime.GitLabReviewPlatform", never),
             mock.patch("ai_review.platform.runtime.GitHubReviewPlatform", never),
             self.assertRaises(SystemExit) as raised,

@@ -90,6 +90,14 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | Retained decision rows | Keep the eight above | Each records a rejected or deliberately limited option that current docs do not otherwise explain. |
 | ADR-0002 index row | State what is in force | Decision 1 in force, 2 withdrawn, 3 superseded, 4–5 unbuilt. The ADR text is unchanged. |
 
+## Publication recovery decision (2026-11-16)
+
+Keep the current publication protocol: canonical CI locks and equivalent custom
+caller serialization cover live writers. Same-head retries remain supported;
+lost first-ledger history after a push needs explicit repair. An initial empty
+ledger does not make publication atomic. Revisit stronger recovery only for an
+observed requirement and a separate state/rollback design.
+
 ## Standing obligations
 
 - Keep the regression gates green: the golden consensus fixtures, the publish

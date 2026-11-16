@@ -104,6 +104,24 @@ It fetches the diff by immutable base/head SHAs and rechecks the API revision an
 checkout before publishing the manifest. The staged bundle is published only
 after those checks pass.
 
+GitLab prepare likewise binds the selected API source revision to a clean Git
+checkout before collecting the diff and rechecks both before publishing inputs.
+It creates an isolated checkout from locally available objects under a fresh Git
+configuration; runner files, hooks, filters, credentials and synthetic merge-tree
+contents are not copied into it. Git children receive a restricted environment
+without platform/provider tokens and cannot fetch missing objects. Temporary
+object-store references stay local to prepare and are removed with the checkout.
+Snapshots contain committed LFS pointers and superproject files, not hydrated
+objects or expanded submodules. Missing objects fail closed; the
+[installation contract](getting-started/gitlab.md#source-revision-and-snapshot)
+describes pipeline-mode and shallow-history availability limits.
+
+All trusted GitLab Python entry points, including the reviewer wrapper that
+launches the credential-scrubbing adapter runner, use `-P` with the trusted
+image's `PYTHONPATH`. The wrapper is shipped in the image, so this guarantee needs
+the matching rebuilt image/template pair; changing only a template cannot update
+an older image's wrapper.
+
 Prepare rejects symlinks and FIFO/socket/device nodes. On Linux and macOS it
 uses descriptor-relative `O_NOFOLLOW`/`O_DIRECTORY` traversal and fails closed
 where those primitives are unavailable. Directory depth is capped. A hostile
