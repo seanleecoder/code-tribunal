@@ -274,7 +274,7 @@ subprocess environments. The transport-specific surface is:
 | Thread resolution | Discussion API | GraphQL; optional fine-grained resolve token |
 | Merge enforcement | None; repository policy may require successful pipelines | None; a ruleset may require the publication check |
 | Forks | Protected variables are withheld; topology controls trusted execution | External forks are skipped by the canonical workflow |
-| Concurrency | MR-scoped post resource group | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
+| Concurrency | MR-scoped resource group shared by prepare and post | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
 | Diff collection | Paginated MR diff API with exact-path raw recovery | Immutable base/head comparison raw diff |
 | Artifact retention | 7 days for prepare/review/critique, 30 days for consensus/post | Repository or organization Actions default |
 

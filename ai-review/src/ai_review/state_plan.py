@@ -214,8 +214,7 @@ def reject_ledger_free_history(
     Callers apply this only when no ledger was loaded. Open bot roots on
     ``head_sha`` are an interrupted first publication that marker recovery can
     adopt; any other bot root means a ledger existed or was lost, which needs
-    the documented repair. Prepare and post share this one rule so prepare can
-    stop before model work and post keeps the final check.
+    the documented repair.
     """
     if any(
         discussion.author_id == bot_author_id and not open_at_head(discussion, head_sha)

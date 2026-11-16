@@ -478,54 +478,14 @@ def test_github_rename_or_transfer_rebinds_state_in_prepare_and_post(new_slug: s
 
 @pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
 @pytest.mark.parametrize("legacy_summary", [False, True])
-def test_missing_ledger_after_push_has_a_manual_cleanup_recovery(
-    mode: str,
-    legacy_summary: bool,
-) -> None:
-    fixtures = PostCase()
-    client = (
-        FakeGitHubClient(head_sha="head", diff_text="")
-        if mode == "github_reviews"
-        else FakeGitLabClient(head_sha="head", diff_text="")
-    )
-    config = fixtures._config(mode=mode)
-    consensus = fixtures._consensus()
-    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
-        assert (
-            post_consensus(client, config, fixtures._manifest("head"), consensus)["status"]
-            == "partial_failed"
-        )
-    if legacy_summary:
-        client.create_state_note(
-            "1",
-            "2",
-            "Summary\n\n<!-- ai-review-summary:v1 run_id=legacy body_hash=" + "0" * 64 + " -->",
-        )
-    client.head_sha = "next"
-    with pytest.raises(ValueError, match="missing-ledger-repair"):
-        post_consensus(client, config, fixtures._manifest("next"), consensus)
-    # Model the documented operator action after exporting and inspecting all
-    # history: remove only the bot's orphaned roots and ledger-free summary.
-    if mode == "github_reviews":
-        client._comments.clear()
-        client._issue_comments.clear()
-    else:
-        client.discussions.clear()
-        client.mr_notes.clear()
-    result = post_consensus(client, config, fixtures._manifest("next"), consensus)
-    assert result["status"] == "success"
-    assert len(client.state_notes) == len(client.summary_notes) == 1
-
-
-@pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
-@pytest.mark.parametrize("legacy_summary", [False, True])
-def test_prepare_rejects_older_ledger_free_history_before_model_work(
+def test_missing_ledger_after_push_stops_prepare_and_post_until_manual_cleanup(
     mode: str,
     legacy_summary: bool,
 ) -> None:
     from ai_review.input_bundle import _load_platform_state
 
     config, manifest, client, consensus = _setup(mode)
+    next_manifest = dict(manifest, head_sha="next")
     default_state: dict[str, Any] = {"records": []}
 
     def prepare(head_sha: str) -> dict[str, Any]:
@@ -551,9 +511,13 @@ def test_prepare_rejects_older_ledger_free_history_before_model_work(
             "Summary\n\n<!-- ai-review-summary:v1 run_id=legacy body_hash=" + "0" * 64 + " -->",
         )
     client.head_sha = "next"
+    # Prepare stops before model work; post keeps the final check.
     with pytest.raises(ValueError, match="missing-ledger-repair"):
         prepare("next")
-    # The documented cleanup makes prepare and post start over together.
+    with pytest.raises(ValueError, match="missing-ledger-repair"):
+        post_consensus(client, config, next_manifest, consensus)
+    # Model the documented operator action after exporting and inspecting all
+    # history: remove only the bot's orphaned roots and ledger-free summary.
     if mode == "github_reviews":
         client._comments.clear()
         client._issue_comments.clear()
@@ -561,9 +525,9 @@ def test_prepare_rejects_older_ledger_free_history_before_model_work(
         client.discussions.clear()
         client.mr_notes.clear()
     assert prepare("next") is default_state
-    assert post_consensus(client, config, dict(manifest, head_sha="next"), consensus)[
-        "status"
-    ] == "success"
+    result = post_consensus(client, config, next_manifest, consensus)
+    assert result["status"] == "success"
+    assert len(client.state_notes) == len(client.summary_notes) == 1
     assert prepare("next")["records"]
 
 

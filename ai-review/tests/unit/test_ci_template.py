@@ -308,14 +308,13 @@ class GitLabCiTemplateTests(unittest.TestCase):
 
     def test_prepare_state_discovery_and_post_share_the_merge_request_lock(self) -> None:
         template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
-        prepare_group = template["prepare_ai_review"].get("resource_group")
+        prepare_group = template["prepare_ai_review"]["resource_group"]
 
         # Otherwise a newer prepare can observe an older first publication's
         # threads before its ledger and incorrectly require manual repair.
-        self.assertIsInstance(prepare_group, str)
         self.assertIn("${CI_PROJECT_ID}", prepare_group)
         self.assertIn("${CI_MERGE_REQUEST_IID}", prepare_group)
-        self.assertEqual(template["post_ai_review"].get("resource_group"), prepare_group)
+        self.assertEqual(template["post_ai_review"]["resource_group"], prepare_group)
 
     def test_prepare_job_supports_manual_trigger_variable(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
