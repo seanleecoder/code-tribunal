@@ -18,8 +18,7 @@ sequence.
 
 ## Open specifications
 
-- [Prepare missing-ledger check](PREPARE_MISSING_LEDGER.md): deferred compatible
-  follow-up after 3.0; posting already fails closed.
+None.
 
 ## Open follow-ups
 

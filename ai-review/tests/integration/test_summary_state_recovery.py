@@ -464,7 +464,7 @@ def test_github_rename_or_transfer_rebinds_state_in_prepare_and_post(new_slug: s
     assert post_consensus(client, config, manifest, consensus)["status"] == "success"
     thread_id = decode_state_note_body(client.state_notes[0]["body"])["records"][0]["discussion_id"]
     prepared = _load_platform_state(
-        client, {}, project_id=new_slug, change_id="2", bind_project_id=False
+        client, {}, project_id=new_slug, change_id="2", head_sha="head", bind_project_id=False
     )
     assert prepared["project_id"] == new_slug
     assert validate_state_hash(prepared)
@@ -478,23 +478,32 @@ def test_github_rename_or_transfer_rebinds_state_in_prepare_and_post(new_slug: s
 
 @pytest.mark.parametrize("mode", ["github_reviews", "gitlab_discussions"])
 @pytest.mark.parametrize("legacy_summary", [False, True])
-def test_missing_ledger_after_push_has_a_manual_cleanup_recovery(
+def test_missing_ledger_after_push_stops_prepare_and_post_until_manual_cleanup(
     mode: str,
     legacy_summary: bool,
 ) -> None:
-    fixtures = PostCase()
-    client = (
-        FakeGitHubClient(head_sha="head", diff_text="")
-        if mode == "github_reviews"
-        else FakeGitLabClient(head_sha="head", diff_text="")
-    )
-    config = fixtures._config(mode=mode)
-    consensus = fixtures._consensus()
-    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
-        assert (
-            post_consensus(client, config, fixtures._manifest("head"), consensus)["status"]
-            == "partial_failed"
+    from ai_review.input_bundle import _load_platform_state
+
+    config, manifest, client, consensus = _setup(mode)
+    next_manifest = dict(manifest, head_sha="next")
+    default_state: dict[str, Any] = {"records": []}
+
+    def prepare(head_sha: str) -> dict[str, Any]:
+        return _load_platform_state(
+            client,
+            default_state,
+            project_id=manifest["project_id"],
+            change_id=manifest["merge_request_iid"],
+            head_sha=head_sha,
+            bind_project_id=mode != "github_reviews",
         )
+
+    # A clean first run has neither a ledger nor bot threads.
+    assert prepare("head") is default_state
+    with patch.object(client, "create_state_note", side_effect=ReviewPlatformError("write failed")):
+        assert post_consensus(client, config, manifest, consensus)["status"] == "partial_failed"
+    # The interrupted first publication is recoverable on the same revision.
+    assert prepare("head") is default_state
     if legacy_summary:
         client.create_state_note(
             "1",
@@ -502,8 +511,11 @@ def test_missing_ledger_after_push_has_a_manual_cleanup_recovery(
             "Summary\n\n<!-- ai-review-summary:v1 run_id=legacy body_hash=" + "0" * 64 + " -->",
         )
     client.head_sha = "next"
+    # Prepare stops before model work; post keeps the final check.
     with pytest.raises(ValueError, match="missing-ledger-repair"):
-        post_consensus(client, config, fixtures._manifest("next"), consensus)
+        prepare("next")
+    with pytest.raises(ValueError, match="missing-ledger-repair"):
+        post_consensus(client, config, next_manifest, consensus)
     # Model the documented operator action after exporting and inspecting all
     # history: remove only the bot's orphaned roots and ledger-free summary.
     if mode == "github_reviews":
@@ -512,9 +524,11 @@ def test_missing_ledger_after_push_has_a_manual_cleanup_recovery(
     else:
         client.discussions.clear()
         client.mr_notes.clear()
-    result = post_consensus(client, config, fixtures._manifest("next"), consensus)
+    assert prepare("next") is default_state
+    result = post_consensus(client, config, next_manifest, consensus)
     assert result["status"] == "success"
     assert len(client.state_notes) == len(client.summary_notes) == 1
+    assert prepare("next")["records"]
 
 
 def test_edited_unknown_category_is_normalized_before_recovery_is_persisted() -> None:

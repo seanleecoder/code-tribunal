@@ -20,9 +20,11 @@ from .memory import (
     load_state_from_notes,
     prior_decisions_from_state,
 )
+from .notes import index_ai_review_discussions
 from .platform import ComparisonDiffPlatform, ReviewPlatformError
 from .platform.runtime import PlatformRuntimeError, create_runtime_platform
 from .schema import now_iso, write_canonical_json
+from .state_plan import reject_ledger_free_history
 
 
 class BundleError(RuntimeError):
@@ -499,9 +501,14 @@ def _load_platform_state(
     *,
     project_id: str,
     change_id: str,
+    head_sha: str,
     bind_project_id: bool,
 ) -> dict[str, Any]:
-    """Missing initial state is empty; inaccessible or corrupt state aborts prepare."""
+    """Missing initial state is empty; inaccessible or corrupt state aborts prepare.
+
+    So does older bot review history without a ledger: post would refuse it
+    after the model stages, so prepare lists threads and refuses it first.
+    """
     bot_author_id = client.current_user_id()
     if bot_author_id is None:
         raise BundleError(
@@ -517,7 +524,14 @@ def _load_platform_state(
     )
     for warning in warnings:
         print(f"ai-review prepare: {warning}")
-    return loaded.state if loaded is not None else default_state
+    if loaded is not None:
+        return loaded.state
+    reject_ledger_free_history(
+        index_ai_review_discussions(client.list_threads(project_id, change_id)),
+        bot_author_id=bot_author_id,
+        head_sha=head_sha,
+    )
+    return default_state
 
 
 def _git_command(repo_path: Path, *args: str) -> str:
@@ -643,6 +657,7 @@ def prepare_github_bundle(
             default_state,
             project_id=repo,
             change_id=pr_number,
+            head_sha=version.head_sha,
             bind_project_id=False,
         )
 
@@ -712,6 +727,7 @@ def prepare_gitlab_bundle(
             default_state,
             project_id=str(project_id),
             change_id=str(mr_iid),
+            head_sha=version.head_sha,
             bind_project_id=True,
         )
 

@@ -306,6 +306,16 @@ class GitLabCiTemplateTests(unittest.TestCase):
         self.assertEqual(text.count('image: "$AI_REVIEW_BASE_IMAGE"'), 3)
         self.assertEqual(text.count('image: "$AI_REVIEW_REVIEWER_IMAGE"'), 2)
 
+    def test_prepare_state_discovery_and_post_share_the_merge_request_lock(self) -> None:
+        template = yaml.safe_load(_CI_TEMPLATE.read_text(encoding="utf-8"))
+        prepare_group = template["prepare_ai_review"]["resource_group"]
+
+        # Otherwise a newer prepare can observe an older first publication's
+        # threads before its ledger and incorrectly require manual repair.
+        self.assertIn("${CI_PROJECT_ID}", prepare_group)
+        self.assertIn("${CI_MERGE_REQUEST_IID}", prepare_group)
+        self.assertEqual(template["post_ai_review"]["resource_group"], prepare_group)
+
     def test_prepare_job_supports_manual_trigger_variable(self) -> None:
         text = _CI_TEMPLATE.read_text(encoding="utf-8")
         match = re.search(r"(?ms)^prepare_ai_review:\n(.*?)(?=^\S)", text)

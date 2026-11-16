@@ -152,30 +152,25 @@ sets when a separate smoke is needed.
 
 ### Production model/effort recommendations
 
-Model recommendations last reviewed: 2026-10-04.
+Model recommendations last reviewed: 2026-11-15.
 
-Choose one complete profile at project/repository scope so prepare captures it. Set the model override for each enabled
-seat. Set its effort override to the profile's level, or to `unset` when the
-profile requires absent effort; model-only overrides inherit YAML effort (see
+Choose one complete profile at project/repository scope so prepare captures it. Set the model override and the
+effort override for each enabled seat; a model-only override inherits YAML effort (see
 [effort inheritance and clearing](#effort-inheritance-and-clearing)).
 Each cell is `model` / `effort`; Cursor is optional.
 
 | Profile | Claude | Codex | OpenCode | Cursor optional |
 |---|---|---|---|---|
-| **Budget** | `anthropic/claude-sonnet-5.5` / `medium` | `openai/gpt-6-luna` / `max` | `xiaomi/mimo-v2.6-flash` / unset | `composer-2.5` |
-| **Value / Balance** | `anthropic/claude-sonnet-5.5` / `xhigh` | `openai/gpt-6.1-sol` / `medium` | `xiaomi/mimo-v2.6-pro` / unset | `grok-4.7-medium` |
+| **Budget** | `anthropic/claude-haiku-5.5` / `xhigh` | `openai/gpt-6.1-terra` / `high` | `google/gemini-4-hydrogen` / `medium` | `composer-2.5` |
+| **Value / Balance** | `anthropic/claude-sonnet-5.5` / `high` | `openai/gpt-6.1-sol` / `high` | `google/gemini-4-hydrogen` / `high` | `grok-4.7-medium` |
 
-Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and supported
+Use the corresponding `AI_REVIEW_<REVIEWER>_MODEL` and
 `AI_REVIEW_<REVIEWER>_EFFORT` variables from the environment-variable table
-below. For both MiMo models, **unset** means the resolved configuration records
-`effort: null` and the adapter omits the provider effort setting. The shipped YAML sets OpenCode effort to `low`, so set
-`AI_REVIEW_OPENCODE_EFFORT=unset` as described in
-[effort inheritance and clearing](#effort-inheritance-and-clearing). MiMo uses the existing
-OpenCode → OpenRouter route and `OPENROUTER_API_KEY`. Other OpenCode models
-retain the generic effort support described below.
+below. Gemini 4 Hydrogen uses the existing OpenCode → OpenRouter route and
+`OPENROUTER_API_KEY`.
 
-For more review quality, raise Claude Sonnet 5.5 to `max` or GPT-6.1 Sol to
-`xhigh`, or choose a higher-effort Cursor variant such as `grok-4.7-xhigh`.
+For more review quality, raise Claude Sonnet 5.5 to `xhigh` or `max` or GPT-6.1
+Sol to `xhigh`, or choose a higher-effort Cursor variant such as `grok-4.7-xhigh`.
 Cursor selectors change between CLI releases: resolve the exact one with
 `cursor-agent --list-models` on the
 [pinned CLI](../ai-review/images/cursor-agent.pin), as the
@@ -186,14 +181,15 @@ reasoning depth is encoded in the model variant. Keep `composer-2.5` for smoke
 and compatibility. `auto` remains a supported operator override, but should not
 be used for reproducible CI or evidence.
 
-Recommendations do not establish release validation: MiMo Pro and the Grok 4.7
-variants have no live evidence on the current pins (earlier route canaries are at
+Recommendations do not establish release validation: Haiku 5.5 at `xhigh`,
+GPT-6.1 Terra, Gemini 4 Hydrogen and the Grok 4.7 variants have no live evidence
+on the current pins (an earlier Grok route canary is at
 [`v2.0.3`](https://github.com/seanleecoder/code-tribunal/tree/v2.0.3/docs/evidence)).
-MiMo Pro's review job took nearly 13 minutes in that canary, so check reviewer timeouts.
+Check reviewer timeouts when raising effort.
 Before claiming one validated, run a real review and critique with no silent
 fallback: a
 [route panel](evidence/RUNBOOK.md#effort-routes-and-the-three-seat-default-smoke)
-for MiMo, and the
+for the Claude, Codex and OpenCode seats, and the
 [Cursor model-specific check](evidence/RUNBOOK.md#cursor-model-specific-check) for
 Grok.
 
@@ -278,7 +274,7 @@ subprocess environments. The transport-specific surface is:
 | Thread resolution | Discussion API | GraphQL; optional fine-grained resolve token |
 | Merge enforcement | None; repository policy may require successful pipelines | None; a ruleset may require the publication check |
 | Forks | Protected variables are withheld; topology controls trusted execution | External forks are skipped by the canonical workflow |
-| Concurrency | MR-scoped post resource group | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
+| Concurrency | MR-scoped resource group shared by prepare and post | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
 | Diff collection | Paginated MR diff API with exact-path raw recovery | Immutable base/head comparison raw diff |
 | Artifact retention | 7 days for prepare/review/critique, 30 days for consensus/post | Repository or organization Actions default |
 
