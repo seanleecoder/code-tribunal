@@ -67,7 +67,9 @@ the MR from its train under GitLab's normal behavior.
 Prepare declares an empty cache and disables LFS hydration and submodule
 initialization. Snapshots contain committed LFS pointer files and superproject
 files, including `.gitmodules`; expanded LFS objects and submodule worktrees are
-not included. These rules also apply when the runner reuses a working directory.
+not included. Repository attributes do not change committed line endings,
+encodings, or identifiers in the snapshot. These rules also apply when the runner
+reuses a working directory.
 No repository hooks or custom filters run while creating the isolated checkout.
 
 ## Protect the CI composition

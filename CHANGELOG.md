@@ -7,6 +7,16 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- GitLab prepare preserves committed file bytes despite repository conversion
+  attributes, avoiding false dirty-checkout failures for older CRLF blobs while
+  still rejecting actual checkout changes.
+- GitLab source-ref recovery advice applies only to checkout and revision-binding
+  failures, rather than unrelated diff, API, or state errors.
+- Local bundle preparation again excludes an output directory symlink to external
+  scratch from its source snapshot.
+
 ### Changed
 
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit

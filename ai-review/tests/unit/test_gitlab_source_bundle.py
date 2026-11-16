@@ -4,11 +4,13 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
 import pytest
 from ai_review import input_bundle as bundle
+from ai_review.platform import ReviewPlatformError
 from ai_review.platform.gitlab import MergeRequestVersion
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -137,6 +139,92 @@ def test_tracked_inputs_directory_is_preserved(repo: Path, prepare) -> None:
     assert (out / "repo_snapshot/inputs/user.txt").read_text() == "user-owned\n"
 
 
+@pytest.mark.parametrize("attributes", ["* text", "*.bat text eol=crlf", "*.bat text eol=lf"])
+@pytest.mark.parametrize("modified", [False, True])
+def test_text_attributes_preserve_committed_bytes_and_reject_real_edits(
+    repo: Path, prepare, attributes: str, modified: bool
+) -> None:
+    fake, _, run = prepare
+    contents = b"echo source\r\n"
+    (repo / "source.bat").write_bytes(contents)
+    commit(repo)
+    (repo / ".gitattributes").write_text(attributes + "\n")
+    # Stage only the new rule: adding the whole tree would normalize the blob.
+    git(repo, "add", ".gitattributes")
+    git(repo, "commit", "-qm", "attributes after raw CRLF blob")
+    fake.head_sha = git(repo, "rev-parse", "HEAD")
+    checkout = bundle._gitlab_source_checkout
+    copier = bundle.copy_repo_snapshot
+
+    @contextmanager
+    def racy_checkout(root, head):
+        with checkout(root, head) as source:
+            # Force Git to rehash unchanged entries rather than trust stat data.
+            stamp = (source / "source.bat").stat().st_mtime_ns
+            os.utime(source / ".git/index", ns=(stamp, stamp))
+            yield source
+
+    def copy(source, destination, **kwargs):
+        if modified:
+            (source / "source.bat").write_bytes(b"actual edit\r\n")
+        return copier(source, destination, **kwargs)
+
+    with (
+        mock.patch.object(bundle, "_gitlab_source_checkout", side_effect=racy_checkout),
+        mock.patch.object(bundle, "copy_repo_snapshot", side_effect=copy),
+    ):
+        if modified:
+            with pytest.raises(bundle.BundleError, match="uncommitted or ignored input"):
+                run()
+            assert not (repo / "inputs/manifest.json").exists()
+        else:
+            out = run()
+            assert (out / "repo_snapshot/source.bat").read_bytes() == contents
+
+
+@pytest.mark.parametrize("failure", ["diff_limit", "diff_api", "state_author", "version_api"])
+def test_unrelated_prepare_failures_do_not_suggest_another_source_ref(
+    repo: Path, prepare, failure: str
+) -> None:
+    fake, client, run = prepare
+    if failure == "diff_limit":
+        fake.diff_text = "x" * (runtime_config().limits.max_diff_bytes + 1)
+        expected = "exceeds limits.max_diff_bytes"
+    elif failure == "diff_api":
+        client.fetch_diff.side_effect = ReviewPlatformError("diff API unavailable")
+        expected = "diff API unavailable"
+    elif failure == "state_author":
+        client.current_user_id.return_value = None
+        expected = "current_user lookup"
+    else:
+        client.fetch_version.side_effect = [
+            fake.fetch_version("1", "2"), ReviewPlatformError("version API unavailable")
+        ]
+        expected = "version API unavailable"
+    with pytest.raises(bundle.BundleError, match=expected) as error:
+        run()
+    assert "use the MR source ref" not in str(error.value)
+    assert not (repo / "inputs/manifest.json").exists()
+
+
+def test_nested_conversion_attributes_cannot_rewrite_snapshot_bytes(repo: Path, prepare) -> None:
+    fake, _, run = prepare
+    (repo / "nested").mkdir()
+    contents = b"$Id$\ncommitted bytes\n"
+    (repo / "nested/source.txt").write_bytes(contents)
+    commit(repo)
+    (repo / "nested/.gitattributes").write_text(
+        "source.txt text eol=crlf ident working-tree-encoding=UTF-16LE\n"
+    )
+    git(repo, "add", "nested/.gitattributes")
+    git(repo, "commit", "-qm", "nested conversions")
+    fake.head_sha = git(repo, "rev-parse", "HEAD")
+
+    out = run()
+
+    assert (out / "repo_snapshot/nested/source.txt").read_bytes() == contents
+
+
 @pytest.mark.parametrize("mode", ["detached", "merged_result", "merge_train", "web"])
 def test_invalid_selection_invalidates_old_manifest_before_collection(
     repo: Path, prepare, mode: str
@@ -151,8 +239,9 @@ def test_invalid_selection_invalidates_old_manifest_before_collection(
     out.mkdir()
     (out / "manifest.json").write_text("stale")
     (out / "user.txt").write_text("keep")
-    with pytest.raises(bundle.BundleError, match=mode):
+    with pytest.raises(bundle.BundleError, match=mode) as error:
         run()
+    assert "use the MR source ref" in str(error.value)
     assert not (out / "manifest.json").exists()
     assert (out / "user.txt").read_text() == "keep"
     client.fetch_diff.assert_not_called()
@@ -167,8 +256,9 @@ def test_api_revision_movement_invalidates_bundle(repo: Path, prepare, field: st
     values = dict(base_sha=version.base_sha, start_sha=version.start_sha, head_sha=version.head_sha)
     values[field] = "a" * 40
     client.fetch_version.side_effect = [version, MergeRequestVersion(**values)]
-    with pytest.raises(bundle.BundleError, match="version changed"):
+    with pytest.raises(bundle.BundleError, match="version changed") as error:
         run()
+    assert "use the MR source ref" in str(error.value)
     assert not (repo / "inputs/manifest.json").exists()
     assert not (repo / "inputs").exists()
 

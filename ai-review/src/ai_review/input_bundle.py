@@ -9,7 +9,7 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -416,7 +416,7 @@ def _prepare_bound_bundle(
             # The isolated GitLab checkout has no bundle output inside it.
             # An unrelated tracked directory named `inputs` is source content.
             ignored_output = (
-                {out_path.name} if out_path.resolve().parent == source_root else set()
+                {out_path.name} if out_path.parent.resolve() == source_root else set()
             )
             copy_repo_snapshot(
                 bound.snapshot_source,
@@ -668,8 +668,26 @@ def _gitlab_source_checkout(repo_path: Path, head_sha: str) -> Iterator[Path]:
         source = Path(temporary)
         _git_command(source, "init", "--quiet", "--template=", f"--object-format={object_format}")
         (source / ".git/objects/info/alternates").write_bytes(os.fsencode(objects) + b"\n")
+        # Materialize and compare committed bytes, without repository-controlled
+        # text/encoding/ident conversions. Otherwise a fresh checkout can look
+        # dirty when a blob predates its .gitattributes normalization rule.
+        attributes = source / ".git/info/attributes"
+        attributes.parent.mkdir(exist_ok=True)
+        attributes.write_text("* -text -filter -ident -working-tree-encoding\n", encoding="ascii")
         _git_command(source, "checkout", "--quiet", "--detach", "--no-recurse-submodules", head_sha)
         yield source
+
+
+@contextmanager
+def _gitlab_source_input_errors(pipeline_type: str, head_sha: str) -> Iterator[None]:
+    """Attach source recovery advice only around checkout and binding checks."""
+    try:
+        yield
+    except BundleError as exc:
+        raise BundleError(
+            f"GitLab {pipeline_type} source input for selected head {head_sha}: {exc}; "
+            "use the MR source ref with the exact source commit available locally"
+        ) from exc
 
 
 def _gitlab_pipeline_type() -> str:
@@ -781,79 +799,79 @@ def prepare_gitlab_bundle(
     pipeline_type = _gitlab_pipeline_type()
     runner_root = Path.cwd()
 
-    try:
-        if pipeline_type in {"detached", "merge_request_event"}:
-            runner_head = _git_command(runner_root, "rev-parse", "--verify", "HEAD^{commit}")
-            if runner_head != version.head_sha:
-                raise BundleError(f"stale runner checkout HEAD={runner_head}")
-        elif pipeline_type in {"merged_result", "merge_train"}:
-            event_source = os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "")
-            if event_source and event_source != version.head_sha:
-                raise BundleError("stale or invalid pipeline source SHA")
+    with ExitStack() as source_checkout:
+        with _gitlab_source_input_errors(pipeline_type, version.head_sha):
+            if pipeline_type in {"detached", "merge_request_event"}:
+                runner_head = _git_command(runner_root, "rev-parse", "--verify", "HEAD^{commit}")
+                if runner_head != version.head_sha:
+                    raise BundleError(f"stale runner checkout HEAD={runner_head}")
+            elif pipeline_type in {"merged_result", "merge_train"}:
+                event_source = os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "")
+                if event_source and event_source != version.head_sha:
+                    raise BundleError("stale or invalid pipeline source SHA")
 
-        with _gitlab_source_checkout(runner_root, version.head_sha) as source:
+            source = source_checkout.enter_context(
+                _gitlab_source_checkout(runner_root, version.head_sha)
+            )
             checkout_head_sha = _checkout_head(source, out_path, expected_head_sha=version.head_sha)
-            try:
-                diff_text = client.fetch_diff(project_id, mr_iid)
-            except ReviewPlatformError as exc:
-                raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
+        try:
+            diff_text = client.fetch_diff(project_id, mr_iid)
+        except ReviewPlatformError as exc:
+            raise BundleError(f"failed to fetch merge request diff: {exc}") from exc
 
-            def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
-                return _load_platform_state(
-                    client,
-                    default_state,
-                    project_id=str(project_id),
-                    change_id=str(mr_iid),
-                    head_sha=version.head_sha,
-                    bind_project_id=True,
-                )
+        def load_state(default_state: dict[str, Any]) -> dict[str, Any]:
+            return _load_platform_state(
+                client,
+                default_state,
+                project_id=str(project_id),
+                change_id=str(mr_iid),
+                head_sha=version.head_sha,
+                bind_project_id=True,
+            )
 
-            def revalidate() -> None:
+        def revalidate() -> None:
+            with _gitlab_source_input_errors(pipeline_type, version.head_sha):
                 _checkout_head(source, out_path, expected_head_sha=version.head_sha)
-                try:
-                    confirmed_version = client.fetch_version(project_id, mr_iid)
-                except ReviewPlatformError as exc:
-                    raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
-                confirmed_revision = (
-                    confirmed_version.base_sha,
-                    confirmed_version.start_sha,
-                    confirmed_version.head_sha,
-                )
+            try:
+                confirmed_version = client.fetch_version(project_id, mr_iid)
+            except ReviewPlatformError as exc:
+                raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
+            confirmed_revision = (
+                confirmed_version.base_sha,
+                confirmed_version.start_sha,
+                confirmed_version.head_sha,
+            )
+            with _gitlab_source_input_errors(pipeline_type, version.head_sha):
                 if confirmed_revision != selected_revision:
                     raise BundleError(
                         "merge request version changed during diff collection; "
                         "refusing to combine diff data from different revisions"
                     )
 
-            bound = _BoundRevision(
-                project_id=str(project_id),
-                project_path=os.environ.get("CI_PROJECT_PATH", ""),
-                change_id=str(mr_iid),
-                source_branch=os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
-                target_branch=os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
-                base_sha=version.base_sha,
-                start_sha=version.start_sha,
-                head_sha=version.head_sha,
-                run_id=(
-                    f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-"
-                    f"{os.environ.get('CI_JOB_ID', '0')}"
-                ),
-                state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
-                diff_text=diff_text,
-                snapshot_source=source,
-                manifest_extensions={
-                    "selected_head_sha": version.head_sha,
-                    "checkout_head_sha": checkout_head_sha,
-                },
-                load_state=load_state,
-                revalidate=revalidate,
-            )
-            return _prepare_bound_bundle(bound, config=config, out_path=out_path)
-    except BundleError as exc:
-        raise BundleError(
-            f"GitLab {pipeline_type} source input for selected head {version.head_sha}: {exc}; "
-            "use the MR source ref with the exact source commit available locally"
-        ) from exc
+        bound = _BoundRevision(
+            project_id=str(project_id),
+            project_path=os.environ.get("CI_PROJECT_PATH", ""),
+            change_id=str(mr_iid),
+            source_branch=os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", ""),
+            target_branch=os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""),
+            base_sha=version.base_sha,
+            start_sha=version.start_sha,
+            head_sha=version.head_sha,
+            run_id=(
+                f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-"
+                f"{os.environ.get('CI_JOB_ID', '0')}"
+            ),
+            state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
+            diff_text=diff_text,
+            snapshot_source=source,
+            manifest_extensions={
+                "selected_head_sha": version.head_sha,
+                "checkout_head_sha": checkout_head_sha,
+            },
+            load_state=load_state,
+            revalidate=revalidate,
+        )
+        return _prepare_bound_bundle(bound, config=config, out_path=out_path)
 
 
 def cli(argv: list[str] | None = None) -> int:

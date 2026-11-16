@@ -292,6 +292,27 @@ class PrepareStateLoadTests(unittest.TestCase):
 
 
 class BundlePublicationTests(unittest.TestCase):
+    def test_local_output_symlink_is_excluded_from_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "source.txt").write_text("source\n")
+            scratch = root / "scratch"
+            scratch.mkdir()
+            out = repo / "inputs"
+            out.symlink_to(scratch, target_is_directory=True)
+            diff = root / "change.diff"
+            diff.write_text("")
+
+            prepare_local_bundle(load_config(_REPO_CONFIG), diff, repo, out)
+
+            self.assertTrue(out.is_symlink())
+            self.assertTrue((scratch / "manifest.json").is_file())
+            snapshot = scratch / "repo_snapshot"
+            self.assertEqual((snapshot / "source.txt").read_text(), "source\n")
+            self.assertFalse((snapshot / "inputs").exists())
+
     def test_reprepare_removes_deleted_snapshot_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
