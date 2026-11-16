@@ -7,4 +7,4 @@ if [ "$#" -ne 2 ]; then
 fi
 
 PYTHON_BIN="${PYTHON:-python3}"
-exec "$PYTHON_BIN" -m ai_review.adapter_runner "$1" "$2"
+exec "$PYTHON_BIN" -P -m ai_review.adapter_runner "$1" "$2"

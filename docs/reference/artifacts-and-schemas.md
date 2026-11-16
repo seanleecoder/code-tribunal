@@ -18,6 +18,12 @@ Artifacts from different runs or effective configurations must never be mixed.
 | `out/post/post_result.json` | post | operator | [`post_result.schema.json`](../../ai-review/schemas/post_result.schema.json) |
 | encoded summary comment | post | later prepare/post | [`state.schema.json`](../../ai-review/schemas/state.schema.json) plus author verification and the embedded `state_hash` |
 
+GitHub and GitLab manifests record `selected_head_sha` and `checkout_head_sha`:
+the selected source revision and the actual checkout supplying the snapshot.
+They must agree with `head_sha`. GitLab's checkout is temporary and isolated;
+its snapshot contains committed LFS pointers and superproject files, not the
+runner's hydrated files, submodule contents or synthetic merge tree.
+
 The bundle carries no prompt, rule, or separate YAML configuration copy. Review and critique
 render prompts and rules from `prompts/` and `rules/` below the image's trusted
 runtime root, never from the bundle or from wherever `AI_REVIEW_CONFIG` points.

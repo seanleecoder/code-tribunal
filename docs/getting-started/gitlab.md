@@ -42,6 +42,39 @@ branch with an open MR can create both branch and MR pipelines with this
 permissive workflow. Retain any existing policy for avoiding duplicate pipelines
 when adding the MR rule.
 
+## Source revision and snapshot
+
+Prepare builds a temporary checkout of the MR's exact source commit from Git
+objects already available in the runner repository. It validates that checkout
+before collecting the diff and again before publishing the input manifest. It
+does not copy the runner's working-tree files or fetch missing commits.
+
+Detached MR pipelines must still match the selected source head. A delayed or
+retried pipeline for an older head fails prepare; start a new pipeline on the
+current revision. Merged-results and merge-train pipelines review the source
+commit, including none of the target-only or other queued MRs' files. Their
+source commit must be locally available: depth-one or other synthetic histories
+may lack it. Prepare reports the pipeline type and selected SHA on failure.
+
+For `web` and `api` reviews, select the MR source ref and supply its IID through
+your trusted composition. Success from an unrelated ref is conditional on local
+object availability and is not a supported provisioning method. Keep the
+[pipeline-variable restrictions](#protect-the-ci-composition); this change grants
+no extra credentials to unprotected refs or forks. Missing source objects or
+invalid bindings fail the pipeline, and a failed merge-train pipeline can remove
+the MR from its train under GitLab's normal behavior.
+
+Prepare declares an empty cache, and the template defaults disable the runner's
+LFS hydration and submodule initialization. Project, group and pipeline CI/CD
+variables take precedence over those job-level defaults, so a higher-precedence
+`GIT_LFS_SKIP_SMUDGE` or `GIT_SUBMODULE_STRATEGY` can re-enable either in the
+runner checkout. Snapshots are unaffected by such overrides: they contain
+committed LFS pointer files and superproject files, including `.gitmodules`;
+expanded LFS objects and submodule worktrees are not included. Repository attributes do not change committed line endings,
+encodings, or identifiers in the snapshot. These rules also apply when the runner
+reuses a working directory.
+No repository hooks or custom filters run while creating the isolated checkout.
+
 ## Protect the CI composition
 
 Anyone who can edit the consumer `.gitlab-ci.yml`, or set pipeline variables,

@@ -9,6 +9,26 @@ versioning.
 
 ### Changed
 
+- GitLab prepare snapshots an isolated checkout of the selected MR source commit
+  using locally available Git objects, and rechecks its identity and the API
+  revision before publishing inputs. Stale detached runs and unavailable source
+  objects fail before reviewer work. Synthetic merge trees and unrelated runner
+  files are never substituted for the source tree. Prepare disables inherited
+  caches, and its template defaults disable runner LFS hydration and submodule
+  initialization unless a higher-precedence CI/CD variable overrides them;
+  snapshots always contain committed LFS pointers and superproject files. Repository conversion attributes do not
+  change committed line endings, encodings, or identifiers. Source-ref recovery
+  advice applies only to checkout and revision-binding failures. These defaults
+  require a new image/template pair; no network fetch or extra credential path is
+  introduced.
+- GitHub and GitLab prepare reject output-directory symlinks and checkout-owned
+  symlinked parents before cleanup or publication, preventing repository content
+  from redirecting trusted writes. Host aliases for workspace and external scratch
+  paths are allowed. Explicit output-directory symlinks remain supported by local
+  bundle preparation.
+- Trusted GitLab Python launches and the reviewer wrapper use safe-path mode.
+  The wrapper change takes effect with the rebuilt images, alongside the matching
+  template revision.
 - Prepare fails with the `missing-ledger-repair` error when older bot review
   threads exist without a ledger, before any reviewer runs. Posting already
   refused this history and keeps its check; a clean first run and a retry of an

@@ -98,7 +98,7 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
-          from ai_review.input_bundle import _github_checkout_head
+          from ai_review.input_bundle import _checkout_head
 
           repo = Path.cwd()
           if repo.stat().st_uid == os.geteuid():
@@ -121,7 +121,7 @@ jobs:
                       "preflight negative control expected dubious ownership from "
                       "bare git " + bare_command
                   )
-          _github_checkout_head(
+          _checkout_head(
               repo,
               Path("/tmp/inputs"),
               expected_head_sha=os.environ["PREFLIGHT_HEAD_SHA"],

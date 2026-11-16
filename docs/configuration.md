@@ -276,6 +276,7 @@ subprocess environments. The transport-specific surface is:
 | Forks | Protected variables are withheld; topology controls trusted execution | External forks are skipped by the canonical workflow |
 | Concurrency | MR-scoped resource group shared by prepare and post | PR-scoped workflow concurrency; stale-head guard prevents old mutations |
 | Diff collection | Paginated MR diff API with exact-path raw recovery | Immutable base/head comparison raw diff |
+| Snapshot | Isolated checkout of the exact source commit from local Git objects; LFS pointers and superproject files only | Clean checkout of the selected PR source head |
 | Artifact retention | 7 days for prepare/review/critique, 30 days for consensus/post | Repository or organization Actions default |
 
 The GitLab raw-diff compatibility fallback is accepted only when the response

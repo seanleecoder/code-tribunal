@@ -41,6 +41,9 @@ class MockTemplateTests(unittest.TestCase):
             with self.subTest(line=line[:60]):
                 self.assertIn("AI_REVIEW_LOCAL_MOCK=1", line)
                 self.assertIn("AI_REVIEW_ALLOW_LOCAL_MOCK=true", line)
+        python_stages = [line for line in prefixed if "python " in line]
+        self.assertEqual(len(python_stages), 3)
+        self.assertTrue(all("python -P -m ai_review." in line for line in python_stages))
         # The scenario comes from the temporary project variable, never the template.
         self.assertNotIn(lifecycle.SCENARIO_VARIABLE, template)
 
