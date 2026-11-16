@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -45,15 +47,41 @@ def commit(repo: Path) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    root = tmp_path / "runner with spaces"
+def commit_lfs_pointer(repo: Path, digit: str) -> tuple[str, str]:
+    """Commit an unexpanded LFS-style pointer behind a filter attribute."""
+    pointer = f"version https://git-lfs.github.com/spec/v1\noid sha256:{digit * 64}\nsize 20\n"
+    (repo / ".gitattributes").write_text("asset.bin filter=fixture\n")
+    (repo / "asset.bin").write_text(pointer)
+    return pointer, commit(repo)
+
+
+@contextmanager
+def before_copy(action: Callable[[Path], None]) -> Iterator[None]:
+    """Run an action on the snapshot source just before the real copy."""
+    copier = bundle.copy_repo_snapshot
+
+    def copy(source, destination, **kwargs):
+        action(source)
+        return copier(source, destination, **kwargs)
+
+    with mock.patch.object(bundle, "copy_repo_snapshot", side_effect=copy):
+        yield
+
+
+@pytest.fixture(scope="module")
+def repo_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("template") / "repo"
     root.mkdir()
     git(root, "init", "-q", "--initial-branch=main")
     (root / "source.txt").write_text("source revision\n")
     (root / ".gitignore").write_text("*.cache\n")
     commit(root)
     return root
+
+
+@pytest.fixture
+def repo(repo_template: Path, tmp_path: Path) -> Path:
+    return shutil.copytree(repo_template, tmp_path / "runner with spaces", symlinks=True)
 
 
 @pytest.fixture
@@ -107,13 +135,7 @@ def test_snapshot_is_from_selected_source_commit(repo: Path, prepare, mode: str)
     (repo / "ignored.cache").write_text("not source\n")
     (repo / "untracked.txt").write_text("not source\n")
     isolated = []
-    copier = bundle.copy_repo_snapshot
-
-    def capture(source, destination, **kwargs):
-        isolated.append(source)
-        return copier(source, destination, **kwargs)
-
-    with mock.patch.object(bundle, "copy_repo_snapshot", side_effect=capture):
+    with before_copy(isolated.append):
         out = run()
     manifest = json.loads((out / "manifest.json").read_text())
     assert (
@@ -170,7 +192,6 @@ def test_text_attributes_preserve_committed_bytes_and_reject_real_edits(
     git(repo, "commit", "-qm", "attributes after raw CRLF blob")
     fake.head_sha = git(repo, "rev-parse", "HEAD")
     checkout = bundle._gitlab_source_checkout
-    copier = bundle.copy_repo_snapshot
 
     @contextmanager
     def racy_checkout(root, head):
@@ -180,14 +201,13 @@ def test_text_attributes_preserve_committed_bytes_and_reject_real_edits(
             os.utime(source / ".git/index", ns=(stamp, stamp))
             yield source
 
-    def copy(source, destination, **kwargs):
+    def edit(source: Path) -> None:
         if modified:
             (source / "source.bat").write_bytes(b"actual edit\r\n")
-        return copier(source, destination, **kwargs)
 
     with (
         mock.patch.object(bundle, "_gitlab_source_checkout", side_effect=racy_checkout),
-        mock.patch.object(bundle, "copy_repo_snapshot", side_effect=copy),
+        before_copy(edit),
     ):
         if modified:
             with pytest.raises(bundle.BundleError, match="uncommitted or ignored input"):
@@ -282,10 +302,9 @@ def test_api_revision_movement_invalidates_bundle(repo: Path, prepare, field: st
 @pytest.mark.parametrize("change", ["tracked", "untracked", "ignored", "head"])
 def test_source_movement_during_copy_is_rejected(repo: Path, prepare, change: str) -> None:
     _, _, run = prepare
-    copier = bundle.copy_repo_snapshot
     observed = []
 
-    def mutate(source, destination, **kwargs):
+    def mutate(source: Path) -> None:
         observed.append(source)
         if change == "head":
             git(source, "checkout", "--orphan", "changed")
@@ -294,12 +313,8 @@ def test_source_movement_during_copy_is_rejected(repo: Path, prepare, change: st
                 change
             ]
             (source / name).write_text("modified\n")
-        return copier(source, destination, **kwargs)
 
-    with (
-        mock.patch.object(bundle, "copy_repo_snapshot", side_effect=mutate),
-        pytest.raises(bundle.BundleError),
-    ):
+    with before_copy(mutate), pytest.raises(bundle.BundleError):
         run()
     assert not (repo / "inputs/manifest.json").exists()
     assert observed and not observed[0].exists()
@@ -309,10 +324,7 @@ def test_filter_expansions_and_runner_git_configuration_are_not_inherited(
     repo: Path, prepare
 ) -> None:
     fake, _, run = prepare
-    pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "1" * 64 + "\nsize 20\n"
-    (repo / ".gitattributes").write_text("asset.bin filter=fixture\n")
-    (repo / "asset.bin").write_text(pointer)
-    fake.head_sha = commit(repo)
+    pointer, fake.head_sha = commit_lfs_pointer(repo, "1")
     (repo / "asset.bin").write_text("expanded runner contents")
     assert "M asset.bin" in git(repo, "status", "--porcelain")  # failure-detecting control
     marker = repo.parent / "filter-or-hook-executed"
@@ -426,10 +438,7 @@ def test_clean_hydrated_and_synthetic_runners_produce_the_same_snapshot(
     repo: Path, prepare
 ) -> None:
     fake, _, run = prepare
-    pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "2" * 64 + "\nsize 10\n"
-    (repo / ".gitattributes").write_text("asset.bin filter=fixture\n")
-    (repo / "asset.bin").write_text(pointer)
-    commit(repo)
+    pointer, _ = commit_lfs_pointer(repo, "2")
     selected, merged = synthetic(repo)
     fake.head_sha = selected
     os.environ["CI_PIPELINE_SOURCE"] = "web"

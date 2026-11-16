@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import shutil
@@ -8,7 +9,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext
+from collections.abc import Iterator
+from contextlib import ExitStack, chdir, contextmanager, nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -44,6 +46,19 @@ def _github_platform_mock() -> mock.Mock:
 
 def _pr_version(*, head_sha: str = "1" * 40, base_sha: str = "0" * 40) -> PullRequestVersion:
     return PullRequestVersion(base_sha, head_sha, source_branch="feature", target_branch="main")
+
+
+@contextmanager
+def _stub_gitlab_source(head_sha: str) -> Iterator[None]:
+    """Use the runner checkout as the isolated GitLab source, already validated."""
+    with (
+        mock.patch(
+            "ai_review.input_bundle._gitlab_source_checkout",
+            side_effect=lambda root, head: nullcontext(root),
+        ),
+        mock.patch("ai_review.input_bundle._checkout_head", return_value=head_sha),
+    ):
+        yield
 
 
 def _diff_with_files(count: int) -> str:
@@ -111,11 +126,7 @@ class InputBundleLimitTests(unittest.TestCase):
         config = runtime_config()
         with (
             tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch(
-                "ai_review.input_bundle._gitlab_source_checkout",
-                side_effect=lambda root, head: nullcontext(root),
-            ),
-            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
+            _stub_gitlab_source("head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -149,11 +160,7 @@ class InputBundleLimitTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch(
-                "ai_review.input_bundle._gitlab_source_checkout",
-                side_effect=lambda root, head: nullcontext(root),
-            ),
-            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
+            _stub_gitlab_source("head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -199,11 +206,7 @@ class InputBundleLimitTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch(
-                "ai_review.input_bundle._gitlab_source_checkout",
-                side_effect=lambda root, head: nullcontext(root),
-            ),
-            mock.patch("ai_review.input_bundle._checkout_head", return_value="head"),
+            _stub_gitlab_source("head"),
             mock.patch.dict(
                 "os.environ",
                 {
@@ -451,79 +454,73 @@ class BundlePublicationTests(unittest.TestCase):
 
 class PlatformOutputPathTests(unittest.TestCase):
     def test_output_links_are_rejected_before_platform_access_or_cleanup(self) -> None:
-        for prepare in (prepare_github_bundle, prepare_gitlab_bundle):
-            for kind in ("external", "git", "tracked", "dangling", "parent", "outside_output"):
-                for spelling in ("relative", "absolute", "host_alias"):
-                    with (
-                        self.subTest(platform=prepare.__name__, kind=kind, spelling=spelling),
-                        tempfile.TemporaryDirectory() as tmpdir,
-                    ):
-                        root = Path(tmpdir)
-                        repo = root / "repo"
-                        repo.mkdir()
-                        target = {
-                            "git": repo / ".git",
-                            "tracked": repo / "tracked",
-                        }.get(kind, root / "outside")
-                        out = repo / "inputs"
-                        if kind == "outside_output":
-                            out = root / "outside-output"
-                        if kind == "parent":
-                            (repo / "redirect").symlink_to(target, target_is_directory=True)
-                            out = repo / "redirect/inputs"
-                            target = target / "inputs"
-                        else:
-                            out.symlink_to(target, target_is_directory=True)
-                        if kind != "dangling":
-                            target.mkdir(parents=True)
-                            (target / "manifest.json").write_text("preserve manifest\n")
-                            (target / "mr.diff").write_text("preserve diff\n")
-                            (target / "repo_snapshot").mkdir()
-                            (target / "repo_snapshot/keep.txt").write_text("preserve snapshot\n")
-                        client = _github_platform_mock()
-                        client.fetch_version.side_effect = ReviewPlatformError("API unavailable")
-                        relative_out = Path(os.path.relpath(out, repo))
-                        selected_out = out if spelling == "absolute" else relative_out
-                        if spelling == "host_alias":
-                            alias = root / "host-alias"
-                            alias.symlink_to(repo, target_is_directory=True)
-                            selected_out = alias / relative_out
-                        saved_cwd = Path.cwd()
-                        try:
-                            os.chdir(repo)
-                            with (
-                                mock.patch.dict(
-                                    os.environ,
-                                    {
-                                        "GITHUB_REPOSITORY": "octo/repo",
-                                        "AI_REVIEW_GITHUB_PR_NUMBER": "7",
-                                        "CI_PROJECT_ID": "1",
-                                        "CI_MERGE_REQUEST_IID": "2",
-                                    },
-                                ),
-                                mock.patch(
-                                    "ai_review.input_bundle.create_runtime_platform",
-                                    return_value=client,
-                                ) as platform,
-                            ):
-                                with self.assertRaisesRegex(
-                                    BundleError, "output path rejects symlink"
-                                ):
-                                    prepare(runtime_config(), selected_out)
-                                platform.assert_not_called()
-                        finally:
-                            os.chdir(saved_cwd)
-                        if kind == "dangling":
-                            self.assertFalse(target.exists())
-                        else:
-                            self.assertEqual(
-                                (target / "manifest.json").read_text(), "preserve manifest\n"
-                            )
-                            self.assertEqual((target / "mr.diff").read_text(), "preserve diff\n")
-                            self.assertEqual(
-                                (target / "repo_snapshot/keep.txt").read_text(),
-                                "preserve snapshot\n",
-                            )
+        cases = itertools.product(
+            (prepare_github_bundle, prepare_gitlab_bundle),
+            ("external", "git", "tracked", "dangling", "parent", "outside_output"),
+            ("relative", "absolute", "host_alias"),
+        )
+        for prepare, kind, spelling in cases:
+            with (
+                self.subTest(platform=prepare.__name__, kind=kind, spelling=spelling),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                root = Path(tmpdir)
+                repo = root / "repo"
+                repo.mkdir()
+                target = {
+                    "git": repo / ".git",
+                    "tracked": repo / "tracked",
+                }.get(kind, root / "outside")
+                out = repo / "inputs"
+                if kind == "outside_output":
+                    out = root / "outside-output"
+                if kind == "parent":
+                    (repo / "redirect").symlink_to(target, target_is_directory=True)
+                    out = repo / "redirect/inputs"
+                    target = target / "inputs"
+                else:
+                    out.symlink_to(target, target_is_directory=True)
+                if kind != "dangling":
+                    target.mkdir(parents=True)
+                    (target / "manifest.json").write_text("preserve manifest\n")
+                    (target / "mr.diff").write_text("preserve diff\n")
+                    (target / "repo_snapshot").mkdir()
+                    (target / "repo_snapshot/keep.txt").write_text("preserve snapshot\n")
+                client = _github_platform_mock()
+                client.fetch_version.side_effect = ReviewPlatformError("API unavailable")
+                relative_out = Path(os.path.relpath(out, repo))
+                selected_out = out if spelling == "absolute" else relative_out
+                if spelling == "host_alias":
+                    alias = root / "host-alias"
+                    alias.symlink_to(repo, target_is_directory=True)
+                    selected_out = alias / relative_out
+                with (
+                    chdir(repo),
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "GITHUB_REPOSITORY": "octo/repo",
+                            "AI_REVIEW_GITHUB_PR_NUMBER": "7",
+                            "CI_PROJECT_ID": "1",
+                            "CI_MERGE_REQUEST_IID": "2",
+                        },
+                    ),
+                    mock.patch(
+                        "ai_review.input_bundle.create_runtime_platform",
+                        return_value=client,
+                    ) as platform,
+                ):
+                    with self.assertRaisesRegex(BundleError, "output path rejects symlink"):
+                        prepare(runtime_config(), selected_out)
+                    platform.assert_not_called()
+                if kind == "dangling":
+                    self.assertFalse(target.exists())
+                else:
+                    self.assertEqual((target / "manifest.json").read_text(), "preserve manifest\n")
+                    self.assertEqual((target / "mr.diff").read_text(), "preserve diff\n")
+                    self.assertEqual(
+                        (target / "repo_snapshot/keep.txt").read_text(), "preserve snapshot\n"
+                    )
 
 
 class GitHubPrepareTests(unittest.TestCase):
@@ -1428,11 +1425,7 @@ class RepoSnapshotContainmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "inputs"
             with (
-                mock.patch(
-                    "ai_review.input_bundle._gitlab_source_checkout",
-                    side_effect=lambda root, head: nullcontext(root),
-                ),
-                mock.patch("ai_review.input_bundle._checkout_head", return_value="h"),
+                _stub_gitlab_source("h"),
                 mock.patch.dict(
                     "os.environ",
                     {

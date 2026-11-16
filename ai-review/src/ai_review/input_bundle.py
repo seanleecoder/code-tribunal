@@ -811,7 +811,6 @@ def prepare_gitlab_bundle(
         raise SystemExit(f"prepare requires a configured GitLab platform: {exc}") from exc
     _remove_bundle_entry(out_path / "manifest.json")
     version = client.fetch_version(project_id, mr_iid)
-    selected_revision = (version.base_sha, version.start_sha, version.head_sha)
     pipeline_type = _gitlab_pipeline_type()
     runner_root = Path.cwd()
 
@@ -829,7 +828,7 @@ def prepare_gitlab_bundle(
             source = source_checkout.enter_context(
                 _gitlab_source_checkout(runner_root, version.head_sha)
             )
-            checkout_head_sha = _checkout_head(source, out_path, expected_head_sha=version.head_sha)
+            _checkout_head(source, out_path, expected_head_sha=version.head_sha)
         try:
             diff_text = client.fetch_diff(project_id, mr_iid)
         except ReviewPlatformError as exc:
@@ -852,13 +851,8 @@ def prepare_gitlab_bundle(
                 confirmed_version = client.fetch_version(project_id, mr_iid)
             except ReviewPlatformError as exc:
                 raise BundleError(f"failed to revalidate merge request version: {exc}") from exc
-            confirmed_revision = (
-                confirmed_version.base_sha,
-                confirmed_version.start_sha,
-                confirmed_version.head_sha,
-            )
             with _gitlab_source_input_errors(pipeline_type, version.head_sha):
-                if confirmed_revision != selected_revision:
+                if confirmed_version != version:
                     raise BundleError(
                         "merge request version changed during diff collection; "
                         "refusing to combine diff data from different revisions"
@@ -881,8 +875,9 @@ def prepare_gitlab_bundle(
             diff_text=diff_text,
             snapshot_source=source,
             manifest_extensions={
+                # _checkout_head admitted the isolated source only at this SHA.
                 "selected_head_sha": version.head_sha,
-                "checkout_head_sha": checkout_head_sha,
+                "checkout_head_sha": version.head_sha,
             },
             load_state=load_state,
             revalidate=revalidate,
