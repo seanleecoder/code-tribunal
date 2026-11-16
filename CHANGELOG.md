@@ -14,8 +14,9 @@ versioning.
   revision before publishing inputs. Stale detached runs and unavailable source
   objects fail before reviewer work. Synthetic merge trees and unrelated runner
   files are never substituted for the source tree. Prepare disables inherited
-  caches, LFS hydration and submodule initialization; snapshots contain committed
-  LFS pointers and superproject files. Repository conversion attributes do not
+  caches, and its template defaults disable runner LFS hydration and submodule
+  initialization unless a higher-precedence CI/CD variable overrides them;
+  snapshots always contain committed LFS pointers and superproject files. Repository conversion attributes do not
   change committed line endings, encodings, or identifiers. Source-ref recovery
   advice applies only to checkout and revision-binding failures. These defaults
   require a new image/template pair; no network fetch or extra credential path is

@@ -64,10 +64,13 @@ no extra credentials to unprotected refs or forks. Missing source objects or
 invalid bindings fail the pipeline, and a failed merge-train pipeline can remove
 the MR from its train under GitLab's normal behavior.
 
-Prepare declares an empty cache and disables LFS hydration and submodule
-initialization. Snapshots contain committed LFS pointer files and superproject
-files, including `.gitmodules`; expanded LFS objects and submodule worktrees are
-not included. Repository attributes do not change committed line endings,
+Prepare declares an empty cache, and the template defaults disable the runner's
+LFS hydration and submodule initialization. Project, group and pipeline CI/CD
+variables take precedence over those job-level defaults, so a higher-precedence
+`GIT_LFS_SKIP_SMUDGE` or `GIT_SUBMODULE_STRATEGY` can re-enable either in the
+runner checkout. Snapshots are unaffected by such overrides: they contain
+committed LFS pointer files and superproject files, including `.gitmodules`;
+expanded LFS objects and submodule worktrees are not included. Repository attributes do not change committed line endings,
 encodings, or identifiers in the snapshot. These rules also apply when the runner
 reuses a working directory.
 No repository hooks or custom filters run while creating the isolated checkout.
