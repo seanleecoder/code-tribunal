@@ -77,7 +77,6 @@ def prepare_shell_adapter(
     tmp_dir, root = prepare_workspace(
         definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
     )
-    env["AI_REVIEW_RAW_OUTPUT"] = str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json")
     values = {
         **env,
         # The adapter itself reports a missing credential; templates must not.

@@ -117,7 +117,7 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 "--config", 'model_providers.openrouter.name="OpenRouter"',
                 "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
                 "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
-                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}",
+                "--output-schema", "{schema_path}",
                 # No shell: Linux runners' default container policies block the
                 # nested bwrap sandbox it needs. Drop tools a reviewer never uses.
                 *(f"--config=features.{feature}=false" for feature in _CODEX_DISABLED_FEATURES),

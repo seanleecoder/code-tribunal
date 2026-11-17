@@ -229,7 +229,7 @@ printf '%s\n' "$result"
             return
         codex_stream = """
 import json, sys
-payload = open(sys.argv[1]).read()
+payload = sys.argv[1]
 for event in [
     {"type": "thread.started", "thread_id": "fake"},
     {"type": "turn.started"},
@@ -250,23 +250,17 @@ for event in [
             '  env | sort > "$trace_dir/cli.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
             "fi\n"
-            "out=''\n"
             "cd_dir=.\n"
             'while [ "$#" -gt 0 ]; do\n'
             '  case "$1" in\n'
-            '    -o) shift; out="$1" ;;\n'
             '    --cd) shift; cd_dir="$1" ;;\n'
             "  esac\n"
             "  shift || true\n"
             "done\n"
-            'if [ -n "$out" ]; then\n'
-            '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$out.tree"\n'  # noqa: E501
-            '  printf \'%s\\n\' "$0 $args" > "$out.args"\n'
-            '  env | sort > "$out.env"\n'
-            '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$out.key"\n'
-            '  printf \'%s\' "$payload" > "$out"\n'
+            'if [ -n "$trace_dir" ]; then\n'
+            '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$trace_dir/cli.tree"\n'  # noqa: E501
             "fi\n"
-            + f"{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} \"$out\"\n",
+            + f"{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} \"$payload\"\n",
             encoding="utf-8",
         )
         cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
@@ -286,7 +280,6 @@ for event in [
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            raw_out = output_dir / ".tmp" / f"{reviewer}-{stage}.raw.json"
             write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, cli_name)
             if payload is not None:
@@ -389,14 +382,6 @@ for event in [
                     cli_pwd_path = output_dir / "claude.pwd"
                     cli_tree_path = output_dir / "claude.tree"
                     expected_key = "sk-or-v1-test"
-                elif Path(f"{raw_out}.args").exists():
-                    trace_prefix = Path(str(raw_out))
-                    cli_args_path = Path(f"{trace_prefix}.args")
-                    cli_env_path = Path(f"{trace_prefix}.env")
-                    cli_key_path = Path(f"{trace_prefix}.key")
-                    cli_pwd_path = None
-                    cli_tree_path = Path(f"{trace_prefix}.tree")
-                    expected_key = "sk-or-v1-test"
                 else:
                     trace_dir = (
                         output_dir
@@ -407,7 +392,7 @@ for event in [
                     cli_env_path = trace_dir / "cli.env"
                     cli_key_path = trace_dir / "cli.key"
                     cli_pwd_path = None
-                    cli_tree_path = None
+                    cli_tree_path = trace_dir / "cli.tree" if cli_name == "codex" else None
                     expected_key = "sk-or-v1-test"
                 cli_args = cli_args_path.read_text(encoding="utf-8")
                 cli_env = cli_env_path.read_text(encoding="utf-8")
@@ -1000,9 +985,7 @@ for event in [
                 # This helper only drives the invalid-config (model_error) path,
                 # so the adapter now exits non-zero.
                 self.assertEqual(run_prepared_adapter(reviewer, "review"), _EXIT_ERROR)
-                self.assertFalse(
-                    (output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists()
-                )
+                self.assertEqual(list(output_dir.rglob("cli.args")), [])
                 return load_json_file(output_dir / "findings" / f"{reviewer}.json")
             finally:
                 for key, value in previous.items():
