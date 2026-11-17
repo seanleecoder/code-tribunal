@@ -60,8 +60,13 @@ transport failures as failures:
   credential in the tool server's environment all yield unusable outcomes.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
-acceptance. The image gate proves the tool path with a scripted model; a real
-model's discovery of the deferred tools is a separate live check.
+acceptance. The image gate proves the tool path with a scripted model that
+already knows the tool names. A
+[paid real-model check](https://github.com/seanleecoder/code-tribunal/actions/runs/44086897649)
+before release established that the configured default model discovers the
+deferred tools: it called `grep` and `read_file`, read an unchanged file the diff
+called into, and completed without command execution. Release canaries repeat
+that evidence per platform.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
