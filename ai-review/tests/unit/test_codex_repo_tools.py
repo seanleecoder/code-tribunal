@@ -105,24 +105,53 @@ def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     wire = json.dumps(reply)
     assert "\\udc" not in wire
     assert json.loads(wire)["result"]["content"][0]["text"] == (
-        "bad\\xff/ [non-UTF-8 name; cannot be opened by path]\nmodule.py"
+        '"bad\\\\xff/" [non-UTF-8 name; cannot be opened by path]\nmodule.py'
     )
+
+
+MARKED = '"ev\\\\xff.py" [non-UTF-8 name; cannot be opened by path]'
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
 @needs_rg
-def test_non_utf8_names_are_not_confused_with_look_alikes(repo: Path) -> None:
-    (Path(os.fsdecode(os.fsencode(repo) + b"/ev\xff.py"))).write_text("evil = 1\n")
-    (repo / "ev\\xff.py").write_text("decoy = 1\n")
+def test_no_crafted_name_is_shown_like_another(repo: Path) -> None:
+    # Each decoy imitates the raw-byte file, the marker, another file, or a
+    # path:line prefix; every name must still be shown distinctly.
+    (Path(os.fsdecode(os.fsencode(repo) + b"/ev\xff.py"))).write_text("hit = 'raw'\n")
+    (repo / "ev\\xff.py").write_text("hit = 'backslash'\n")
+    (repo / f"ev\\xff.py{tools._UNADDRESSABLE}").write_text("hit = 'marker'\n")
+    (repo / MARKED).write_text("hit = 'quoted marker'\n")
+    (repo / "x\npkg").mkdir()
+    (repo / "x\npkg/module.py").write_text("hit = 'newline'\n")
+    (repo / "pkg/module.py:9:x = 'colon'").write_text("hit\n")
     listing = call(repo, "list_dir")[0].splitlines()
-    assert "ev\\xff.py" in listing
-    assert "ev\\xff.py [non-UTF-8 name; cannot be opened by path]" in listing
-    text, is_error = call(repo, "grep", pattern="evil|decoy")
+    assert len(listing) == len(set(listing))
+    assert MARKED in listing
+    assert '"x\\npkg/"' in listing
+    text, is_error = call(repo, "grep", pattern="hit")
     assert not is_error
-    assert sorted(text.splitlines()) == [
-        "ev\\xff.py [non-UTF-8 name; cannot be opened by path]:1:evil = 1",
-        "ev\\xff.py:1:decoy = 1",
-    ]
+    assert sorted(text.splitlines()) == sorted([
+        f"{MARKED}:1:hit = 'raw'",
+        '"ev\\\\xff.py":1:hit = \'backslash\'',
+        f'"ev\\\\xff.py{tools._UNADDRESSABLE}":1:hit = \'marker\'',
+        f"{json.dumps(MARKED)}:1:hit = 'quoted marker'",
+        '"x\\npkg/module.py":1:hit = \'newline\'',
+        '"pkg/module.py:9:x = \'colon\'":1:hit',
+    ])
+    # A quoted name decodes back to a path the tools open.
+    assert call(repo, "read_file", path="x\npkg/module.py") == ("1\thit = 'newline'", False)
+
+
+@needs_rg
+def test_grep_shows_matches_only_and_bounds_long_lines(repo: Path) -> None:
+    (repo / "blob.bin").write_bytes(b"hit\n" + b"a" * 100_000 + b"\n\0tail\n")
+    (repo / "min.js").write_text("x" * 600 + "hit\n")
+    text, is_error = call(repo, "grep", pattern="hit")
+    assert not is_error
+    lines = sorted(text.splitlines())
+    assert lines[0] == "blob.bin:1:hit"  # No binary-file notice follows it.
+    assert lines[1] == "min.js:1:" + "x" * 500 + " [line truncated; read_file with start_column]"
+    assert len(lines) == 2
 
 
 @needs_rg
