@@ -100,8 +100,10 @@ These rules are worth stating because breaking them is silent:
   investigation found sandbox failures visible only in provider tool responses,
   with no CLI command/error event or stderr; the current codec cannot distinguish
   those streams from tool-free success. The image gate's random sentinel check
-  rejects them. No working Linux launch policy has yet been demonstrated; see
-  the [investigation limits](testing.md#temporary-codex-sandbox-investigation).
+  rejects them. A manually loaded runner-policy candidate passed the Linux
+  feasibility suite; the default gate still fails, and production launch policy
+  and fail-fast admission remain undecided. See the
+  [investigation limits](testing.md#temporary-codex-sandbox-investigation).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and

@@ -69,15 +69,16 @@ Remove COMPAT-012 after collecting evidence. Production deployment changes,
 GitHub/GitLab compatibility claims and release validation require the subsequent
 policy decision and live checks described in the agreed PR #304 plan.
 
-The bounded Linux experiment did not demonstrate a working launch arrangement.
+The initial bounded Linux experiment did not demonstrate a working launch
+arrangement.
 The ordinary gate ran all 14 cases and stayed failed. Individual outer-profile
 relaxations and their combination did not produce a successful sentinel read.
 Some sandbox failures reached only the provider tool response, with no failure
 signal in the CLI stream or stderr. The codec cannot distinguish those streams
 from tool-free success; the sentinel gate correctly rejects them. A successful
 adapter outcome alone is therefore insufficient evidence of usable tools.
-Further work needs another scoped experiment or platform-policy decision before
-any additional privilege change. Detailed evidence remains in the separately
+Its follow-up is the explicit managed-profile experiment below. Detailed
+evidence remains in the separately
 approved diagnostic artifact; it is not copied into repository documentation.
 
 The follow-up stays within those same four launch variants and existing
@@ -148,6 +149,30 @@ outside uploaded evidence and is deleted. Only fixed results are archived.
 The pinned [sandbox command implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/cli/src/debug_sandbox.rs)
 forwards child exit status, but real tool-context parity and production admission
 remain unproven. No production adapter or deployment policy changes here.
+
+The [manual experiment on `a07af01`](https://github.com/seanleecoder/code-tribunal/actions/runs/44033770758)
+passed with both candidate profiles together. The pinned baseline and each
+candidate used alone failed the read contract. The combined launch passed all
+14 smoke cases, including both configured models, recovery/no-match controls,
+and independent read-only enforcement. The public sandbox probe passed its
+random read, exit-code forwarding and denied-write checks. Cleanup confirmed
+container removal, profile absence and unchanged observed host sysctls. The
+downloaded archive's digest was verified and it contained no raw trace files.
+
+This establishes feasibility for that controlled hosted-VM run. The default
+gate remains failed, and no images were handed off or published. A supported
+runner policy still needs a decision about the added namespace/mount kernel
+surface and provisioning before GitHub job-container startup or through GitLab
+runner administration. Both platforms require their own live acceptance checks.
+
+The admission candidate is a bounded, credential-free public sandbox check
+before a model call, using the selected read-only configuration and execution
+context. A failed check should produce an unusable execution outcome. The
+experiment shows detection of the broken default environment and success with
+the working candidate; it does not prove parity for every real tool invocation.
+Keep the existing CLI-event admission and image gate, and review context parity,
+timeout accounting and environment isolation before implementing this check in
+the production runner. Private debug traces remain diagnostic-only.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
