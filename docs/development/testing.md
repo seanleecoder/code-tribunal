@@ -58,8 +58,8 @@ before snapshot cleanup. A namespace failure cannot satisfy that check.
 Runtime evidence records kernel/runner/Docker identity, process seccomp and
 capability status, AppArmor context, user-namespace sysctls, available audit data,
 and system/bundled bwrap paths, hashes and help/version output. Unavailable
-observations are recorded explicitly. Detailed evidence stays on the runner;
-the workflow currently uploads no diagnostic archive. Console output contains
+observations are recorded explicitly. The workflow uploads the detailed evidence
+as `codex-sandbox-diagnostic`, retained for seven days. Console output contains
 case classifications and the summary. Termux unit tests validate collection and
 failure admission, not Linux enforcement or deployment compatibility.
 

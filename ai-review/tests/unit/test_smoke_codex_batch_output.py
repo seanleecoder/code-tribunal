@@ -141,6 +141,15 @@ def test_image_gate_is_unconditional_and_precedes_image_save() -> None:
     assert diagnostic["timeout-minutes"] == 16
     assert "continue-on-error" not in probe and "continue-on-error" not in diagnostic
     assert steps.index(probe) < steps.index(diagnostic) < steps.index(save)
+    upload = next(s for s in steps if s.get("name") == "Upload Codex sandbox diagnostic evidence")
+    assert "always()" in upload["if"] and "steps.codex-sandbox.outcome" in upload["if"]
+    assert upload["with"] == {
+        "name": "codex-sandbox-diagnostic",
+        "path": "${{ runner.temp }}/codex-sandbox",
+        "if-no-files-found": "error",
+        "retention-days": 7,
+    }
+    assert steps.index(diagnostic) < steps.index(upload) < steps.index(save)
 
 
 def test_collect_all_preserves_assertion_setup_and_transport_failures(tmp_path: Path) -> None:

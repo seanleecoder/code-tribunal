@@ -198,13 +198,22 @@ jobs:
         run: scripts/smoke_codex_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
 
       # COMPAT-012: diagnostic only, on the same runner and exact image.
-      # Evidence stays on the runner; metadata upload requires separate approval.
       # A successful diagnostic cannot waive the failed default image gate.
       - name: Diagnose Codex namespace restrictions
+        id: codex-sandbox
         if: failure() && steps.codex-gate.outcome == 'failure'
         timeout-minutes: 16
         shell: bash
         run: python3 scripts/diagnose_codex_sandbox.py "$AI_REVIEW_REVIEWER_TAG" "$RUNNER_TEMP/codex-sandbox"
+
+      - name: Upload Codex sandbox diagnostic evidence
+        if: always() && steps.codex-sandbox.outcome != '' && steps.codex-sandbox.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codex-sandbox-diagnostic
+          path: ${{ runner.temp }}/codex-sandbox
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
