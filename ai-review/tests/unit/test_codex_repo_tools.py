@@ -85,6 +85,41 @@ def test_search_never_follows_symlinks_out(repo: Path) -> None:
     assert "outside-secret" not in call(repo, "grep", pattern="outside-secret")[0]
 
 
+def test_read_file_numbers_lines_as_git_does(repo: Path) -> None:
+    (repo / "ff.py").write_bytes("a\r\n\x0cb\nc\x1cd\u2028e\n".encode())
+    assert call(repo, "read_file", path="ff.py") == ("1\ta\n2\t\x0cb\n3\tc\x1cd\u2028e", False)
+    (repo / "empty.txt").write_bytes(b"")
+    assert call(repo, "read_file", path="empty.txt") == ("", False)
+    (repo / "no-eol.txt").write_bytes(b"x\n\ny")
+    assert call(repo, "read_file", path="no-eol.txt") == ("1\tx\n2\t\n3\ty", False)
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+def test_non_utf8_names_are_json_safe(repo: Path) -> None:
+    os.mkdir(os.fsencode(repo / "pkg") + b"/bad\xff")
+    reply = tools.respond(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "list_dir", "arguments": {"path": "pkg"}}},
+        repo,
+    )
+    wire = json.dumps(reply)
+    assert "\\udc" not in wire
+    assert json.loads(wire)["result"]["content"][0]["text"] == "bad\\xff/\nmodule.py"
+
+
+@needs_rg
+def test_grep_ignores_repository_ignore_files(repo: Path) -> None:
+    for name in (".ignore", ".rgignore", ".gitignore"):
+        (repo / name).write_text("pkg/\n")
+    (repo.parent / ".ignore").write_text("sentinel.txt\n")
+    text, is_error = call(repo, "grep", pattern="value")
+    assert not is_error
+    assert sorted(text.splitlines()) == [
+        "pkg/module.py:1:value = 1",
+        "sentinel.txt:1:snapshot-only-value",
+    ]
+
+
 def test_output_is_bounded(repo: Path, monkeypatch) -> None:
     lines = call(repo, "read_file", path="pkg/module.py", max_lines=1)[0]
     assert lines == "1\tvalue = 1\n[1 more lines; continue with start_line]"

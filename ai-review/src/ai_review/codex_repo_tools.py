@@ -105,8 +105,17 @@ def contained(root: Path, requested: Any) -> Path:
     return resolved
 
 
+def _display(name: str) -> str:
+    """Make a filesystem name JSON-safe for the client.
+
+    Non-UTF-8 bytes arrive as lone surrogates, which Codex's JSON parser
+    rejects, failing the whole call. Show them as backslash escapes instead.
+    """
+    return os.fsencode(name).decode("utf-8", errors="backslashreplace")
+
+
 def _relative(root: Path, path: Path) -> str:
-    return path.relative_to(root).as_posix() or "."
+    return _display(path.relative_to(root).as_posix() or ".")
 
 
 def _bounded(text: str) -> str:
@@ -134,7 +143,14 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         data = handle.read(MAX_FILE_BYTES + 1)
     if b"\x00" in data[:8192]:
         raise ToolError(f"binary file: {_relative(root, path)}")
-    lines = data[:MAX_FILE_BYTES].decode("utf-8", errors="replace").splitlines()
+    # Number lines as git and the diff do: only "\n" ends a line. splitlines()
+    # also splits on form feeds and Unicode separators, shifting every anchor.
+    lines = [
+        line.removesuffix("\r")
+        for line in data[:MAX_FILE_BYTES].decode("utf-8", errors="replace").split("\n")
+    ]
+    if lines[-1] == "":
+        lines.pop()
     selected = lines[start - 1 : start - 1 + count]
     body = "\n".join(f"{number}\t{line}" for number, line in enumerate(selected, start))
     notes = []
@@ -150,7 +166,9 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
     if not path.is_dir():
         raise ToolError(f"not a directory: {_relative(root, path)}")
     with os.scandir(path) as entries:
-        names = sorted(e.name + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries)
+        names = sorted(
+            _display(e.name) + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries
+        )
     if len(names) > MAX_LIST_ENTRIES:
         names = [*names[:MAX_LIST_ENTRIES], f"[truncated at {MAX_LIST_ENTRIES} entries]"]
     return _bounded("\n".join(names))
@@ -178,6 +196,8 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--color",
         "never",
         "--hidden",
+        # Repository ignore files are untrusted and must not hide content.
+        "--no-ignore",
         "--glob",
         "!.git",
         "--max-filesize",
