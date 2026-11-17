@@ -167,6 +167,8 @@ def run_container(
     *,
     full_suite: bool = False,
     owner: str | None = None,
+    driver_args: list[str] | None = None,
+    timeout: int | None = None,
 ) -> dict:
     """One bounded launch shared by the differential and managed-policy probes."""
     (work / "home").mkdir(parents=True)
@@ -179,6 +181,7 @@ def run_container(
             "probe_codex_namespaces.py",
             "probe_codex_trace.py",
             "probe_codex_admission.py",
+            "codex_repo_tools_mcp.py",
         )
     ]
     argv = [
@@ -207,10 +210,12 @@ def run_container(
         "python3",
         "/probe/smoke_codex_batch_output.py",
     ]
-    if not full_suite:
+    if driver_args is not None:
+        argv += driver_args
+    elif not full_suite:
         argv.append("--diagnostic-read")
     try:
-        launch = observe(argv, timeout=900 if full_suite else 180)
+        launch = observe(argv, timeout=timeout or (900 if full_suite else 180))
     finally:
         # Killing the Docker client does not stop its container.
         cleanup = observe(["docker", "rm", "--force", name], timeout=10)

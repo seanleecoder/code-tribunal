@@ -43,6 +43,17 @@ def prepare(definition, stage, env):
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
     arguments += ["-c", "model_providers.openrouter.request_max_retries=0",
                   "-c", "model_providers.openrouter.stream_max_retries=0"]
+    # COMPAT-012: no-shell experiment. Remove the shell tool; review alone gets
+    # the trusted read-only MCP server rooted at the copied snapshot.
+    if len(sys.argv) > 7 and sys.argv[7]:
+        mcp = json.loads(sys.argv[7])
+        arguments += ["-c", "features.shell_tool=false"]
+        if stage == "review":
+            server = ["-I", mcp["server"], "--root", str(root), "--env-report", mcp["env_report"]]
+            arguments += ["-c", "mcp_servers.repo.command=" + json.dumps(sys.executable),
+                          "-c", "mcp_servers.repo.args=" + json.dumps(server),
+                          "-c", "mcp_servers.repo.required=true",
+                          "-c", 'mcp_servers.repo.default_tools_approval_mode="approve"']
     return arguments, root
 runner.prepare_shell_adapter = prepare
 original_run = runner._run_adapter_process
@@ -258,12 +269,13 @@ def run_case(
     steps: list[str] | None = None,
     empty: bool = False,
     terminal: bool = False,
-    expected_status: str = "success",
+    expected_status: str | None = "success",
     sentinel: str | None = None,
     cli_path: str | None = None,
     stream_fault: str = "",
     protected_runtime: Path | None = None,
     rollout_trace: Path | None = None,
+    no_shell: Path | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -299,7 +311,10 @@ def run_case(
         protected_input = work / "inputs" / "protected.txt"
         protected_input.write_text(secrets.token_hex(24))
         protected = {p: p.read_bytes() for p in (protected_input, protected_runtime)}
-        steps = [command({"cmd": "cat sentinel.txt"}), denial_command(protected)]
+        if no_shell is None:
+            steps = [command({"cmd": "cat sentinel.txt"}), denial_command(protected)]
+        else:
+            steps = containment_steps(protected_input, protected_runtime)
     batch = {"findings": []} if empty else probe_batch(stage)
     with StubProvider(batch, steps, terminal=terminal) as stub:
         result = subprocess.run(
@@ -314,6 +329,9 @@ def run_case(
                 stream_fault,
                 str(work / "workspace.json"),
                 str(rollout_trace) if rollout_trace is not None else "",
+                json.dumps({"server": str(no_shell), "env_report": str(work / "mcp-env.json")})
+                if no_shell is not None
+                else "",
             ],
             env={
                 "PATH": cli_path or os.environ["PATH"],
@@ -376,6 +394,8 @@ def run_case(
         ),
         flush=True,
     )
+    if no_shell is not None:
+        assert_no_shell(stub, capture, work, stage=stage, protected=protected)
     if protected_runtime is not None:
         observed = json.loads((work / "workspace.json").read_text())["files_after_cli"]
         if observed != {
@@ -384,6 +404,7 @@ def run_case(
         }:
             raise AssertionError("sandbox changed copied snapshot bytes")
         assert_unchanged(protected)
+    if protected_runtime is not None and no_shell is None:
         executions = [
             event["item"]
             for event in map(json.loads, capture["stdout"].splitlines())
@@ -397,8 +418,10 @@ def run_case(
             for item in executions
         ):
             raise AssertionError("read-only negative control did not prove all six denials")
-    if outcome["adapter_status"] != expected_status or (result.returncode == 0) != (
-        expected_status == "success"
+    # None records an observation (COMPAT-012) without asserting its status.
+    if expected_status is not None and (
+        outcome["adapter_status"] != expected_status
+        or (result.returncode == 0) != (expected_status == "success")
     ):
         raise AssertionError(f"{label}: wrong outcome: {outcome}; {result.stderr}")
     from ai_review.reviewer_setup import stage_schema_path  # noqa: PLC0415
@@ -458,6 +481,78 @@ def run_case(
 
 def command(code: dict) -> str:
     return f"const r = await tools.exec_command({json.dumps(code)}); text(JSON.stringify(r));"
+
+
+# COMPAT-012: no-shell experiment helpers. Code mode names nested MCP tools
+# from their namespace; discover the name instead of assuming one spelling.
+def mcp_call(tool: str, arguments: dict) -> str:
+    return (
+        f"const want = {json.dumps(tool)};"
+        "const names = [...Object.keys(tools), 'mcp__repo__' + want, 'repo__' + want];"
+        "const name = names.find(n => (n === want || n.endsWith('__' + want))"
+        " && typeof tools[n] === 'function');"
+        "if (!name) { text('CODEX_NO_MCP_TOOL ' + JSON.stringify(Object.keys(tools))); }"
+        f" else {{ const r = await tools[name]({json.dumps(arguments)});"
+        " text(name + ' ' + JSON.stringify(r)); }"
+    )
+
+
+NO_SHELL_PATCH = (
+    "*** Begin Patch\n*** Update File: example.py\n@@\n-example = 1\n+example = 2\n*** End Patch\n"
+)
+NO_SHELL_PROBE = (
+    "const out = {shell: typeof tools.exec_command, stdin: typeof tools.write_stdin,"
+    " apply_patch: typeof tools.apply_patch};"
+    "if (out.shell === 'function') { try { out.shell_result ="
+    " await tools.exec_command({cmd: 'id'}); } catch (e) { out.shell_result = String(e); } }"
+    "if (out.apply_patch === 'function') { try { out.patch_result ="
+    f" await tools.apply_patch({json.dumps(NO_SHELL_PATCH)}); }}"
+    " catch (e) { out.patch_result = String(e); } }"
+    "text('CODEX_NO_SHELL_PROBE ' + JSON.stringify(out));"
+)
+
+
+def containment_steps(protected_input: Path, protected_runtime: Path) -> list[str]:
+    # Traverse above any snapshot root, then name an absolute path; both must be
+    # refused. The shell/apply_patch probe follows; a final read proves the tool.
+    return [
+        mcp_call("read_file", {"path": "../" * 40 + str(protected_input).lstrip("/")}),
+        mcp_call("read_file", {"path": str(protected_runtime)}),
+        NO_SHELL_PROBE,
+        mcp_call("read_file", {"path": "sentinel.txt"}),
+    ]
+
+
+def assert_no_shell(
+    stub: StubProvider, capture: dict, work: Path, *, stage: str, protected: dict[Path, bytes]
+) -> None:
+    offered = json.dumps(stub.requests[0].get("tools", [])) + json.dumps(
+        [i for i in stub.requests[0].get("input", []) if i.get("type") == "additional_tools"]
+    )
+    for name in ("exec_command", "write_stdin"):
+        if name in offered:
+            raise AssertionError(f"no-shell run still offered {name}")
+    if (stage == "review") != ("read_file" in offered):
+        raise AssertionError("repository MCP tools were not offered to review only")
+    if "command_execution" in capture["stdout"]:
+        raise AssertionError("no-shell run executed a command")
+    outputs = "\n".join(tool_outputs(r) for r in stub.requests[1:])
+    if "CODEX_NO_MCP_TOOL" in outputs:
+        raise AssertionError("code mode did not expose the repository MCP tool")
+    for path, data in protected.items():
+        if data.decode() in outputs:
+            raise AssertionError(f"repository tool disclosed protected file: {path.name}")
+    if protected:
+        for refusal in ("outside the repository snapshot", "must be repository-relative"):
+            if refusal not in outputs:
+                raise AssertionError(f"containment control missing refusal: {refusal}")
+        if '"shell":"undefined"' not in outputs or '"stdin":"undefined"' not in outputs:
+            raise AssertionError("code mode still exposed a shell tool")
+    if stage == "review":
+        names = json.loads((work / "mcp-env.json").read_text())
+        leaked = [n for n in names if n == "OPENROUTER_API_KEY" or n.startswith("AI_REVIEW_")]
+        if leaked:
+            raise AssertionError(f"MCP server inherited runner variables: {leaked}")
 
 
 def assert_unchanged(protected: dict[Path, bytes]) -> None:
@@ -539,6 +634,74 @@ def missing_host_case(install: Path, scratch: Path) -> None:
         )
 
 
+def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
+    """COMPAT-012: the no-shell candidate under the caller's (default) launch policy."""
+    from ai_review.config import load_config  # noqa: PLC0415
+
+    server = Path(__file__).with_name("codex_repo_tools_mcp.py").resolve()
+    configured = load_config(install / "config/review.yaml").reviewers["codex"].model
+    cases: list[tuple[str, Callable]] = []
+
+    def add(directory: Path, label: str, model: str, **options: Any) -> None:
+        run = partial(run_case, install, directory, label, model, no_shell=server, **options)
+        cases.append((f"{directory.name}/{label}", run))
+
+    for index, model in enumerate(dict.fromkeys((REQUIRED_MODEL, configured))):
+        directory = scratch / str(index)
+        sentinel = secrets.token_hex(24)
+        add(
+            directory,
+            "read",
+            model,
+            steps=[mcp_call("read_file", {"path": "sentinel.txt"})],
+            sentinel=sentinel,
+        )
+        add(directory, "empty", model, empty=True)
+        add(directory, "critique", model, stage="critique")
+    directory = scratch / "tools"
+    sentinel = secrets.token_hex(24)
+    add(
+        directory,
+        "search",
+        REQUIRED_MODEL,
+        # A prefix pattern: only the file's content can return the full sentinel.
+        steps=[mcp_call("list_dir", {"path": "."}), mcp_call("grep", {"pattern": sentinel[:12]})],
+        sentinel=sentinel,
+    )
+    add(
+        directory,
+        "no-match",
+        REQUIRED_MODEL,
+        steps=[mcp_call("grep", {"pattern": "no-such-match"})],
+        empty=True,
+    )
+    # Observation only: today's codec admits command failures, not MCP failures.
+    add(
+        directory,
+        "missing-file",
+        REQUIRED_MODEL,
+        steps=[mcp_call("read_file", {"path": "missing.txt"})],
+        expected_status=None,
+    )
+
+    def containment() -> None:
+        with TemporaryDirectory(prefix=".codex-read-only-", dir=install) as runtime:
+            protected = Path(runtime) / "protected.txt"
+            protected.write_text(secrets.token_hex(24))
+            run_case(
+                install,
+                directory,
+                "containment",
+                REQUIRED_MODEL,
+                sentinel=secrets.token_hex(24),
+                protected_runtime=protected,
+                no_shell=server,
+            )
+
+    cases.append(("tools/containment", containment))
+    return cases
+
+
 def run_cases(
     cases: list[tuple[str, Callable]], scratch: Path, *, budget_seconds: float = 810
 ) -> int:
@@ -573,8 +736,12 @@ def main() -> int:
     parser.add_argument("--scratch", type=Path, default=Path("/smoke/codex"))
     # COMPAT-012: bounded diagnostic subset; never selects production policy.
     parser.add_argument("--diagnostic-read", action="store_true")
+    # COMPAT-012: no-shell Codex with trusted read-only MCP tools.
+    parser.add_argument("--no-shell-mcp", action="store_true")
     args = parser.parse_args()
     sys.path.insert(0, str(args.install_root / "src"))
+    if args.no_shell_mcp:
+        return run_cases(no_shell_cases(args.install_root, args.scratch), args.scratch)
     if args.diagnostic_read:
         from diagnose_codex_sandbox import runtime_context  # noqa: PLC0415
         from probe_codex_admission import probe_public_sandbox  # noqa: PLC0415

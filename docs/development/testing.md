@@ -174,6 +174,45 @@ Keep the existing CLI-event admission and image gate, and review context parity,
 timeout accounting and environment isolation before implementing this check in
 the production runner. Private debug traces remain diagnostic-only.
 
+The archived kernel audit records explain why disabling both outer profiles
+still failed while the named candidates passed. The hosted Ubuntu kernel
+restricts unprivileged user namespaces through AppArmor. A namespace created by
+an unconfined process moves to a restricted profile that denied a capability
+bwrap needs. Docker's default seccomp profile separately blocks namespace
+creation, and its default AppArmor profile denies mounts and grants no user
+namespace rule. All three layers block Codex's nested sandbox under default
+launches.
+
+Decision (2026-11-17): pursue a no-shell Codex reviewer rather than relaxing
+runner kernel policy. Claude, OpenCode and Cursor already use read-only/no-shell
+tool policies without an OS sandbox. Codex 0.169.0 can disable its shell tool
+with the stable `features.shell_tool` flag. Its only repository-read path would
+then be a trusted, read-only stdio MCP server configured with
+`default_tools_approval_mode = "approve"`. Pinned source starts local stdio MCP
+servers as ordinary child processes, outside bwrap, and code mode exposes MCP
+tools. The next step is a bounded Linux experiment under default Docker
+policies; source reading does not establish feasibility. The managed-policy
+candidates remain evidence only, not a deployment direction.
+
+`scripts/experiment_codex_no_shell.py` runs that experiment after a failed image
+gate, on the same runner and image, with no security options, capabilities or
+host changes. The smoke driver's `--no-shell-mcp` subset disables the shell tool
+and gives review stages the experimental
+[`codex_repo_tools_mcp.py`](../../scripts/codex_repo_tools_mcp.py) server, rooted
+at the copied snapshot. It is standard-library Python with `read_file`,
+`list_dir` and `grep`; it resolves every path, symlinks included, inside that
+root, bounds output and has no write operation. Critique has no tools. Both
+configured models must read a random snapshot-only sentinel through code mode.
+A search case lists and greps for it, and a no-match search must stay usable.
+The containment case requires refusals for traversal and absolute paths, no
+offered or callable shell, unchanged snapshot/protected bytes, and no runner
+credential in the server's environment names. A missing-file read records the
+adapter outcome without asserting it, because the current codec admits command
+failures only. Fixed item types and statuses go to the console and summary;
+captures stay in the approved seven-day artifact. A pass would establish
+feasibility only. A production tool server, codec admission for MCP failures,
+and registry changes need their own reviewed change.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their

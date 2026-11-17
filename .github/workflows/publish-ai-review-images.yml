@@ -219,6 +219,14 @@ jobs:
         shell: bash
         run: python3 scripts/codex_runner_profiles.py "$RUNNER_TEMP/codex-sandbox/policies"
 
+      # COMPAT-012: default launch policy, no host change; never waives the gate.
+      - name: Test no-shell Codex with read-only MCP tools
+        id: codex-no-shell
+        if: failure() && steps.codex-gate.outcome == 'failure'
+        timeout-minutes: 17
+        shell: bash
+        run: python3 scripts/experiment_codex_no_shell.py "$AI_REVIEW_REVIEWER_TAG" "$RUNNER_TEMP/codex-sandbox/no-shell"
+
       # COMPAT-012: never automatic on PRs/main; never waives the failed gate.
       - name: Test managed Codex runner policy on ephemeral host
         if: >-
