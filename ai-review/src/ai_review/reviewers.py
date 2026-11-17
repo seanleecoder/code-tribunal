@@ -83,7 +83,7 @@ def _definition(
 # image gate pins the tool set that remains.
 _CODEX_DISABLED_FEATURES = (
     "shell_tool", "view_image", "sleep_tool", "goals", "image_generation",
-    "multi_agent", "multi_agent_v2", "apps", "plugins",
+    "multi_agent", "apps", "plugins",
 )
 
 REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
@@ -121,6 +121,9 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 # No shell: Linux runners' default container policies block the
                 # nested bwrap sandbox it needs. Drop tools a reviewer never uses.
                 *(f"--config=features.{feature}=false" for feature in _CODEX_DISABLED_FEATURES),
+                # Model metadata selects multi-agent V2; its documented config
+                # hides the native sub-agent tools. Braces are format_map escapes.
+                "--config=features.multi_agent_v2={{enabled=false, disable_native_tools=true}}",
                 "-",
             ),
             # Review reads the snapshot only through the trusted read-only MCP

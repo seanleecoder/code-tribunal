@@ -194,6 +194,10 @@ def test_registry_renders_parseable_no_shell_configuration(tmp_path: Path, stage
         merge(overrides, tomllib.loads(value))
     assert overrides["features"]["shell_tool"] is False
     assert overrides["features"]["view_image"] is False
+    assert overrides["features"]["multi_agent_v2"] == {
+        "enabled": False,
+        "disable_native_tools": True,
+    }
     if stage == "critique":
         assert "mcp_servers" not in overrides
         return
