@@ -30,7 +30,8 @@ READ = {
 }
 SUCCESS = {
     "adapter_status": "success",
-    "findings": [{"location": {"path": "helpers.py"}, "body": "private finding prose"}],
+    # Finalized finding_batch.v2 shape: anchors, not authoring locations.
+    "findings": [{"anchor": {"new_path": "helpers.py"}, "body": "private finding prose"}],
 }
 
 

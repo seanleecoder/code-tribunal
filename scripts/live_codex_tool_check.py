@@ -82,7 +82,9 @@ def classify(stream: str, returncode: int, outcome: dict) -> dict:
         "command_executions": sum(1 for item in items if item.get("type") == "command_execution"),
         "read_unchanged_helpers": "helpers.py" in paths,
         "finding_count": len(outcome.get("findings", [])),
-        "finding_paths": sorted({f["location"]["path"] for f in outcome.get("findings", [])}),
+        "finding_paths": sorted(
+            {str((f.get("anchor") or {}).get("new_path")) for f in outcome.get("findings", [])}
+        ),
     }
     summary["passed"] = (
         summary["adapter_status"] == "success"
