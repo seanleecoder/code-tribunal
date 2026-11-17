@@ -20,6 +20,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -39,8 +40,18 @@ MAX_MATCH_CHARS = 500
 # make a record far larger than the text it renders. Records past this size are
 # shown from their head instead of being parsed whole.
 MAX_GREP_RECORD_BYTES = MAX_FILE_BYTES
+# Total rg output read per search, drained oversized records included, so a few
+# match-dense files cannot spend the whole timeout producing little output.
+MAX_GREP_INPUT_BYTES = 8 * MAX_FILE_BYTES
 GREP_TIMEOUT_SECONDS = 20
-RG = "/usr/local/bin/rg"
+# Control characters (Unicode category Cc) other than tab, and the line and
+# paragraph separators (Zl, Zp): each could end a rendered line early and make
+# file content pose as another line or match.
+_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f  ]")
+# Escapes reuse JSON spelling, which literal source text can also contain; the
+# note tells the two apart without changing any ordinary backslash.
+_ESCAPED_NOTE = " [control characters shown escaped]"
+RG ="/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
 # Codex passes MCP servers only these variables unless configured otherwise
 # (codex-rs rmcp-client DEFAULT_ENV_VARS); Python's locale coercion adds LC_*.
@@ -62,7 +73,9 @@ TOOLS = [
         "description": (
             "Read a UTF-8 text file in the repository under review. Returns lines "
             "numbered as git numbers them; use start_line and max_lines (default "
-            f"{DEFAULT_MAX_LINES}) for long files, and start_column to continue a long line."
+            f"{DEFAULT_MAX_LINES}) for long files, and start_column to continue a long line. "
+            "Control characters other than tab are shown as JSON escapes on lines marked "
+            f"'{_ESCAPED_NOTE.strip()}'; start_column counts the file's own characters."
         ),
         "inputSchema": {
             "type": "object",
@@ -209,18 +222,19 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     for number in range(start, end + 1):
         column = start_column if number == start else 1
         prefix, text = f"{number}\t", lines[number - 1][column - 1 :]
-        size = len(prefix.encode()) + len(text.encode()) + 1
+        shown = _visible(text)
+        size = len(prefix.encode()) + len(shown.encode()) + 1
         if size <= budget:
-            out.append(prefix + text)
+            out.append(prefix + shown)
             budget -= size
             continue
-        room = max(budget - len(prefix.encode()) - 1, 0)
-        fitted = text.encode()[:room].decode("utf-8", errors="ignore")
-        if not fitted and not out:
-            fitted = text[:1]  # Always make progress.
-        if fitted:
-            out.append(prefix + fitted)
-        resume = (number, column + len(fitted))
+        shown, used = _visible_prefix(text, budget - len(prefix.encode()) - 1)
+        if not used and not out:
+            shown, used = _visible(text[:1]), 1  # Always make progress.
+        if used:
+            out.append(prefix + shown)
+        # Columns count the file's own characters, not their escaped display.
+        resume = (number, column + used)
         break
     notes = []
     if resume is not None:
@@ -298,12 +312,14 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
     matches: list[str] = []
-    truncated = False
+    cut: str | None = None
     try:
         assert process.stdout is not None
-        truncated = _read_matches(process.stdout, matches)
-        if not truncated:
-            process.wait()  # rg closed its output; let it report its status.
+        cut = _read_matches(process.stdout, matches)
+        if cut is None:
+            # rg closed its output; wait for its status without reaping it, so
+            # its PID, and so its group, stays reserved until kill() below.
+            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ToolError("search output could not be read") from exc
     finally:
@@ -318,23 +334,26 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     # missing path or an unreadable file; an error can accompany partial results.
     # Its --json summary record makes stdout nonempty either way, so decide from
     # the matches rather than from the presence of output.
-    if not truncated and process.returncode not in (0, 1):
+    if cut is None and process.returncode not in (0, 1):
         if not matches:
             raise ToolError("search failed; check the pattern and path")
         matches.append("[search incomplete: some files could not be searched]")
-    if truncated:
-        matches.append(f"[search output truncated at {MAX_OUTPUT_BYTES} bytes]")
+    if cut is not None:
+        matches.append(cut)
     return _bounded("".join(f"{line}\n" for line in matches))
 
 
-def _read_matches(stream: IO[bytes], matches: list[str]) -> bool:
-    """Render rg --json match records until EOF; return True if output was cut.
+def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
+    """Render rg --json match records until EOF; return a note if the search was cut.
 
     Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
     shown from its head and skipped rather than consuming the whole search.
+    Every byte read, a skipped remainder included, counts toward
+    MAX_GREP_INPUT_BYTES.
     """
-    size, path = 0, None
+    consumed, size, path = 0, 0, None
     while record := stream.readline(MAX_GREP_RECORD_BYTES):
+        consumed += len(record)
         if record.endswith(b"\n"):
             event = json.loads(record)
             if event.get("type") == "begin":
@@ -342,15 +361,22 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> bool:
             line = _match_line(event["data"]) if event.get("type") == "match" else None
         else:
             line = _oversized_match_line(record, path)
-            while (rest := stream.readline(65536)) and not rest.endswith(b"\n"):
-                pass  # Discard the remainder of the oversized record.
-        if line is None:
-            continue
-        matches.append(line)
-        size += len(line.encode()) + 1
-        if size > MAX_OUTPUT_BYTES:
-            return True
-    return False
+            # Discard the remainder of the oversized record, within the budget.
+            while consumed <= MAX_GREP_INPUT_BYTES and (rest := stream.readline(65536)):
+                consumed += len(rest)
+                if rest.endswith(b"\n"):
+                    break
+        if line is not None:
+            matches.append(line)
+            size += len(line.encode()) + 1
+            if size > MAX_OUTPUT_BYTES:
+                return f"[search output truncated at {MAX_OUTPUT_BYTES} bytes]"
+        if consumed > MAX_GREP_INPUT_BYTES:
+            return (
+                f"[search stopped after reading {MAX_GREP_INPUT_BYTES} bytes of results; "
+                "narrow the path or pattern]"
+            )
+    return None
 
 
 _SUBMATCHES_KEY = b',"submatches":'
@@ -381,12 +407,29 @@ def _rg_data(value: dict[str, str]) -> bytes:
     return base64.b64decode(value["bytes"])
 
 
-def _visible(char: str) -> str:
-    # Escape control and line-separator characters, which could otherwise end
-    # the rendered line early and make file content pose as another match.
-    if char != "\t" and (unicodedata.category(char) in {"Cc", "Zl", "Zp"}):
-        return json.dumps(char)[1:-1]
-    return char
+def _escape(match: re.Match[str]) -> str:
+    return json.dumps(match.group())[1:-1]
+
+
+def _visible(text: str) -> str:
+    """Show file text on one output line, noting any escaped character."""
+    shown = _CONTROL.sub(_escape, text)
+    return shown + _ESCAPED_NOTE if shown != text else shown
+
+
+def _visible_prefix(text: str, room: int) -> tuple[str, int]:
+    """Show the longest prefix of text whose display fits in room bytes.
+
+    Returns the display and how many of text's characters it covers.
+    """
+    size, escaped = 0, False
+    for used, char in enumerate(text):
+        shown = _CONTROL.sub(_escape, char)
+        size += len(shown.encode())
+        escaped = escaped or shown != char
+        if size + (len(_ESCAPED_NOTE) if escaped else 0) > room:
+            return _visible(text[:used]), used
+    return _visible(text), len(text)
 
 
 def _match_line(data: dict[str, Any]) -> str:
@@ -396,7 +439,7 @@ def _match_line(data: dict[str, Any]) -> str:
     note = ""
     if len(text) > MAX_MATCH_CHARS:
         text, note = text[:MAX_MATCH_CHARS], " [line truncated; read_file with start_column]"
-    return f"{name}:{data['line_number']}:{''.join(map(_visible, text))}{note}"
+    return f"{name}:{data['line_number']}:{_visible(text)}{note}"
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}

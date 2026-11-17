@@ -161,11 +161,12 @@ no write operation. Repository file names are untrusted too: grep reads `rg`'s
 JSON events rather than its text output, and a name that could pass for another
 entry, a tool note or a `path:line` prefix is shown as a JSON string (non-UTF-8
 names are also marked as unopenable), so no file can be shown under another
-file's name. Control and line-separator characters in matched text are escaped,
-so file content cannot pose as another match either. It runs in isolated Python
+file's name. Control and line-separator characters in read and matched text are
+escaped, and each line that has one is marked, so file content cannot pose as
+another line or match, nor as literal escape text. It runs in isolated Python
 mode and refuses to start if its environment carries anything beyond plain
-process variables, so a provider
-credential cannot reach model-driven tool calls; Codex then fails the review
+process variables, so a provider credential cannot reach model-driven tool
+calls; Codex then fails the review
 instead of continuing without tools. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
 [image gate](development/testing.md#codex-image-gate) checks containment,

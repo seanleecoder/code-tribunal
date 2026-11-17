@@ -87,7 +87,11 @@ def test_search_never_follows_symlinks_out(repo: Path) -> None:
 
 def test_read_file_numbers_lines_as_git_does(repo: Path) -> None:
     (repo / "ff.py").write_bytes("a\r\n\x0cb\nc\x1cd\u2028e\n".encode())
-    assert call(repo, "read_file", path="ff.py") == ("1\ta\n2\t\x0cb\n3\tc\x1cd\u2028e", False)
+    note = tools._ESCAPED_NOTE
+    assert call(repo, "read_file", path="ff.py") == (
+        f"1\ta\n2\t\\fb{note}\n3\tc\\u001cd\\u2028e{note}",
+        False,
+    )
     (repo / "empty.txt").write_bytes(b"")
     assert call(repo, "read_file", path="empty.txt") == ("", False)
     (repo / "no-eol.txt").write_bytes(b"x\n\ny")
@@ -177,9 +181,43 @@ def test_match_text_cannot_pose_as_another_match(repo: Path) -> None:
         "hit\rpkg/auth.py:12:a\x0bb\x0cc\x85d e f\tg\n", newline=""
     )
     assert call(repo, "grep", pattern="hit", path="notes.txt") == (
-        "notes.txt:1:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\tg\n",
+        "notes.txt:1:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\tg"
+        f"{tools._ESCAPED_NOTE}\n",
         False,
     )
+
+
+@needs_rg
+def test_escaped_text_is_distinct_from_literal_escape_text(repo: Path) -> None:
+    # A real CR and the two characters backslash-r look alike once escaped;
+    # only the line holding the real one is marked, in grep and read_file.
+    (repo / "esc.py").write_text('real = "a\rb"  # hit\nliteral = "a\\rb"  # hit\n', newline="")
+    note = tools._ESCAPED_NOTE
+    assert call(repo, "grep", pattern="hit", path="esc.py") == (
+        f'esc.py:1:real = "a\\rb"  # hit{note}\nesc.py:2:literal = "a\\rb"  # hit\n',
+        False,
+    )
+    assert call(repo, "read_file", path="esc.py") == (
+        f'1\treal = "a\\rb"  # hit{note}\n2\tliteral = "a\\rb"  # hit',
+        False,
+    )
+
+
+def test_read_file_resumes_by_file_columns_through_escapes(repo: Path, monkeypatch) -> None:
+    # Each control character is shown as six characters but advances one column.
+    raw = "\x01" * 40 + "END"
+    (repo / "ctl.txt").write_text(raw + "\n")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 100)
+    seen, column = "", 1
+    for _ in range(20):
+        text, is_error = call(repo, "read_file", path="ctl.txt", start_column=column)
+        assert not is_error
+        body, _, rest = text.partition("\n")
+        seen += body.removeprefix("1\t").removesuffix(tools._ESCAPED_NOTE)
+        if not rest:
+            break
+        column = int(rest.rsplit("start_column=", 1)[1].rstrip("]"))
+    assert seen == json.dumps(raw)[1:-1]
 
 
 @needs_rg
@@ -255,18 +293,19 @@ def test_output_is_bounded(repo: Path, monkeypatch) -> None:
 def test_one_long_line_stays_reachable(repo: Path, monkeypatch) -> None:
     # Git counts a CR-only file as one line; paging by column reaches its end.
     (repo / "cr.txt").write_bytes(b"x\r" * 40 + b"END\r")
-    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 30)
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 80)
     seen, column = "", 1
     for _ in range(10):
         text, is_error = call(repo, "read_file", path="cr.txt", start_column=column)
         assert not is_error
         body, _, note = text.partition("\n")
         assert body.startswith("1\t")
-        seen += body.removeprefix("1\t")
+        seen += body.removeprefix("1\t").removesuffix(tools._ESCAPED_NOTE)
         if not note:
             break
         column = int(note.rsplit("start_column=", 1)[1].rstrip("]"))
-    assert seen == "x\r" * 40 + "END"  # The line's own trailing CR is stripped.
+    # Inner CRs are shown escaped; the line's own trailing CR is stripped.
+    assert seen == "x\\r" * 40 + "END"
 
 
 def test_binary_and_non_string_paths_are_refused(repo: Path) -> None:
@@ -283,6 +322,40 @@ def test_grep_times_out_and_kills_the_search(repo: Path, monkeypatch, tmp_path: 
     monkeypatch.setattr(tools, "RG", str(slow))
     monkeypatch.setattr(tools, "GREP_TIMEOUT_SECONDS", 0.2)
     assert call(repo, "grep", pattern="x") == ("search timed out after 0.2 seconds", True)
+
+
+@needs_rg
+def test_drained_records_count_toward_the_input_budget(repo: Path, monkeypatch) -> None:
+    # Skipped remainders of oversized records are bounded too, so match-dense
+    # files end the search with partial results rather than the timeout.
+    monkeypatch.setattr(tools, "MAX_GREP_RECORD_BYTES", 4096)
+    monkeypatch.setattr(tools, "MAX_GREP_INPUT_BYTES", 65536)
+    for index in range(20):
+        (repo / f"dense{index}.js").write_text("value;" * 2000 + "\n")
+    text, is_error = call(repo, "grep", pattern="value")
+    assert not is_error
+    lines = text.splitlines()
+    assert lines[-1] == (
+        "[search stopped after reading 65536 bytes of results; narrow the path or pattern]"
+    )
+    assert 0 < len(lines) - 1 < 20
+
+
+@needs_rg
+def test_grep_signals_its_group_before_reaping_rg(repo: Path, monkeypatch) -> None:
+    # Once rg is reaped its PID, and so its group ID, can be reused; the group
+    # kill must reach rg while it is still an unreaped child.
+    signalled = []
+    killpg = os.killpg
+
+    def checked_killpg(pgid: int, sig: int) -> None:
+        state = os.waitid(os.P_PID, pgid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        signalled.append(state is not None)  # Raises ChildProcessError if reaped.
+        killpg(pgid, sig)
+
+    monkeypatch.setattr(tools.os, "killpg", checked_killpg)
+    assert call(repo, "grep", pattern="value = 1") == ("pkg/module.py:1:value = 1\n", False)
+    assert signalled == [True]
 
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:
