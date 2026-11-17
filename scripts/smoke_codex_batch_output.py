@@ -370,6 +370,9 @@ def run_case(
                     # COMPAT-012: where shell names occur in CLI-authored request text.
                     "shell_mentions": shell_mentions(r),
                     "mcp_mentions": shell_mentions(r, r"mcp__repo__\w+|read_file"),
+                    # CLI-authored code-mode guidance: how nested tools are disclosed.
+                    "exec_description": exec_description(r),
+                    "instruction_chars": len(str(r.get("instructions") or "")),
                 }
                 for r in stub.requests
             ]
@@ -508,7 +511,9 @@ NO_SHELL_PATCH = (
 )
 NO_SHELL_PROBE = (
     "const out = {shell: typeof tools.exec_command, stdin: typeof tools.write_stdin,"
-    " apply_patch: typeof tools.apply_patch};"
+    " apply_patch: typeof tools.apply_patch, keys: Object.keys(tools),"
+    " all_tools: typeof ALL_TOOLS === 'undefined' ? null"
+    " : JSON.stringify(ALL_TOOLS).slice(0, 4000)};"
     "if (out.shell === 'function') { try { out.shell_result ="
     " await tools.exec_command({cmd: 'id'}); } catch (e) { out.shell_result = String(e); } }"
     "if (out.apply_patch === 'function') { try { out.patch_result ="
@@ -534,6 +539,19 @@ def shell_mentions(request: dict, pattern: str = r"exec_command|write_stdin") ->
     return [
         text[max(0, m.start() - 120) : m.end() + 120] for m in list(re.finditer(pattern, text))[:3]
     ]
+
+
+def exec_description(request: dict) -> str:
+    tools = list(request.get("tools", []))
+    for item in request.get("input", []):
+        if isinstance(item, dict) and item.get("type") == "additional_tools":
+            tools.extend(item.get("tools", []))
+    for tool in tools:
+        nested = tool.get("tools", []) if tool.get("type") == "namespace" else [tool]
+        for candidate in nested:
+            if candidate.get("name") == "exec":
+                return str(candidate.get("description", ""))[:20000]
+    return ""
 
 
 MCP_ITEM_UNSUPPORTED = "unsupported Codex item type: 'mcp_tool_call'"
