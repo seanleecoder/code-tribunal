@@ -227,8 +227,11 @@ prose, so that check now records context and relies on the runtime probe. Each
 tool-using case produced the codec rejection above. The
 [second run](https://github.com/seanleecoder/code-tribunal/actions/runs/44070156097)
 passed both critiques but found no MCP tool description in the request's tool
-lists; the check now searches the whole first request and records where tool
-names occur, because a real model can only call tools it is told about.
+lists. A fourth run showed why: in code mode Codex defers MCP tools. Its exec
+description tells the model to find deferred tools in the `ALL_TOOLS` global,
+which listed all three repository tools with typed declarations. Review cases
+now require that guidance and the runtime listing; critique must still offer no
+repository tool.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review

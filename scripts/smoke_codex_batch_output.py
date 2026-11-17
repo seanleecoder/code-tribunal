@@ -513,7 +513,7 @@ NO_SHELL_PROBE = (
     "const out = {shell: typeof tools.exec_command, stdin: typeof tools.write_stdin,"
     " apply_patch: typeof tools.apply_patch, keys: Object.keys(tools),"
     " all_tools: typeof ALL_TOOLS === 'undefined' ? null"
-    " : JSON.stringify(ALL_TOOLS).slice(0, 4000)};"
+    " : JSON.stringify(ALL_TOOLS).slice(0, 16000)};"
     "if (out.shell === 'function') { try { out.shell_result ="
     " await tools.exec_command({cmd: 'id'}); } catch (e) { out.shell_result = String(e); } }"
     "if (out.apply_patch === 'function') { try { out.patch_result ="
@@ -594,8 +594,12 @@ def assert_no_shell(
             raise AssertionError("no-shell final answer differs from the scripted batch")
         if any(item.get("error") is not None for item in mcp_items):
             raise AssertionError("an MCP call failed operationally")
-    if (stage == "review") != ("read_file" in offered):
-        raise AssertionError("repository MCP tools were not offered to review only")
+    # Codex defers MCP tools in code mode: the exec description says to find
+    # them in ALL_TOOLS, and the containment probe proves they are listed there.
+    if stage == "review" and "ALL_TOOLS" not in exec_description(stub.requests[0]):
+        raise AssertionError("code mode did not describe deferred tool discovery")
+    if stage != "review" and "read_file" in offered:
+        raise AssertionError("tool-free critique was offered repository tools")
     if "command_execution" in capture["stdout"]:
         raise AssertionError("no-shell run executed a command")
     outputs = "\n".join(tool_outputs(r) for r in stub.requests[1:])
@@ -612,6 +616,9 @@ def assert_no_shell(
             raise AssertionError("code mode still exposed a shell tool")
         if '"apply_patch":"function"' in outputs and "patch rejected" not in outputs:
             raise AssertionError("apply_patch was not rejected by the read-only policy")
+        listed = set(re.findall(r'name\\*":\\*"(mcp__repo__\w+)', outputs))
+        if listed != {"mcp__repo__read_file", "mcp__repo__list_dir", "mcp__repo__grep"}:
+            raise AssertionError(f"ALL_TOOLS did not list the repository tools: {listed}")
     if stage == "review":
         names = json.loads((work / "mcp-env.json").read_text())
         leaked = [n for n in names if n == "OPENROUTER_API_KEY" or n.startswith("AI_REVIEW_")]

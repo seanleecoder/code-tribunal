@@ -131,8 +131,13 @@ def test_mcp_call_discovers_the_namespaced_tool_and_quotes_arguments() -> None:
     assert "endsWith('__' + want)" in code and "CODEX_NO_MCP_TOOL" in code
 
 
-def stub(offered: list[str], outputs: list[str]) -> SimpleNamespace:
-    first = {"tools": [{"type": "custom", "name": name} for name in offered], "input": []}
+DISCOVERY = "Deferred tools are listed in `ALL_TOOLS`."
+
+
+def stub(offered: list[str], outputs: list[str], exec_text: str = DISCOVERY) -> SimpleNamespace:
+    tools = [{"type": "custom", "name": name} for name in offered]
+    tools.append({"type": "custom", "name": "exec", "description": exec_text})
+    first = {"tools": tools, "input": []}
     later = [{"input": [{"type": "custom_tool_call_output", "output": o}]} for o in outputs]
     return SimpleNamespace(requests=[first, *later])
 
@@ -142,7 +147,9 @@ def good_outputs(protected: dict[Path, bytes]) -> list[str]:
         'mcp__repo__read_file {"isError":true,"text":"outside the repository snapshot"}',
         'mcp__repo__read_file {"isError":true,"text":"must be repository-relative"}',
         'CODEX_NO_SHELL_PROBE {"shell":"undefined","stdin":"undefined","apply_patch":"function",'
-        '"patch_result":"patch rejected: writing is blocked by read-only sandbox"}',
+        '"patch_result":"patch rejected: writing is blocked by read-only sandbox",'
+        '"all_tools":"[{\\"name\\":\\"mcp__repo__grep\\"},{\\"name\\":\\"mcp__repo__list_dir\\"},'
+        '{\\"name\\":\\"mcp__repo__read_file\\"}]"}',
         "mcp__repo__read_file snapshot-only-value",
     ]
 
@@ -174,6 +181,8 @@ MCP_OUTCOME = {
         "other-schema-error",
         "answer-differs",
         "operational-mcp-error",
+        "no-discovery",
+        "unlisted",
     ],
 )
 def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
@@ -182,7 +191,7 @@ def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
     secret = tmp_path / "protected.txt"
     secret.write_text("protected-value")
     protected = {secret: secret.read_bytes()}
-    offered, outputs = ["exec", "mcp__repo__read_file"], good_outputs(protected)
+    offered, outputs = ["mcp__repo__read_file"], good_outputs(protected)
     mcp = {"id": "i0", "type": "mcp_tool_call", "status": "completed", "error": None}
     answer = {"id": "i1", "type": "agent_message", "text": json.dumps(BATCH)}
     names, stage, outcome = ["HOME", "PATH"], "review", dict(MCP_OUTCOME)
@@ -210,12 +219,15 @@ def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
         answer["text"] = json.dumps({"findings": [{"title": "invented"}]})
     elif damage == "operational-mcp-error":
         mcp["error"] = {"message": "server exited"}
+    elif damage == "unlisted":
+        outputs[2] = outputs[2].replace("mcp__repo__grep", "other_tool")
+    exec_text = "" if damage == "no-discovery" else DISCOVERY
     (tmp_path / "mcp-env.json").write_text(json.dumps(names))
     capture = {"stdout": "\n".join([event(mcp), event(answer)])}
 
     def check() -> None:
         smoke.assert_no_shell(
-            stub(offered, outputs),
+            stub(offered, outputs, exec_text),
             capture,
             tmp_path,
             stage=stage,
