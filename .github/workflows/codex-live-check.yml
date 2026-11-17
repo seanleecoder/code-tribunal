@@ -1,0 +1,51 @@
+name: Codex Live Tool Check
+
+# COMPAT-013: temporary pre-merge check for PR #304. Labelling a same-repository
+# PR with `codex-live-check` builds that PR's images and runs one paid
+# real-model Codex review to prove the model discovers and calls its repository
+# tools. The image-publishing workflow stays free of provider secrets. Delete
+# this file with COMPAT-013 before PR #304 merges.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  live-check:
+    name: Live-check Codex repository tools
+    if: >-
+      github.event.label.name == 'codex-live-check' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASE_TAG: code-tribunal-live/ai-review-base:${{ github.sha }}
+      REVIEWER_TAG: code-tribunal-live/ai-review-reviewer:${{ github.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build base and reviewer images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 --file ai-review/images/base.Dockerfile \
+            --tag "$BASE_TAG" .
+          docker build --platform linux/amd64 --file ai-review/images/reviewer.Dockerfile \
+            --tag "$REVIEWER_TAG" --build-arg "AI_REVIEW_BASE_IMAGE=$BASE_TAG" \
+            --build-arg "CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code" \
+            --build-arg "CODEX_NPM_PACKAGE=@openai/codex" \
+            --build-arg "OPENCODE_NPM_PACKAGE=@opencode/cli" .
+
+      - name: Run the scripted Codex gate first
+        shell: bash
+        run: scripts/smoke_codex_batch_output.sh "$REVIEWER_TAG"
+
+      - name: Live-check Codex repository tools with a real model
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python3 scripts/live_codex_tool_check.py "$REVIEWER_TAG"
