@@ -174,10 +174,22 @@ def host(image: str) -> int:
         )
     finally:
         subprocess.run(["docker", "rm", "--force", name], capture_output=True, check=False)
-    # Only the fixed summary line leaves the container's output.
+    # Only the fixed summary line leaves the container's stdout. Without one,
+    # show this script's own traceback: runner and CLI output stay captured
+    # inside the container, and the key value is redacted regardless.
     lines = [line for line in result.stdout.splitlines() if line.startswith("CODEX_LIVE_SUMMARY ")]
-    print(lines[-1] if lines else 'CODEX_LIVE_SUMMARY {"passed": false, "error": "no summary"}')
-    return result.returncode if lines else 1
+    if lines:
+        print(lines[-1])
+        return result.returncode
+    print(
+        f'CODEX_LIVE_SUMMARY {{"passed": false, "error": "no summary", "exit": {result.returncode}}}'
+    )
+    print(redacted_tail(result.stderr, os.environ["OPENROUTER_API_KEY"]), file=sys.stderr)
+    return 1
+
+
+def redacted_tail(text: str, secret: str, *, limit: int = 3000) -> str:
+    return text.replace(secret, "[REDACTED]")[-limit:] if secret else text[-limit:]
 
 
 def main() -> int:

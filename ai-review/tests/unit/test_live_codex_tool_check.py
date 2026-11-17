@@ -95,3 +95,12 @@ def test_live_workflow_is_label_gated_and_keeps_the_key_in_one_step() -> None:
     assert "OPENROUTER_API_KEY" not in json.dumps(job.get("env", {}))
     publish = (ROOT / ".github/workflows/publish-ai-review-images.yml").read_text()
     assert "live_codex_tool_check" not in publish
+
+
+def test_failure_tail_redacts_the_key() -> None:
+    tail = live.redacted_tail("Traceback ... sk-or-secret-value ... KeyError", "sk-or-secret-value")
+    assert "sk-or-secret-value" not in tail and "[REDACTED]" in tail
+    assert (
+        live.redacted_tail("x" * 5000, "k").startswith("x")
+        and len(live.redacted_tail("x" * 5000, "k")) == 3000
+    )
