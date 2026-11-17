@@ -181,9 +181,8 @@ def host(image: str) -> int:
     if lines:
         print(lines[-1])
         return result.returncode
-    print(
-        f'CODEX_LIVE_SUMMARY {{"passed": false, "error": "no summary", "exit": {result.returncode}}}'
-    )
+    failure = {"passed": False, "error": "no summary", "exit": result.returncode}
+    print("CODEX_LIVE_SUMMARY " + json.dumps(failure))
     print(redacted_tail(result.stderr, os.environ["OPENROUTER_API_KEY"]), file=sys.stderr)
     return 1
 
