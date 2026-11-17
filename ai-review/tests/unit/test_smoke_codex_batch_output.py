@@ -237,8 +237,9 @@ def test_full_suite_retains_all_previous_cases_and_adds_read_only(
 
 
 @pytest.mark.parametrize("damage", ["none", "write", "delete"])
+@pytest.mark.parametrize("trace", [False, True])
 def test_snapshot_observation_precedes_real_runner_cleanup(
-    tmp_path: Path, monkeypatch, damage: str
+    tmp_path: Path, monkeypatch, damage: str, trace: bool
 ) -> None:
     import shutil
     import sys
@@ -252,9 +253,25 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
     workspace = tmp_path / "workspace.json"
     capture = tmp_path / "capture.json"
     monkeypatch.setattr(
-        sys, "argv", ["runner", "review", "http://127.0.0.1", str(capture), "", str(workspace)]
+        sys,
+        "argv",
+        [
+            "runner",
+            "review",
+            "http://127.0.0.1",
+            str(capture),
+            "",
+            str(workspace),
+            str(tmp_path / "trace") if trace else "",
+        ],
     )
-    monkeypatch.setattr(runner, "prepare_shell_adapter", lambda *_: ([], root))
+    prepared_env = {}
+
+    def prepare(_definition, _stage, env):
+        prepared_env.update(env)
+        return [], root
+
+    monkeypatch.setattr(runner, "prepare_shell_adapter", prepare)
 
     def execute(*_args, **_kwargs):
         if damage == "write":
@@ -278,3 +295,57 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
     observed = json.loads(workspace.read_text())["files_after_cli"]
     assert (observed["example.py"] == b"example = 1\n".hex()) == (damage == "none")
     assert observed["sentinel.txt"] == b"secret-sentinel".hex()
+    assert ("CODEX_ROLLOUT_TRACE_ROOT" in prepared_env) == trace
+
+
+@pytest.mark.parametrize(
+    "syscalls_complete,trace_complete", [(True, True), (False, True), (True, False), (False, False)]
+)
+def test_diagnostic_destroys_raw_trace_and_requires_complete_setup(
+    tmp_path: Path, monkeypatch, syscalls_complete: bool, trace_complete: bool
+) -> None:
+    import sys
+    from tempfile import TemporaryDirectory
+
+    private = tmp_path / "container-private"
+    private.mkdir()
+    evidence = tmp_path / "uploaded-evidence"
+    roots = []
+
+    def private_directory(*_args, **options):
+        assert options["dir"] == "/tmp"
+        return TemporaryDirectory(dir=private)
+
+    def run_case(*_args, rollout_trace, **_options):
+        assert rollout_trace.is_relative_to(private)
+        assert not rollout_trace.is_relative_to(evidence)
+        (rollout_trace / "sensitive-raw-trace").write_text("private-argument-and-result")
+        roots.append(rollout_trace)
+
+    monkeypatch.setattr(sys, "argv", ["probe", "--diagnostic-read", "--scratch", str(evidence)])
+    monkeypatch.setattr(smoke, "TemporaryDirectory", private_directory)
+    monkeypatch.setattr(smoke, "run_case", run_case)
+    monkeypatch.setitem(
+        sys.modules, "diagnose_codex_sandbox", SimpleNamespace(runtime_context=lambda: {})
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "probe_codex_namespaces",
+        SimpleNamespace(
+            collect_probes=lambda: {"complete": syscalls_complete},
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "probe_codex_trace",
+        SimpleNamespace(
+            summarize_trace=lambda _root: {"complete": trace_complete},
+        ),
+    )
+    assert smoke.main() == (0 if syscalls_complete and trace_complete else 1)
+    assert roots and all(not root.exists() for root in roots)
+    assert not any(
+        "private-argument-and-result" in path.read_text()
+        for path in evidence.rglob("*")
+        if path.is_file()
+    )

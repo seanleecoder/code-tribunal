@@ -35,6 +35,9 @@ from ai_review import adapter_runner as runner
 original_prepare = runner.prepare_shell_adapter
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = sys.argv[2]
+    # COMPAT-012: local diagnostic trace, outside the uploaded evidence mount.
+    if sys.argv[6]:
+        env["CODEX_ROLLOUT_TRACE_ROOT"] = sys.argv[6]
     arguments, root = original_prepare(definition, stage, env)
     Path(sys.argv[5]).write_text(json.dumps({"root": str(root)}))
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
@@ -260,6 +263,7 @@ def run_case(
     cli_path: str | None = None,
     stream_fault: str = "",
     protected_runtime: Path | None = None,
+    rollout_trace: Path | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -309,6 +313,7 @@ def run_case(
                 str(work / "capture.json"),
                 stream_fault,
                 str(work / "workspace.json"),
+                str(rollout_trace) if rollout_trace is not None else "",
             ],
             env={
                 "PATH": cli_path or os.environ["PATH"],
@@ -572,28 +577,46 @@ def main() -> int:
     sys.path.insert(0, str(args.install_root / "src"))
     if args.diagnostic_read:
         from diagnose_codex_sandbox import runtime_context  # noqa: PLC0415
+        from probe_codex_namespaces import collect_probes  # noqa: PLC0415
+        from probe_codex_trace import summarize_trace  # noqa: PLC0415
 
         args.scratch.mkdir(parents=True, exist_ok=True)
         context = runtime_context()
         (args.scratch / "runtime.json").write_text(json.dumps(context, indent=2) + "\n")
-        return run_cases(
-            [
-                (
-                    "read",
-                    partial(
-                        run_case,
-                        args.install_root,
-                        args.scratch,
+        syscalls = collect_probes()
+        (args.scratch / "syscalls.json").write_text(json.dumps(syscalls, indent=2) + "\n")
+        # Raw traces may contain arguments/results. Keep them in the container's
+        # /tmp, never /smoke, and destroy them before writing fixed aggregates.
+        with TemporaryDirectory(prefix="codex-diagnostic-trace-", dir="/tmp") as directory:
+            trace_root = Path(directory)
+            status = run_cases(
+                [
+                    (
                         "read",
-                        REQUIRED_MODEL,
-                        steps=[command({"cmd": "cat sentinel.txt"})],
-                        sentinel=secrets.token_hex(24),
-                    ),
-                )
-            ],
-            args.scratch,
-            budget_seconds=150,
-        )
+                        partial(
+                            run_case,
+                            args.install_root,
+                            args.scratch,
+                            "read",
+                            REQUIRED_MODEL,
+                            steps=[command({"cmd": "cat sentinel.txt"})],
+                            sentinel=secrets.token_hex(24),
+                            rollout_trace=trace_root,
+                        ),
+                    )
+                ],
+                args.scratch,
+                budget_seconds=150,
+            )
+            trace_summary = summarize_trace(trace_root)
+        (args.scratch / "trace-summary.json").write_text(json.dumps(trace_summary, indent=2) + "\n")
+        setup = {
+            "syscall_collection_complete": syscalls["complete"],
+            "trace_collection_complete": trace_summary["complete"],
+        }
+        (args.scratch / "diagnostic-setup.json").write_text(json.dumps(setup, indent=2) + "\n")
+        print("CODEX_DIAGNOSTIC_SETUP " + json.dumps(setup), flush=True)
+        return 0 if status == 0 and all(setup.values()) else 1
     from ai_review.config import load_config  # noqa: PLC0415
 
     configured = load_config(args.install_root / "config/review.yaml").reviewers["codex"].model

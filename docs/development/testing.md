@@ -80,6 +80,29 @@ Further work needs another scoped experiment or platform-policy decision before
 any additional privilege change. Detailed evidence remains in the separately
 approved diagnostic artifact; it is not copied into repository documentation.
 
+The follow-up stays within those same four launch variants and existing
+privileges. Each diagnostic container also runs fresh child processes for
+user-only, user+mount, user+network and combined namespace creation. They record
+the syscall/errno for namespace creation, self UID/GID mapping, mount propagation
+and an IPv4 loopback address request. Namespace identity must change before any
+mapping, mount or interface operation; each child has a five-second bound.
+These are isolated operation probes, not a replacement for bwrap or a policy
+enforcement test. A failed syscall is an observation; a failed child/transport
+is explicitly incomplete diagnostic setup. Unexplained denials stop the scope
+without further privilege relaxation.
+
+The generated-repository diagnostic read also enables the pinned CLI's internal
+`CODEX_ROLLOUT_TRACE_ROOT` instrumentation. The source defines it in
+[`ThreadTraceContext::start_root`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/rollout-trace/src/thread.rs)
+and records nested results in
+[tool dispatch tracing](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/core/src/tools/tool_dispatch_trace.rs).
+Raw traces stay in the container's private `/tmp` and are deleted before exit;
+they are never copied into the uploaded evidence mount. Only fixed status counts,
+completeness flags and the presence of a sandbox diagnostic are exported. The
+experiment tests whether the private trace retains a failure hidden from CLI
+events; it does not add a production admission contract or change environment
+scrubbing. Missing or malformed observations make diagnostic setup incomplete.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their

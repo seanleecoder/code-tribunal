@@ -199,6 +199,8 @@ def main() -> int:
     if architecture.get("exit") != 0 or architecture["stdout"].strip() != "linux/amd64":
         raise RuntimeError("diagnostic requires the Linux/amd64 reviewer image")
     driver = Path(__file__).with_name("smoke_codex_batch_output.py").resolve()
+    namespace_probe = Path(__file__).with_name("probe_codex_namespaces.py").resolve()
+    trace_probe = Path(__file__).with_name("probe_codex_trace.py").resolve()
     results = {}
     for label, options in VARIANTS.items():
         work = evidence / label
@@ -222,6 +224,10 @@ def main() -> int:
             "--mount",
             f"type=bind,src={Path(__file__).resolve()},"
             "dst=/probe/diagnose_codex_sandbox.py,readonly",
+            "--mount",
+            f"type=bind,src={namespace_probe},dst=/probe/{namespace_probe.name},readonly",
+            "--mount",
+            f"type=bind,src={trace_probe},dst=/probe/{trace_probe.name},readonly",
             "--env",
             "HOME=/smoke/home",
             "--env",
