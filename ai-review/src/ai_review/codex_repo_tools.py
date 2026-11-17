@@ -35,7 +35,9 @@ DEFAULT_MAX_LINES = 2000
 MAX_LIST_ENTRIES = 1000
 MAX_PATTERN_CHARS = 512
 MAX_MATCH_CHARS = 500
-# rg --json records are larger than the text they render; cap what is parsed.
+# rg --json ignores --max-columns and lists every submatch, so one long line can
+# make a record far larger than the text it renders. Records past this size are
+# shown from their head instead of being parsed whole.
 MAX_GREP_RECORD_BYTES = MAX_FILE_BYTES
 GREP_TIMEOUT_SECONDS = 20
 RG = "/usr/local/bin/rg"
@@ -129,7 +131,8 @@ _UNADDRESSABLE = " [non-UTF-8 name; cannot be opened by path]"
 
 
 def _plain(name: str) -> bool:
-    return not any(
+    # A leading "[" could pass for one of the tools' own bracketed notes.
+    return not name.startswith("[") and not any(
         char in ':"\\' or unicodedata.category(char)[0] == "C" or char in "\u2028\u2029"
         for char in name
     )
@@ -145,12 +148,15 @@ def _display(name: str) -> str:
     quote) and which the model decodes back to an openable path. Non-UTF-8
     bytes arrive as lone surrogates, which Codex's JSON parser rejects; such a
     name is shown backslash-escaped as a JSON string followed by a marker,
-    which no JSON string alone ends with.
+    which no JSON string alone ends with. Literal backslashes are doubled
+    first, so each invalid byte's \\xNN escape stays distinct from the same
+    four characters in the name.
     """
+    raw = os.fsencode(name)
     try:
-        os.fsencode(name).decode("utf-8")
+        raw.decode("utf-8")
     except UnicodeDecodeError:
-        escaped = os.fsencode(name).decode("utf-8", errors="backslashreplace")
+        escaped = raw.replace(b"\\", b"\\\\").decode("utf-8", errors="backslashreplace")
         return json.dumps(escaped) + _UNADDRESSABLE
     return name if _plain(name) else json.dumps(name)
 
@@ -242,14 +248,6 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
     return _bounded("\n".join(names))
 
 
-def _read_limited(stream: IO[bytes], limit: int) -> bytes:
-    chunks, size = [], 0
-    while size <= limit and (chunk := stream.read(65536)):
-        chunks.append(chunk)
-        size += len(chunk)
-    return b"".join(chunks)
-
-
 def grep(root: Path, arguments: dict[str, Any]) -> str:
     pattern = arguments.get("pattern")
     if not isinstance(pattern, str) or not pattern or len(pattern) > MAX_PATTERN_CHARS:
@@ -299,9 +297,15 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
 
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
+    matches: list[str] = []
+    truncated = False
     try:
         assert process.stdout is not None
-        data = _read_limited(process.stdout, MAX_GREP_RECORD_BYTES)
+        truncated = _read_matches(process.stdout, matches)
+        if not truncated:
+            process.wait()  # rg closed its output; let it report its status.
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ToolError("search output could not be read") from exc
     finally:
         timer.cancel()
         kill()  # Stop a search still running after the output cap.
@@ -310,22 +314,65 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
             process.stdout.close()
     if timed_out.is_set():
         raise ToolError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
-    # rg exits 1 for no match; 2 can accompany partial results (unreadable files).
-    if not data and process.returncode not in (0, 1):
-        raise ToolError("search failed; check the pattern")
-    records = data.split(b"\n")
-    truncated = len(data) > MAX_GREP_RECORD_BYTES or records[-1] != b""
-    matches = []
-    try:
-        for record in records[:-1]:  # The last element is empty or a cut record.
-            event = json.loads(record)
-            if event.get("type") == "match":
-                matches.append(_match_line(event["data"]))
-    except (ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise ToolError("search output could not be read") from exc
+    # rg exits 1 for no match and 2 on an error, such as an invalid pattern, a
+    # missing path or an unreadable file; an error can accompany partial results.
+    # Its --json summary record makes stdout nonempty either way, so decide from
+    # the matches rather than from the presence of output.
+    if not truncated and process.returncode not in (0, 1):
+        if not matches:
+            raise ToolError("search failed; check the pattern and path")
+        matches.append("[search incomplete: some files could not be searched]")
     if truncated:
-        matches.append(f"[search output truncated at {MAX_GREP_RECORD_BYTES} bytes]")
+        matches.append(f"[search output truncated at {MAX_OUTPUT_BYTES} bytes]")
     return _bounded("".join(f"{line}\n" for line in matches))
+
+
+def _read_matches(stream: IO[bytes], matches: list[str]) -> bool:
+    """Render rg --json match records until EOF; return True if output was cut.
+
+    Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
+    shown from its head and skipped rather than consuming the whole search.
+    """
+    size, path = 0, None
+    while record := stream.readline(MAX_GREP_RECORD_BYTES):
+        if record.endswith(b"\n"):
+            event = json.loads(record)
+            if event.get("type") == "begin":
+                path = event["data"]["path"]
+            line = _match_line(event["data"]) if event.get("type") == "match" else None
+        else:
+            line = _oversized_match_line(record, path)
+            while (rest := stream.readline(65536)) and not rest.endswith(b"\n"):
+                pass  # Discard the remainder of the oversized record.
+        if line is None:
+            continue
+        matches.append(line)
+        size += len(line.encode()) + 1
+        if size > MAX_OUTPUT_BYTES:
+            return True
+    return False
+
+
+_SUBMATCHES_KEY = b',"submatches":'
+
+
+def _oversized_match_line(head: bytes, path: dict[str, str] | None) -> str | None:
+    """Show a match record too large to parse whole, from its leading fields.
+
+    rg writes a match's path, line text and line number before its submatch
+    list, which is what grows without bound. A quote inside any JSON string is
+    escaped, so the first occurrence of the key is the real one. If even the
+    line text overflows the head, name the file from its begin record.
+    """
+    if not head.startswith(b'{"type":"match"'):
+        return None
+    cut = head.find(_SUBMATCHES_KEY)
+    if cut >= 0:
+        return _match_line(json.loads(head[:cut] + b"}}")["data"])
+    if path is None:
+        raise ValueError("oversized rg match record before any begin record")
+    name = _display(os.fsdecode(_rg_data(path)))
+    return f"{name}:?: [matching line too large to show; read_file the file]"
 
 
 def _rg_data(value: dict[str, str]) -> bytes:
@@ -334,13 +381,22 @@ def _rg_data(value: dict[str, str]) -> bytes:
     return base64.b64decode(value["bytes"])
 
 
+def _visible(char: str) -> str:
+    # Escape control and line-separator characters, which could otherwise end
+    # the rendered line early and make file content pose as another match.
+    if char != "\t" and (unicodedata.category(char) in {"Cc", "Zl", "Zp"}):
+        return json.dumps(char)[1:-1]
+    return char
+
+
 def _match_line(data: dict[str, Any]) -> str:
     name = _display(os.fsdecode(_rg_data(data["path"])))
     text = _rg_data(data["lines"]).decode("utf-8", errors="replace").removesuffix("\n")
     text = text.removesuffix("\r")
+    note = ""
     if len(text) > MAX_MATCH_CHARS:
-        text = text[:MAX_MATCH_CHARS] + " [line truncated; read_file with start_column]"
-    return f"{name}:{data['line_number']}:{text}"
+        text, note = text[:MAX_MATCH_CHARS], " [line truncated; read_file with start_column]"
+    return f"{name}:{data['line_number']}:{''.join(map(_visible, text))}{note}"
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}

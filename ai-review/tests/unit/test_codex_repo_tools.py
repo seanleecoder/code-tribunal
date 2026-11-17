@@ -154,6 +154,77 @@ def test_grep_shows_matches_only_and_bounds_long_lines(repo: Path) -> None:
     assert len(lines) == 2
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+def test_non_utf8_names_with_backslashes_stay_distinct(repo: Path) -> None:
+    # Without doubling literal backslashes, both would show as ev\xff\xfe.py.
+    for raw in (b"ev\xff\\xfe.py", b"ev\\xff\xfe.py"):
+        Path(os.fsdecode(os.fsencode(repo) + b"/" + raw)).write_text("x\n")
+    listing = call(repo, "list_dir")[0].splitlines()
+    assert '"ev\\\\xff\\\\\\\\xfe.py"' + tools._UNADDRESSABLE in listing
+    assert '"ev\\\\\\\\xff\\\\xfe.py"' + tools._UNADDRESSABLE in listing
+
+
+@needs_rg
+def test_names_cannot_pose_as_tool_notes(repo: Path) -> None:
+    (repo / "[truncated at 1000 entries]").write_text("hit\n")
+    assert '"[truncated at 1000 entries]"' in call(repo, "list_dir")[0].splitlines()
+    assert call(repo, "grep", pattern="hit") == ('"[truncated at 1000 entries]":1:hit\n', False)
+
+
+@needs_rg
+def test_match_text_cannot_pose_as_another_match(repo: Path) -> None:
+    (repo / "notes.txt").write_text(
+        "hit\rpkg/auth.py:12:a\x0bb\x0cc\x85d e f\tg\n", newline=""
+    )
+    assert call(repo, "grep", pattern="hit", path="notes.txt") == (
+        "notes.txt:1:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\tg\n",
+        False,
+    )
+
+
+@needs_rg
+def test_one_match_dense_line_does_not_hide_other_results(repo: Path, monkeypatch) -> None:
+    # rg --json lists every submatch, so this one line is a record far larger
+    # than its text; it must not swallow the rest of the search.
+    monkeypatch.setattr(tools, "MAX_GREP_RECORD_BYTES", 16384)
+    (repo / "min.js").write_text("value;" * 2000 + "\n")
+    text, is_error = call(repo, "grep", pattern="value")
+    assert not is_error
+    lines = sorted(text.splitlines())
+    assert lines[0] == "min.js:1:" + ("value;" * 2000)[: tools.MAX_MATCH_CHARS] + (
+        " [line truncated; read_file with start_column]"
+    )
+    assert lines[1:] == ["pkg/module.py:1:value = 1", "sentinel.txt:1:snapshot-only-value"]
+    # A line whose text alone overflows the record budget is still reported.
+    monkeypatch.setattr(tools, "MAX_GREP_RECORD_BYTES", 256)
+    text, is_error = call(repo, "grep", pattern="value", path="min.js")
+    assert (text, is_error) == (
+        "min.js:?: [matching line too large to show; read_file the file]\n",
+        False,
+    )
+
+
+@needs_rg
+def test_failed_search_is_an_error_and_partial_failure_is_reported(repo: Path) -> None:
+    assert call(repo, "grep", pattern="value", path="missing") == (
+        "search failed; check the pattern and path",
+        True,
+    )
+    if os.geteuid() == 0:
+        pytest.skip("root can read files without permission")
+    locked = repo / "locked.txt"
+    locked.write_text("value\n")
+    locked.chmod(0)
+    try:
+        text, is_error = call(repo, "grep", pattern="value = 1")
+    finally:
+        locked.chmod(0o644)
+    assert (text, is_error) == (
+        "pkg/module.py:1:value = 1\n[search incomplete: some files could not be searched]\n",
+        False,
+    )
+
+
 @needs_rg
 def test_grep_ignores_repository_ignore_files(repo: Path) -> None:
     for name in (".ignore", ".rgignore", ".gitignore"):
