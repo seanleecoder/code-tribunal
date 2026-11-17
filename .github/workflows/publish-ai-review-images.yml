@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      # COMPAT-012: explicit, ephemeral-host feasibility experiment only.
+      codex_managed_policy_experiment:
+        description: Load a unique temporary Codex AppArmor profile and test custom seccomp
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -212,6 +218,19 @@ jobs:
         timeout-minutes: 2
         shell: bash
         run: python3 scripts/codex_runner_profiles.py "$RUNNER_TEMP/codex-sandbox/policies"
+
+      # COMPAT-012: never automatic on PRs/main; never waives the failed gate.
+      - name: Test managed Codex runner policy on ephemeral host
+        if: >-
+          failure() && steps.codex-gate.outcome == 'failure' &&
+          steps.codex-runner-policy.outcome == 'success' &&
+          github.event_name == 'workflow_dispatch' &&
+          github.ref != 'refs/heads/main' && inputs.codex_managed_policy_experiment
+        timeout-minutes: 35
+        shell: bash
+        env:
+          CODEX_MANAGED_PROFILE_EXPERIMENT: "1"
+        run: python3 scripts/experiment_codex_profiles.py "$AI_REVIEW_REVIEWER_TAG" "$RUNNER_TEMP/codex-sandbox/policies" "$RUNNER_TEMP/codex-sandbox/managed"
 
       - name: Upload Codex sandbox diagnostic evidence
         if: always() && steps.codex-sandbox.outcome != '' && steps.codex-sandbox.outcome != 'skipped'

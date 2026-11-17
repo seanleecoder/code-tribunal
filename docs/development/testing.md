@@ -121,6 +121,25 @@ policy for shared runners. The initial workflow step only compiles the profile:
 does not load kernel policy or use privileged caches. Local Termux checks lack
 the parser and Docker; report Linux compilation separately.
 
+The temporary `codex_managed_policy_experiment` workflow-dispatch input defaults
+to false. It runs only on a non-main branch and an ephemeral GitHub-hosted Linux
+VM, after compilation succeeds. The controller checks the daemon is local and
+regenerates all policy files before loading a uniquely named AppArmor profile
+with add-only semantics. It tests the pinned baseline, each candidate profile
+separately, and both together on one resolved image. A combined successful read
+is followed by all 14 smoke cases with exactly the same launch options. Each
+read has a 180-second bound; the full suite has a 900-second bound, inside a
+35-minute workflow step. No capabilities or host sysctl changes are added.
+
+Containers carry a unique ownership label and are removed before unloading the
+new profile. Unconfirmed container cleanup leaves the profile loaded until VM
+disposal, because unloading could unconfine a live container. Existing profiles
+are never replaced. Profile removal and unchanged observed host sysctls are
+required for success. Evidence uses the same approved seven-day artifact, with
+fixed classifications in the console. This explicit kernel-policy experiment
+does not change production launches or waive the original failed image gate.
+Delete its input and controller with COMPAT-012 before a supported policy ships.
+
 The diagnostic also tests the public `codex sandbox` command as a potential
 fail-fast check. Its read-only setting comes from the trusted registry. It uses
 generated files and no provider/platform credentials, verifies a random read,

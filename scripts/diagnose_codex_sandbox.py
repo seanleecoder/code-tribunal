@@ -161,7 +161,12 @@ def classify(work: Path, launch: dict) -> dict:
 
 
 def run_container(
-    image_id: str, work: Path, options: list[str], *, full_suite: bool = False
+    image_id: str,
+    work: Path,
+    options: list[str],
+    *,
+    full_suite: bool = False,
+    owner: str | None = None,
 ) -> dict:
     """One bounded launch shared by the differential and managed-policy probes."""
     (work / "home").mkdir(parents=True)
@@ -186,6 +191,7 @@ def run_container(
         "linux/amd64",
         "--network",
         "none",
+        *(["--label", f"code-tribunal.codex-experiment={owner}"] if owner else []),
         *options,
         "--mount",
         f"type=bind,src={work},dst=/smoke",
