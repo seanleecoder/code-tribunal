@@ -301,8 +301,13 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
 @pytest.mark.parametrize(
     "syscalls_complete,trace_complete", [(True, True), (False, True), (True, False), (False, False)]
 )
+@pytest.mark.parametrize("admission_passed", [False, True])
 def test_diagnostic_destroys_raw_trace_and_requires_complete_setup(
-    tmp_path: Path, monkeypatch, syscalls_complete: bool, trace_complete: bool
+    tmp_path: Path,
+    monkeypatch,
+    syscalls_complete: bool,
+    trace_complete: bool,
+    admission_passed: bool,
 ) -> None:
     import sys
     from tempfile import TemporaryDirectory
@@ -342,7 +347,14 @@ def test_diagnostic_destroys_raw_trace_and_requires_complete_setup(
             summarize_trace=lambda _root: {"complete": trace_complete},
         ),
     )
-    assert smoke.main() == (0 if syscalls_complete and trace_complete else 1)
+    monkeypatch.setitem(
+        sys.modules,
+        "probe_codex_admission",
+        SimpleNamespace(
+            probe_public_sandbox=lambda *_: {"complete": True, "passed": admission_passed},
+        ),
+    )
+    assert smoke.main() == (0 if syscalls_complete and trace_complete and admission_passed else 1)
     assert roots and all(not root.exists() for root in roots)
     assert not any(
         "private-argument-and-result" in path.read_text()

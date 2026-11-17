@@ -160,6 +160,59 @@ def classify(work: Path, launch: dict) -> dict:
     }
 
 
+def run_container(
+    image_id: str, work: Path, options: list[str], *, full_suite: bool = False
+) -> dict:
+    """One bounded launch shared by the differential and managed-policy probes."""
+    (work / "home").mkdir(parents=True)
+    name = "tribunal-codex-diagnostic-" + uuid.uuid4().hex
+    sources = [
+        Path(__file__).with_name(filename).resolve()
+        for filename in (
+            "smoke_codex_batch_output.py",
+            "diagnose_codex_sandbox.py",
+            "probe_codex_namespaces.py",
+            "probe_codex_trace.py",
+            "probe_codex_admission.py",
+        )
+    ]
+    argv = [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--platform",
+        "linux/amd64",
+        "--network",
+        "none",
+        *options,
+        "--mount",
+        f"type=bind,src={work},dst=/smoke",
+    ]
+    for source in sources:
+        argv += ["--mount", f"type=bind,src={source},dst=/probe/{source.name},readonly"]
+    argv += [
+        "--env",
+        "HOME=/smoke/home",
+        "--env",
+        "PATH=/usr/local/bin:/usr/bin:/bin",
+        image_id,
+        "python3",
+        "/probe/smoke_codex_batch_output.py",
+    ]
+    if not full_suite:
+        argv.append("--diagnostic-read")
+    try:
+        launch = observe(argv, timeout=900 if full_suite else 180)
+    finally:
+        # Killing the Docker client does not stop its container.
+        cleanup = observe(["docker", "rm", "--force", name], timeout=10)
+    (work / "launch.json").write_text(json.dumps(launch, indent=2) + "\n")
+    (work / "cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
+    return launch
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image")
@@ -198,52 +251,10 @@ def main() -> int:
     (evidence / "host.json").write_text(json.dumps(host, indent=2) + "\n")
     if architecture.get("exit") != 0 or architecture["stdout"].strip() != "linux/amd64":
         raise RuntimeError("diagnostic requires the Linux/amd64 reviewer image")
-    driver = Path(__file__).with_name("smoke_codex_batch_output.py").resolve()
-    namespace_probe = Path(__file__).with_name("probe_codex_namespaces.py").resolve()
-    trace_probe = Path(__file__).with_name("probe_codex_trace.py").resolve()
     results = {}
     for label, options in VARIANTS.items():
         work = evidence / label
-        (work / "home").mkdir(parents=True)
-        name = "tribunal-codex-diagnostic-" + uuid.uuid4().hex
-        argv = [
-            "docker",
-            "run",
-            "--rm",
-            "--name",
-            name,
-            "--platform",
-            "linux/amd64",
-            "--network",
-            "none",
-            *options,
-            "--mount",
-            f"type=bind,src={work},dst=/smoke",
-            "--mount",
-            f"type=bind,src={driver},dst=/probe/{driver.name},readonly",
-            "--mount",
-            f"type=bind,src={Path(__file__).resolve()},"
-            "dst=/probe/diagnose_codex_sandbox.py,readonly",
-            "--mount",
-            f"type=bind,src={namespace_probe},dst=/probe/{namespace_probe.name},readonly",
-            "--mount",
-            f"type=bind,src={trace_probe},dst=/probe/{trace_probe.name},readonly",
-            "--env",
-            "HOME=/smoke/home",
-            "--env",
-            "PATH=/usr/local/bin:/usr/bin:/bin",
-            image_id,
-            "python3",
-            "/probe/smoke_codex_batch_output.py",
-            "--diagnostic-read",
-        ]
-        try:
-            launch = observe(argv, timeout=180)
-        finally:
-            # Killing the Docker client on timeout does not stop its container.
-            cleanup = observe(["docker", "rm", "--force", name], timeout=10)
-        (work / "launch.json").write_text(json.dumps(launch, indent=2) + "\n")
-        (work / "cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
+        launch = run_container(image_id, work, options)
         results[label] = classify(work, launch)
         print("CODEX_DIAGNOSTIC " + json.dumps({"variant": label, **results[label]}), flush=True)
     (evidence / "audit-after.json").write_text(json.dumps(audit_context(), indent=2) + "\n")

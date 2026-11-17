@@ -577,6 +577,7 @@ def main() -> int:
     sys.path.insert(0, str(args.install_root / "src"))
     if args.diagnostic_read:
         from diagnose_codex_sandbox import runtime_context  # noqa: PLC0415
+        from probe_codex_admission import probe_public_sandbox  # noqa: PLC0415
         from probe_codex_namespaces import collect_probes  # noqa: PLC0415
         from probe_codex_trace import summarize_trace  # noqa: PLC0415
 
@@ -585,6 +586,7 @@ def main() -> int:
         (args.scratch / "runtime.json").write_text(json.dumps(context, indent=2) + "\n")
         syscalls = collect_probes()
         (args.scratch / "syscalls.json").write_text(json.dumps(syscalls, indent=2) + "\n")
+        admission = probe_public_sandbox(args.install_root, args.scratch / "public-sandbox")
         # Raw traces may contain arguments/results. Keep them in the container's
         # /tmp, never /smoke, and destroy them before writing fixed aggregates.
         with TemporaryDirectory(prefix="codex-diagnostic-trace-", dir="/tmp") as directory:
@@ -613,10 +615,11 @@ def main() -> int:
         setup = {
             "syscall_collection_complete": syscalls["complete"],
             "trace_collection_complete": trace_summary["complete"],
+            "public_sandbox_collection_complete": admission["complete"],
         }
         (args.scratch / "diagnostic-setup.json").write_text(json.dumps(setup, indent=2) + "\n")
         print("CODEX_DIAGNOSTIC_SETUP " + json.dumps(setup), flush=True)
-        return 0 if status == 0 and all(setup.values()) else 1
+        return 0 if status == 0 and all(setup.values()) and admission["passed"] else 1
     from ai_review.config import load_config  # noqa: PLC0415
 
     configured = load_config(args.install_root / "config/review.yaml").reviewers["codex"].model

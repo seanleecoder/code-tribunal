@@ -103,6 +103,33 @@ experiment tests whether the private trace retains a failure hidden from CLI
 events; it does not add a production admission contract or change environment
 scrubbing. Missing or malformed observations make diagnostic setup incomplete.
 
+The next candidate uses the pinned upstream Moby profiles under
+[`scripts/codex_profiles/`](../../scripts/codex_profiles/). Both source files
+retain their original bytes and are checked against SHA-256 values. The
+seccomp candidate appends allowances for bounded namespace flags, mount,
+pivot-root and detach-unmount operations; all unrelated baseline rules remain.
+The AppArmor candidate preserves the upstream deny rules except mount denial,
+and adds explicit namespace, mount and pivot-root permissions under ABI 4.0,
+with Unix networking stated explicitly. The renderer and generated manifest
+make that delta reviewable. The pinned baseline is not claimed to match a
+particular Docker daemon's compiled-in profile byte for byte.
+
+This exposes additional kernel interfaces to processes in the experimental
+container. It is a feasibility candidate, not a final minimal or accepted
+policy for shared runners. The initial workflow step only compiles the profile:
+[`apparmor_parser -Q -K`](https://manpages.ubuntu.com/manpages/resolute/man8/apparmor_parser.8.html)
+does not load kernel policy or use privileged caches. Local Termux checks lack
+the parser and Docker; report Linux compilation separately.
+
+The diagnostic also tests the public `codex sandbox` command as a potential
+fail-fast check. Its read-only setting comes from the trusted registry. It uses
+generated files and no provider/platform credentials, verifies a random read,
+exit-code forwarding and an independently checked denied write. CLI state stays
+outside uploaded evidence and is deleted. Only fixed results are archived.
+The pinned [sandbox command implementation](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/cli/src/debug_sandbox.rs)
+forwards child exit status, but real tool-context parity and production admission
+remain unproven. No production adapter or deployment policy changes here.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their
