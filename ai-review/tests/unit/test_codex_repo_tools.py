@@ -104,7 +104,25 @@ def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     )
     wire = json.dumps(reply)
     assert "\\udc" not in wire
-    assert json.loads(wire)["result"]["content"][0]["text"] == "bad\\xff/\nmodule.py"
+    assert json.loads(wire)["result"]["content"][0]["text"] == (
+        "bad\\xff/ [non-UTF-8 name; cannot be opened by path]\nmodule.py"
+    )
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_rg
+def test_non_utf8_names_are_not_confused_with_look_alikes(repo: Path) -> None:
+    (Path(os.fsdecode(os.fsencode(repo) + b"/ev\xff.py"))).write_text("evil = 1\n")
+    (repo / "ev\\xff.py").write_text("decoy = 1\n")
+    listing = call(repo, "list_dir")[0].splitlines()
+    assert "ev\\xff.py" in listing
+    assert "ev\\xff.py [non-UTF-8 name; cannot be opened by path]" in listing
+    text, is_error = call(repo, "grep", pattern="evil|decoy")
+    assert not is_error
+    assert sorted(text.splitlines()) == [
+        "ev\\xff.py [non-UTF-8 name; cannot be opened by path]:1:evil = 1",
+        "ev\\xff.py:1:decoy = 1",
+    ]
 
 
 @needs_rg
@@ -123,9 +141,32 @@ def test_grep_ignores_repository_ignore_files(repo: Path) -> None:
 def test_output_is_bounded(repo: Path, monkeypatch) -> None:
     lines = call(repo, "read_file", path="pkg/module.py", max_lines=1)[0]
     assert lines == "1\tvalue = 1\n[1 more lines; continue with start_line]"
-    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 12)
     text, _ = call(repo, "read_file", path="sentinel.txt")
-    assert text == "1\tsnapsh\n[output truncated at 8 bytes]"
+    assert text == (
+        "1\tsnapshot-\n[output limit reached; continue with start_line=1 start_column=10]"
+    )
+    assert call(repo, "read_file", path="sentinel.txt", start_column=10) == (
+        "1\tonly-valu\n[output limit reached; continue with start_line=1 start_column=19]",
+        False,
+    )
+
+
+def test_one_long_line_stays_reachable(repo: Path, monkeypatch) -> None:
+    # Git counts a CR-only file as one line; paging by column reaches its end.
+    (repo / "cr.txt").write_bytes(b"x\r" * 40 + b"END\r")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 30)
+    seen, column = "", 1
+    for _ in range(10):
+        text, is_error = call(repo, "read_file", path="cr.txt", start_column=column)
+        assert not is_error
+        body, _, note = text.partition("\n")
+        assert body.startswith("1\t")
+        seen += body.removeprefix("1\t")
+        if not note:
+            break
+        column = int(note.rsplit("start_column=", 1)[1].rstrip("]"))
+    assert seen == "x\r" * 40 + "END"  # The line's own trailing CR is stripped.
 
 
 def test_binary_and_non_string_paths_are_refused(repo: Path) -> None:

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import IO, Any
 
 MAX_OUTPUT_BYTES = 256 * 1024
+_NOTE_RESERVE_BYTES = 512  # Room for read_file notes inside the output cap.
 MAX_FILE_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_LINES = 2000
 MAX_LIST_ENTRIES = 1000
@@ -46,8 +47,9 @@ TOOLS = [
     {
         "name": "read_file",
         "description": (
-            "Read a UTF-8 text file in the repository under review. Returns numbered "
-            f"lines; use start_line and max_lines (default {DEFAULT_MAX_LINES}) for long files."
+            "Read a UTF-8 text file in the repository under review. Returns lines "
+            "numbered as git numbers them; use start_line and max_lines (default "
+            f"{DEFAULT_MAX_LINES}) for long files, and start_column to continue a long line."
         ),
         "inputSchema": {
             "type": "object",
@@ -55,6 +57,11 @@ TOOLS = [
                 "path": {"type": "string", "description": "Repository-relative file path"},
                 "start_line": {"type": "integer", "minimum": 1},
                 "max_lines": {"type": "integer", "minimum": 1},
+                "start_column": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Character column at which to start the first line",
+                },
             },
             "required": ["path"],
             "additionalProperties": False,
@@ -114,6 +121,20 @@ def _display(name: str) -> str:
     return os.fsencode(name).decode("utf-8", errors="backslashreplace")
 
 
+_UNADDRESSABLE = " [non-UTF-8 name; cannot be opened by path]"
+
+
+def _listed(name: str, suffix: str = "") -> str:
+    """Show a listed or matched name, flagging one the tools cannot open.
+
+    The escaped spelling is display-only: a request for it opens a literal
+    file of that name, if any, so marking keeps a look-alike from passing as
+    the real file.
+    """
+    shown = _display(name)
+    return shown + suffix + (_UNADDRESSABLE if shown != name else "")
+
+
 def _relative(root: Path, path: Path) -> str:
     return _display(path.relative_to(root).as_posix() or ".")
 
@@ -139,6 +160,7 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError(f"not a file: {_relative(root, path)}")
     start = _positive(arguments, "start_line", 1)
     count = _positive(arguments, "max_lines", DEFAULT_MAX_LINES)
+    start_column = _positive(arguments, "start_column", 1)
     with path.open("rb") as handle:
         data = handle.read(MAX_FILE_BYTES + 1)
     if b"\x00" in data[:8192]:
@@ -151,14 +173,40 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     ]
     if lines[-1] == "":
         lines.pop()
-    selected = lines[start - 1 : start - 1 + count]
-    body = "\n".join(f"{number}\t{line}" for number, line in enumerate(selected, start))
+    end = min(len(lines), start - 1 + count)
+    # Fill the output budget line by line. A line that does not fit (a minified
+    # file, or CR-only line endings, which git counts as one line) is cut, and
+    # the note says exactly where to resume, so no content is unreachable.
+    budget = MAX_OUTPUT_BYTES - _NOTE_RESERVE_BYTES
+    out: list[str] = []
+    resume: tuple[int, int] | None = None
+    for number in range(start, end + 1):
+        column = start_column if number == start else 1
+        prefix, text = f"{number}\t", lines[number - 1][column - 1 :]
+        size = len(prefix.encode()) + len(text.encode()) + 1
+        if size <= budget:
+            out.append(prefix + text)
+            budget -= size
+            continue
+        room = max(budget - len(prefix.encode()) - 1, 0)
+        fitted = text.encode()[:room].decode("utf-8", errors="ignore")
+        if not fitted and not out:
+            fitted = text[:1]  # Always make progress.
+        if fitted:
+            out.append(prefix + fitted)
+        resume = (number, column + len(fitted))
+        break
     notes = []
-    if start - 1 + count < len(lines):
-        notes.append(f"[{len(lines) - (start - 1 + count)} more lines; continue with start_line]")
+    if resume is not None:
+        notes.append(
+            f"[output limit reached; continue with start_line={resume[0]} "
+            f"start_column={resume[1]}]"
+        )
+    elif end < len(lines):
+        notes.append(f"[{len(lines) - end} more lines; continue with start_line]")
     if len(data) > MAX_FILE_BYTES:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
-    return _bounded("\n".join([body, *notes]) if notes else body)
+    return _bounded("\n".join([*out, *notes]))
 
 
 def list_dir(root: Path, arguments: dict[str, Any]) -> str:
@@ -167,7 +215,7 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError(f"not a directory: {_relative(root, path)}")
     with os.scandir(path) as entries:
         names = sorted(
-            _display(e.name) + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries
+            _listed(e.name, "/" if e.is_dir(follow_symlinks=False) else "") for e in entries
         )
     if len(names) > MAX_LIST_ENTRIES:
         names = [*names[:MAX_LIST_ENTRIES], f"[truncated at {MAX_LIST_ENTRIES} entries]"]
@@ -193,6 +241,8 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--line-number",
         "--no-heading",
         "--with-filename",
+        # NUL after the path keeps its raw bytes separable from the match text.
+        "--null",
         "--color",
         "never",
         "--hidden",
@@ -249,7 +299,15 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     # rg exits 1 for no match; 2 can accompany partial results (unreadable files).
     if not data and process.returncode not in (0, 1):
         raise ToolError("search failed; check the pattern")
-    return _bounded(data.decode("utf-8", errors="replace"))
+    matches = []
+    for line in data.split(b"\n"):
+        path, separator, rest = line.partition(b"\0")
+        if not separator:  # A line cut by the output cap.
+            matches.append(line.decode("utf-8", errors="replace"))
+            continue
+        name = _listed(os.fsdecode(path))
+        matches.append(f"{name}:{rest.decode('utf-8', errors='replace')}")
+    return _bounded("\n".join(matches))
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}
