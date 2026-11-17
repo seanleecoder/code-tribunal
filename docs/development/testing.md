@@ -69,6 +69,17 @@ Remove COMPAT-012 after collecting evidence. Production deployment changes,
 GitHub/GitLab compatibility claims and release validation require the subsequent
 policy decision and live checks described in the agreed PR #304 plan.
 
+The bounded Linux experiment did not demonstrate a working launch arrangement.
+The ordinary gate ran all 14 cases and stayed failed. Individual outer-profile
+relaxations and their combination did not produce a successful sentinel read.
+Some sandbox failures reached only the provider tool response, with no failure
+signal in the CLI stream or stderr. The codec cannot distinguish those streams
+from tool-free success; the sentinel gate correctly rejects them. A successful
+adapter outcome alone is therefore insufficient evidence of usable tools.
+Further work needs another scoped experiment or platform-policy decision before
+any additional privilege change. Detailed evidence remains in the separately
+approved diagnostic artifact; it is not copied into repository documentation.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their

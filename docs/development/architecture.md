@@ -96,6 +96,12 @@ These rules are worth stating because breaking them is silent:
   critiques, no-match searches and recovery after a failed tool remain usable.
   Full bounded stderr is retained privately for execution admission before the
   shorter redacted diagnostic tail is printed; it is never a public artifact.
+  Admission depends on failure signals exposed by that transport. The Linux
+  investigation found sandbox failures visible only in provider tool responses,
+  with no CLI command/error event or stderr; the current codec cannot distinguish
+  those streams from tool-free success. The image gate's random sentinel check
+  rejects them. No working Linux launch policy has yet been demonstrated; see
+  the [investigation limits](testing.md#temporary-codex-sandbox-investigation).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and

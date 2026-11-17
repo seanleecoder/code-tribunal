@@ -16,6 +16,9 @@ versioning.
   failed operational tool runs as `model_error`, excluding the seat from review
   success and resolution eligibility and exposing it in run health. Empty
   reviews, tool-free critiques, no-match searches and tool recovery remain valid.
+  Linux investigation also found sandbox failures that the CLI exposes only to
+  the provider, leaving the production codec without a failure signal. The
+  sentinel image gate rejects them; no working Linux launch policy is proven.
   An unconditional network-disabled real-CLI image probe guards CLI pin bumps.
   The fix requires both runtime images rebuilt and a fresh exact-pair canary;
   existing v3.1.0 tags and digests remain immutable.
