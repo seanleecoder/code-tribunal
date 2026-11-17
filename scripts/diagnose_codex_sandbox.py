@@ -124,7 +124,13 @@ def classify(work: Path, launch: dict) -> dict:
         and NAMESPACE_ERROR in capture["stdout"]
     ):
         return {"result": "namespace_denied"}
-    return {"result": "other_probe_failure", "adapter_status": outcome["adapter_status"]}
+    return {
+        "result": "other_probe_failure",
+        "adapter_status": outcome["adapter_status"],
+        # Assertion failures describe the scripted read contract. Keep these
+        # visible without exporting host/kernel/audit/runtime observations.
+        "case_errors": [case["error"] for case in summary["cases"] if not case["passed"]],
+    }
 
 
 def main() -> int:

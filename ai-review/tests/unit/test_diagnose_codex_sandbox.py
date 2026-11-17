@@ -34,7 +34,9 @@ def write_evidence(work: Path, *, passed: bool) -> None:
         json.dumps(
             {
                 "passed": passed,
-                "cases": [{"case": "read", "passed": passed}],
+                "cases": [
+                    {"case": "read", "passed": passed, "error": "AssertionError: sentinel missing"}
+                ],
             }
         )
     )
@@ -52,7 +54,9 @@ def test_reproduction_requires_the_observed_cli_and_adapter_failure(
     if damage == "missing":
         capture.unlink()
     elif damage == "bad-exit":
-        assert diagnose.classify(tmp_path, {"exit": 125})["result"] == "other_probe_failure"
+        result = diagnose.classify(tmp_path, {"exit": 125})
+        assert result["result"] == "other_probe_failure"
+        assert result["case_errors"] == ["AssertionError: sentinel missing"]
         return
     else:
         value = json.loads(capture.read_text())
