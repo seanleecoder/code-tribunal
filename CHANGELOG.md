@@ -22,6 +22,11 @@ versioning.
 
 ### Changed
 
+- The Codex image probe reports every case under an overall time bound, including
+  setup and transport failures, and checks denied snapshot mutations/deletions
+  and writes to runtime/input canaries with independent byte comparisons.
+  A temporary four-way Linux sandbox diagnostic is available for the namespace
+  failure investigation; production launch policy remains unchanged.
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
   using locally available Git objects, and rechecks its identity and the API
   revision before publishing inputs. Stale detached runs and unavailable source

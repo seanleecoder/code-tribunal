@@ -18,9 +18,13 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 REQUIRED_MODEL = "openai/gpt-6.1-sol"
@@ -32,6 +36,7 @@ original_prepare = runner.prepare_shell_adapter
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = sys.argv[2]
     arguments, root = original_prepare(definition, stage, env)
+    Path(sys.argv[5]).write_text(json.dumps({"root": str(root)}))
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
     arguments += ["-c", "model_providers.openrouter.request_max_retries=0",
                   "-c", "model_providers.openrouter.stream_max_retries=0"]
@@ -40,6 +45,15 @@ runner.prepare_shell_adapter = prepare
 original_run = runner._run_adapter_process
 def record(*args, **kwargs):
     result = original_run(*args, **kwargs)
+    # The runner deletes its copied snapshot after admission. Observe actual
+    # bytes in this trusted parent, after CLI exit and before that cleanup.
+    metadata = json.loads(Path(sys.argv[5]).read_text())
+    root = Path(metadata["root"])
+    metadata["files_after_cli"] = {
+        name: path.read_bytes().hex() if path.is_file() and not path.is_symlink() else None
+        for name in ("example.py", "sentinel.txt") for path in (root / name,)
+    }
+    Path(sys.argv[5]).write_text(json.dumps(metadata))
     # Explicit transport fault injection after the real CLI exits. This proves
     # admission rejects damaged streams independently of valid final-answer files.
     if sys.argv[4] == "truncated":
@@ -245,6 +259,7 @@ def run_case(
     sentinel: str | None = None,
     cli_path: str | None = None,
     stream_fault: str = "",
+    protected_runtime: Path | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -275,6 +290,12 @@ def run_case(
     prepare_local_bundle(config, diff, source, work / "inputs")
     shutil.rmtree(source)
     steps = steps or []
+    protected: dict[Path, bytes] = {}
+    if protected_runtime is not None:
+        protected_input = work / "inputs" / "protected.txt"
+        protected_input.write_text(secrets.token_hex(24))
+        protected = {p: p.read_bytes() for p in (protected_input, protected_runtime)}
+        steps = [command({"cmd": "cat sentinel.txt"}), denial_command(protected)]
     batch = {"findings": []} if empty else probe_batch(stage)
     with StubProvider(batch, steps, terminal=terminal) as stub:
         result = subprocess.run(
@@ -287,6 +308,7 @@ def run_case(
                 stub.url,
                 str(work / "capture.json"),
                 stream_fault,
+                str(work / "workspace.json"),
             ],
             env={
                 "PATH": cli_path or os.environ["PATH"],
@@ -301,6 +323,15 @@ def run_case(
             timeout=90,
             check=False,
         )
+    (work / "runner.json").write_text(
+        json.dumps(
+            {
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        )
+    )
     # Keep the actual offered schema beside execution evidence for local/CI
     # diagnosis without persisting the request's complete instruction content.
     (work / "provider-evidence.json").write_text(
@@ -340,6 +371,27 @@ def run_case(
         ),
         flush=True,
     )
+    if protected_runtime is not None:
+        observed = json.loads((work / "workspace.json").read_text())["files_after_cli"]
+        if observed != {
+            "example.py": b"example = 1\n".hex(),
+            "sentinel.txt": (sentinel or "").encode().hex(),
+        }:
+            raise AssertionError("sandbox changed copied snapshot bytes")
+        assert_unchanged(protected)
+        executions = [
+            event["item"]
+            for event in map(json.loads, capture["stdout"].splitlines())
+            if event.get("type") == "item.completed"
+            and event.get("item", {}).get("type") == "command_execution"
+        ]
+        if not any(
+            item.get("exit_code") == 0
+            and item.get("status") == "completed"
+            and "CODEX_READ_ONLY_DENIED 6" in item.get("aggregated_output", "").splitlines()
+            for item in executions
+        ):
+            raise AssertionError("read-only negative control did not prove all six denials")
     if outcome["adapter_status"] != expected_status or (result.returncode == 0) != (
         expected_status == "success"
     ):
@@ -358,6 +410,11 @@ def run_case(
         for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
     ):
         raise AssertionError("missing-host control did not exercise the absent host")
+    if label in {"all-tools-failed", "recovery"} and not any(
+        message in tool_outputs(stub.requests[1])
+        for message in ("No such file or directory", "does not exist")
+    ):
+        raise AssertionError(f"{label}: negative control did not fail on the missing directory")
     if label in {"missing-host", "all-tools-failed"} and (
         capture["returncode"] != 0
         or json.dumps(batch)
@@ -398,71 +455,58 @@ def command(code: dict) -> str:
     return f"const r = await tools.exec_command({json.dumps(code)}); text(JSON.stringify(r));"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--install-root", type=Path, default=Path("/opt/ai-review"))
-    parser.add_argument("--scratch", type=Path, default=Path("/smoke/codex"))
-    args = parser.parse_args()
-    sys.path.insert(0, str(args.install_root / "src"))
-    from ai_review.config import load_config  # noqa: PLC0415
+def assert_unchanged(protected: dict[Path, bytes]) -> None:
+    for path, expected in protected.items():
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != expected:
+            raise AssertionError(f"sandbox changed protected file: {path}")
 
-    configured = load_config(args.install_root / "config/review.yaml").reviewers["codex"].model
-    for index, model in enumerate(dict.fromkeys((REQUIRED_MODEL, configured))):
-        scratch = args.scratch / str(index)
-        sentinel = secrets.token_hex(24)
+
+def denial_command(protected: dict[Path, bytes]) -> str:
+    # Run attempts inside the actual CLI sandbox, then check bytes independently
+    # in the parent. A namespace failure cannot emit the success marker.
+    operations = [
+        ("example.py", "write"),
+        ("example.py", "delete"),
+        ("sentinel.txt", "write"),
+        ("sentinel.txt", "delete"),
+    ]
+    operations.extend((str(p), "write") for p in protected)
+    code = f"""
+import errno
+from pathlib import Path
+for name, operation in {operations!r}:
+    try:
+        path = Path(name)
+        if operation == 'write':
+            path.write_bytes(b'sandbox-write-must-be-denied')
+        else:
+            path.unlink()
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
+        print('DENIED', operation, name, exc.errno)
+    else:
+        raise RuntimeError('sandbox permitted ' + operation + ': ' + name)
+print('CODEX_READ_ONLY_DENIED 6')
+"""
+    return command({"cmd": "python3 -c " + shlex.quote(code)})
+
+
+def read_only_case(install: Path, scratch: Path) -> None:
+    with TemporaryDirectory(prefix=".codex-read-only-", dir=install) as runtime:
+        protected = Path(runtime) / "protected.txt"
+        protected.write_text(secrets.token_hex(24))
         run_case(
-            args.install_root,
+            install,
             scratch,
-            "read",
-            model,
-            steps=[command({"cmd": "cat sentinel.txt"})],
-            sentinel=sentinel,
-        )
-        run_case(args.install_root, scratch, "empty", model, empty=True)
-        run_case(args.install_root, scratch, "critique", model, stage="critique")
-    scratch = args.scratch / "failures"
-    for fault in ("malformed", "truncated"):
-        run_case(
-            args.install_root,
-            scratch,
-            fault,
+            "read-only",
             REQUIRED_MODEL,
-            stream_fault=fault,
-            expected_status="schema_error",
+            sentinel=secrets.token_hex(24),
+            protected_runtime=protected,
         )
-    bad = command({"cmd": "cat sentinel.txt", "workdir": "/tribunal-missing-directory"})
-    run_case(
-        args.install_root,
-        scratch,
-        "all-tools-failed",
-        REQUIRED_MODEL,
-        steps=[bad],
-        expected_status="model_error",
-    )
-    run_case(
-        args.install_root,
-        scratch,
-        "recovery",
-        REQUIRED_MODEL,
-        steps=[bad, command({"cmd": "cat sentinel.txt"})],
-        sentinel=secrets.token_hex(24),
-    )
-    run_case(
-        args.install_root,
-        scratch,
-        "no-match",
-        REQUIRED_MODEL,
-        steps=[command({"cmd": "grep no-such-match example.py"})],
-        empty=True,
-    )
-    run_case(
-        args.install_root,
-        scratch,
-        "terminal",
-        REQUIRED_MODEL,
-        terminal=True,
-        expected_status="model_error",
-    )
+
+
+def missing_host_case(install: Path, scratch: Path) -> None:
     # Copy just the native entrypoint, reproducing the released layout without
     # modifying the installed package or using a fake CLI.
     native = Path(
@@ -471,17 +515,16 @@ def main() -> int:
     )
     if not native.is_file():
         native = Path(shutil.which("codex") or "")
-    isolated = scratch / "without-host"
-    isolated.mkdir(parents=True)
-    shutil.copy2(native, isolated / "codex-native")
-    launcher = isolated / "codex"
-    launcher.write_text(
-        "#!/bin/sh\nexec " + shlex.quote(str(isolated / "codex-native")) + ' "$@"\n'
-    )
-    launcher.chmod(0o755)
-    try:
+    with TemporaryDirectory(prefix="without-host-", dir=scratch) as directory:
+        isolated = Path(directory)
+        shutil.copy2(native, isolated / "codex-native")
+        launcher = isolated / "codex"
+        launcher.write_text(
+            "#!/bin/sh\nexec " + shlex.quote(str(isolated / "codex-native")) + ' "$@"\n'
+        )
+        launcher.chmod(0o755)
         run_case(
-            args.install_root,
+            install,
             scratch,
             "missing-host",
             REQUIRED_MODEL,
@@ -489,9 +532,142 @@ def main() -> int:
             expected_status="model_error",
             cli_path=str(isolated) + os.pathsep + os.environ["PATH"],
         )
-    finally:
-        shutil.rmtree(isolated)
-    return 0
+
+
+def run_cases(
+    cases: list[tuple[str, Callable]], scratch: Path, *, budget_seconds: float = 810
+) -> int:
+    deadline = time.monotonic() + budget_seconds
+    results = []
+    for label, run in cases:
+        try:
+            # Each case has a 90-second transport bound; leave time for it to
+            # complete within the wrapper's 900-second overall bound.
+            if time.monotonic() + 90 > deadline:
+                raise TimeoutError("overall probe budget exhausted before case start")
+            run()
+        except Exception as exc:
+            # Setup, transport and assertion failures are all explicit failures;
+            # collecting them must never turn a partially run suite green.
+            results.append(
+                {"case": label, "passed": False, "error": f"{type(exc).__name__}: {exc}"}
+            )
+        else:
+            results.append({"case": label, "passed": True})
+        print("CODEX_CASE " + json.dumps(results[-1]), flush=True)
+    summary = {"cases": results, "passed": bool(results) and all(r["passed"] for r in results)}
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print("CODEX_SUMMARY " + json.dumps(summary), flush=True)
+    return 0 if summary["passed"] else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--install-root", type=Path, default=Path("/opt/ai-review"))
+    parser.add_argument("--scratch", type=Path, default=Path("/smoke/codex"))
+    # COMPAT-012: bounded diagnostic subset; never selects production policy.
+    parser.add_argument("--diagnostic-read", action="store_true")
+    args = parser.parse_args()
+    sys.path.insert(0, str(args.install_root / "src"))
+    if args.diagnostic_read:
+        from diagnose_codex_sandbox import runtime_context  # noqa: PLC0415
+
+        args.scratch.mkdir(parents=True, exist_ok=True)
+        context = runtime_context()
+        (args.scratch / "runtime.json").write_text(json.dumps(context, indent=2) + "\n")
+        return run_cases(
+            [
+                (
+                    "read",
+                    partial(
+                        run_case,
+                        args.install_root,
+                        args.scratch,
+                        "read",
+                        REQUIRED_MODEL,
+                        steps=[command({"cmd": "cat sentinel.txt"})],
+                        sentinel=secrets.token_hex(24),
+                    ),
+                )
+            ],
+            args.scratch,
+            budget_seconds=150,
+        )
+    from ai_review.config import load_config  # noqa: PLC0415
+
+    configured = load_config(args.install_root / "config/review.yaml").reviewers["codex"].model
+    cases = []
+
+    def add(scratch: Path, label: str, model: str, **options: Any) -> None:
+        cases.append(
+            (
+                f"{scratch.name}/{label}",
+                partial(
+                    run_case,
+                    args.install_root,
+                    scratch,
+                    label,
+                    model,
+                    **options,
+                ),
+            )
+        )
+
+    for index, model in enumerate(dict.fromkeys((REQUIRED_MODEL, configured))):
+        scratch = args.scratch / str(index)
+        sentinel = secrets.token_hex(24)
+        add(
+            scratch,
+            "read",
+            model,
+            steps=[command({"cmd": "cat sentinel.txt"})],
+            sentinel=sentinel,
+        )
+        add(scratch, "empty", model, empty=True)
+        add(scratch, "critique", model, stage="critique")
+    scratch = args.scratch / "failures"
+    for fault in ("malformed", "truncated"):
+        add(
+            scratch,
+            fault,
+            REQUIRED_MODEL,
+            stream_fault=fault,
+            expected_status="schema_error",
+        )
+    bad = command({"cmd": "cat sentinel.txt", "workdir": "/tribunal-missing-directory"})
+    add(
+        scratch,
+        "all-tools-failed",
+        REQUIRED_MODEL,
+        steps=[bad],
+        expected_status="model_error",
+    )
+    add(
+        scratch,
+        "recovery",
+        REQUIRED_MODEL,
+        steps=[bad, command({"cmd": "cat sentinel.txt"})],
+        sentinel=secrets.token_hex(24),
+    )
+    add(
+        scratch,
+        "no-match",
+        REQUIRED_MODEL,
+        steps=[command({"cmd": "grep no-such-match example.py"})],
+        empty=True,
+    )
+    add(
+        scratch,
+        "terminal",
+        REQUIRED_MODEL,
+        terminal=True,
+        expected_status="model_error",
+    )
+    scratch.mkdir(parents=True, exist_ok=True)
+    cases.append(("missing-host", partial(missing_host_case, args.install_root, scratch)))
+    cases.append(("read-only", partial(read_only_case, args.install_root, args.scratch)))
+    return run_cases(cases, args.scratch)
 
 
 if __name__ == "__main__":

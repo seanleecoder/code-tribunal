@@ -46,7 +46,9 @@ def test_captured_usable_executions(label: str) -> None:
     )
 
 
-@pytest.mark.parametrize("label", ["all-tools-failed", "missing-host", "terminal"])
+@pytest.mark.parametrize(
+    "label", ["all-tools-failed", "missing-host", "terminal", "linux-namespace-denied"]
+)
 def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> None:
     with pytest.raises(AdapterModelError):
         load(capture(label))
@@ -154,6 +156,7 @@ def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
         ("no-match", "success"),
         ("missing-host", "model_error"),
         ("all-tools-failed", "model_error"),
+        ("linux-namespace-denied", "model_error"),
         ("terminal", "model_error"),
     ],
 )

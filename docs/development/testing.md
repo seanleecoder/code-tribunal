@@ -30,6 +30,45 @@ is covered by `test_check_release.py`, which builds throwaway repositories and a
 fixture signing key. IDs in the temporary-compatibility register are checked
 against their code markers by `test_temporary_compatibility.py`.
 
+## Temporary Codex sandbox investigation
+
+COMPAT-012 adds a four-way diagnostic after a failed Codex image gate, on the
+same Ubuntu runner and resolved Linux/amd64 image ID. To run it on a Linux Docker
+host with an already-built reviewer image:
+
+```bash
+python3 scripts/diagnose_codex_sandbox.py <reviewer-image> /tmp/codex-sandbox-evidence
+```
+
+The evidence directory must be new. The default, seccomp-only, AppArmor-only and
+combined profile experiments use no provider secrets and no external network.
+Each container has a 180-second bound and explicit removal on timeout; the CI
+step has a 16-minute bound. Setup/transport failures remain distinct from a
+reproduced namespace denial. A missing or successful baseline, four denied reads,
+or incomplete evidence makes the diagnostic fail. The original image gate stays
+failed regardless of diagnostic results.
+
+Only the read case using the real Sol model ID runs in this diagnostic subset.
+The ordinary gate collects the previous 13 cases plus a read-only enforcement
+case under its existing 900-second wrapper bound. The latter requires a random
+snapshot sentinel read, denied mutations/deletions and protected runtime/input
+writes, and unchanged bytes observed by the trusted parent after CLI exit and
+before snapshot cleanup. A namespace failure cannot satisfy that check.
+
+Runtime evidence records kernel/runner/Docker identity, process seccomp and
+capability status, AppArmor context, user-namespace sysctls, available audit data,
+and system/bundled bwrap paths, hashes and help/version output. Unavailable
+observations are recorded explicitly. Detailed evidence stays on the runner;
+the workflow currently uploads no diagnostic archive. Console output contains
+case classifications and the summary. Termux unit tests validate collection and
+failure admission, not Linux enforcement or deployment compatibility.
+
+A successful relaxation identifies a candidate restriction to investigate with
+audit evidence or a targeted probe. It does not select a production policy.
+Remove COMPAT-012 after collecting evidence. Production deployment changes,
+GitHub/GitLab compatibility claims and release validation require the subsequent
+policy decision and live checks described in the agreed PR #304 plan.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their

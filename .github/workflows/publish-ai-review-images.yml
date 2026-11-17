@@ -190,11 +190,21 @@ jobs:
         run: scripts/smoke_opencode_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
 
       - name: Verify Codex code-mode tools and execution outcomes
+        id: codex-gate
         # Unconditional on PRs, including CLI pin bumps. Real CLI with a scripted
         # loopback Responses provider, no secrets and --network none. Requires the
         # real Sol model id so bundled code_mode_only metadata is exercised.
         shell: bash
         run: scripts/smoke_codex_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
+
+      # COMPAT-012: diagnostic only, on the same runner and exact image.
+      # Evidence stays on the runner; metadata upload requires separate approval.
+      # A successful diagnostic cannot waive the failed default image gate.
+      - name: Diagnose Codex namespace restrictions
+        if: failure() && steps.codex-gate.outcome == 'failure'
+        timeout-minutes: 16
+        shell: bash
+        run: python3 scripts/diagnose_codex_sandbox.py "$AI_REVIEW_REVIEWER_TAG" "$RUNNER_TEMP/codex-sandbox"
 
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
