@@ -102,8 +102,8 @@ These rules are worth stating because breaking them is silent:
   those streams from tool-free success. The image gate's random sentinel check
   rejects them. A manually loaded runner-policy candidate passed the Linux
   feasibility suite; the default gate still fails. The chosen direction is a
-  no-shell Codex with trusted read-only tools under default launch policies,
-  still unproven on Linux. See the
+  no-shell Codex with trusted read-only tools under default launch policies; a
+  hosted-runner feasibility experiment passed, production integration pending. See the
   [investigation limits](testing.md#temporary-codex-sandbox-investigation).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares

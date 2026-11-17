@@ -233,6 +233,18 @@ which listed all three repository tools with typed declarations. Review cases
 now require that guidance and the runtime listing; critique must still offer no
 repository tool.
 
+The [run on `e7e3dab`](https://github.com/seanleecoder/code-tribunal/actions/runs/44073952753)
+passed all 10 no-shell cases under the default launch policy: both models'
+sentinel reads, empty reviews and critiques, search, no-match, missing-file and
+containment. The original image gate stayed failed and nothing was handed off
+or published. This establishes feasibility on a hosted runner only. Production
+still needs: codec admission of `mcp_tool_call` items that keeps tool-reported
+errors usable and rejects operational failures; a reviewed tool server in the
+`ai_review` package; registry arguments; a decision on disabling `view_image`
+and `apply_patch`, which remain offered (the latter was rejected by the
+read-only policy); the default gate switched to the no-shell cases; COMPAT-012
+removal; and live GitHub/GitLab acceptance.
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their
