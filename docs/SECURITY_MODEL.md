@@ -161,9 +161,11 @@ no write operation. Repository file names are untrusted too: grep reads `rg`'s
 JSON events rather than its text output, and a name that could pass for another
 entry, a tool note or a `path:line` prefix is shown as a JSON string (non-UTF-8
 names are also marked as unopenable), so no file can be shown under another
-file's name. Control and line-separator characters in read and matched text are
-escaped, and each line that has one is marked, so file content cannot pose as
-another line or match, nor as literal escape text. It runs in isolated Python
+file's name. A read or matched line holding a control or line-separator
+character is shown as the body of a JSON string, and its line number is marked
+in the tool-written prefix; other lines are shown exactly. File content
+therefore cannot pose as another line or match, and no two different lines are
+shown alike. It runs in isolated Python
 mode and refuses to start if its environment carries anything beyond plain
 process variables, so a provider credential cannot reach model-driven tool
 calls; Codex then fails the review

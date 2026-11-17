@@ -47,11 +47,17 @@ GREP_TIMEOUT_SECONDS = 20
 # Control characters (Unicode category Cc) other than tab, and the line and
 # paragraph separators (Zl, Zp): each could end a rendered line early and make
 # file content pose as another line or match.
-_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f  ]")
-# Escapes reuse JSON spelling, which literal source text can also contain; the
-# note tells the two apart without changing any ordinary backslash.
-_ESCAPED_NOTE = " [control characters shown escaped]"
-RG ="/usr/local/bin/rg"
+_CONTROL_POINTS = (*range(0x00, 0x09), *range(0x0A, 0x20), *range(0x7F, 0xA0), 0x2028, 0x2029)
+_CONTROL = re.compile("[" + re.escape("".join(map(chr, _CONTROL_POINTS))) + "]")
+# A line holding any of them is shown as a JSON string body (so its quotes and
+# backslashes are escaped too, and it decodes to exactly one text), and its line
+# number carries _ESCAPED_MARK. The mark sits in the tool-written prefix, where
+# file content cannot imitate it; every other line is shown exactly.
+_ESCAPED_MARK = "!"
+# json.dumps(ensure_ascii=False) leaves these raw; str.replace stays C-fast,
+# unlike str.translate with multi-character replacements.
+_JSON_RAW_CONTROLS = (*map(chr, range(0x7F, 0xA0)), "\u2028", "\u2029")
+RG = "/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
 # Codex passes MCP servers only these variables unless configured otherwise
 # (codex-rs rmcp-client DEFAULT_ENV_VARS); Python's locale coercion adds LC_*.
@@ -74,8 +80,9 @@ TOOLS = [
             "Read a UTF-8 text file in the repository under review. Returns lines "
             "numbered as git numbers them; use start_line and max_lines (default "
             f"{DEFAULT_MAX_LINES}) for long files, and start_column to continue a long line. "
-            "Control characters other than tab are shown as JSON escapes on lines marked "
-            f"'{_ESCAPED_NOTE.strip()}'; start_column counts the file's own characters."
+            "A line number ending in '!' marks a line holding control characters other than "
+            "tab; that line is shown as the body of a JSON string. start_column counts the "
+            "file's own characters."
         ),
         "inputSchema": {
             "type": "object",
@@ -110,7 +117,8 @@ TOOLS = [
         "name": "grep",
         "description": (
             "Search the repository under review with a ripgrep regular expression. "
-            "Returns path:line:text matches, including hidden files except .git." + _NAMES
+            "Returns path:line:text matches, including hidden files except .git. A line "
+            "number ending in '!' marks text shown as in read_file's marked lines." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -221,18 +229,17 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     resume: tuple[int, int] | None = None
     for number in range(start, end + 1):
         column = start_column if number == start else 1
-        prefix, text = f"{number}\t", lines[number - 1][column - 1 :]
-        shown = _visible(text)
-        size = len(prefix.encode()) + len(shown.encode()) + 1
-        if size <= budget:
-            out.append(prefix + shown)
-            budget -= size
+        text = lines[number - 1][column - 1 :]
+        room = budget - len(f"{number}\t".encode()) - 1
+        shown, used, escaped = _fit(text, room)
+        if not used and text and not out:
+            shown, used, escaped = _fit(text[:1], len(_render(text[:1])[0].encode()))
+        if used or not text:
+            line = f"{number}{_ESCAPED_MARK if escaped else ''}\t{shown}"
+            out.append(line)
+            budget -= len(line.encode()) + 1
+        if used == len(text):
             continue
-        shown, used = _visible_prefix(text, budget - len(prefix.encode()) - 1)
-        if not used and not out:
-            shown, used = _visible(text[:1]), 1  # Always make progress.
-        if used:
-            out.append(prefix + shown)
         # Columns count the file's own characters, not their escaped display.
         resume = (number, column + used)
         break
@@ -324,6 +331,9 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError("search output could not be read") from exc
     finally:
         timer.cancel()
+        # cancel() cannot stop an expire() already running; wait for it, so it
+        # cannot signal the group after rg is reaped below and its PID reused.
+        timer.join()
         kill()  # Stop a search still running after the output cap.
         process.wait()
         if process.stdout is not None:
@@ -407,29 +417,54 @@ def _rg_data(value: dict[str, str]) -> bytes:
     return base64.b64decode(value["bytes"])
 
 
-def _escape(match: re.Match[str]) -> str:
-    return json.dumps(match.group())[1:-1]
+def _json_body(text: str) -> str:
+    body = json.dumps(text, ensure_ascii=False)[1:-1]
+    for char in _JSON_RAW_CONTROLS:
+        if char in body:
+            body = body.replace(char, f"\\u{ord(char):04x}")
+    return body
 
 
-def _visible(text: str) -> str:
-    """Show file text on one output line, noting any escaped character."""
-    shown = _CONTROL.sub(_escape, text)
-    return shown + _ESCAPED_NOTE if shown != text else shown
+def _render(text: str) -> tuple[str, bool]:
+    """Show file text on one output line; return the display and whether it is escaped.
+
+    Text without a control character is shown exactly. Otherwise it is shown as
+    a JSON string body, which decodes to exactly one text.
+    """
+    if _CONTROL.search(text) is None:
+        return text, False
+    return _json_body(text), True
 
 
-def _visible_prefix(text: str, room: int) -> tuple[str, int]:
+def _fit(text: str, room: int) -> tuple[str, int, bool]:
     """Show the longest prefix of text whose display fits in room bytes.
 
-    Returns the display and how many of text's characters it covers.
+    Returns the display, how many of text's characters it covers, and whether
+    it is escaped; an escaped display also spends room on _ESCAPED_MARK. Every
+    character shows as at least one byte, so only the first room + 1 characters
+    are examined: paging a long line costs time in proportion to each page,
+    not to the rest of the line.
     """
-    size, escaped = 0, False
-    for used, char in enumerate(text):
-        shown = _CONTROL.sub(_escape, char)
-        size += len(shown.encode())
-        escaped = escaped or shown != char
-        if size + (len(_ESCAPED_NOTE) if escaped else 0) > room:
-            return _visible(text[:used]), used
-    return _visible(text), len(text)
+    window = text[: max(room, 0) + 1]
+    shown, escaped = _render(window)
+    if escaped:
+        room -= len(_ESCAPED_MARK)
+    data = shown.encode()
+    if len(window) == len(text) and len(data) <= room:
+        return shown, len(text), escaped
+    if not escaped:
+        fitted = data[: max(room, 0)].decode("utf-8", errors="ignore")
+        return fitted, len(fitted), False
+    # Escapes are per character, so a prefix's display is a prefix of the
+    # display and its size grows with the prefix: search for the longest fit.
+    low, high = 0, len(window)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(_json_body(window[:middle]).encode()) <= room:
+            low = middle
+        else:
+            high = middle - 1
+    return _json_body(window[:low]), low, True
 
 
 def _match_line(data: dict[str, Any]) -> str:
@@ -439,7 +474,9 @@ def _match_line(data: dict[str, Any]) -> str:
     note = ""
     if len(text) > MAX_MATCH_CHARS:
         text, note = text[:MAX_MATCH_CHARS], " [line truncated; read_file with start_column]"
-    return f"{name}:{data['line_number']}:{_visible(text)}{note}"
+    shown, escaped = _render(text)
+    mark = _ESCAPED_MARK if escaped else ""
+    return f"{name}:{data['line_number']}{mark}:{shown}{note}"
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}

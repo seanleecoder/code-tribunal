@@ -8,6 +8,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import tomllib
 from pathlib import Path
 
@@ -87,9 +89,8 @@ def test_search_never_follows_symlinks_out(repo: Path) -> None:
 
 def test_read_file_numbers_lines_as_git_does(repo: Path) -> None:
     (repo / "ff.py").write_bytes("a\r\n\x0cb\nc\x1cd\u2028e\n".encode())
-    note = tools._ESCAPED_NOTE
     assert call(repo, "read_file", path="ff.py") == (
-        f"1\ta\n2\t\\fb{note}\n3\tc\\u001cd\\u2028e{note}",
+        "1\ta\n2!\t\\fb\n3!\tc\\u001cd\\u2028e",
         False,
     )
     (repo / "empty.txt").write_bytes(b"")
@@ -181,26 +182,52 @@ def test_match_text_cannot_pose_as_another_match(repo: Path) -> None:
         "hit\rpkg/auth.py:12:a\x0bb\x0cc\x85d e f\tg\n", newline=""
     )
     assert call(repo, "grep", pattern="hit", path="notes.txt") == (
-        "notes.txt:1:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\tg"
-        f"{tools._ESCAPED_NOTE}\n",
+        "notes.txt:1!:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\\tg\n",
         False,
     )
 
 
 @needs_rg
 def test_escaped_text_is_distinct_from_literal_escape_text(repo: Path) -> None:
-    # A real CR and the two characters backslash-r look alike once escaped;
-    # only the line holding the real one is marked, in grep and read_file.
+    # A real CR and the two characters backslash-r look alike once escaped.
+    # The line holding the real one is marked in the tool-written prefix, where
+    # content cannot reach, and shown as a JSON string body; other lines are
+    # shown exactly.
     (repo / "esc.py").write_text('real = "a\rb"  # hit\nliteral = "a\\rb"  # hit\n', newline="")
-    note = tools._ESCAPED_NOTE
     assert call(repo, "grep", pattern="hit", path="esc.py") == (
-        f'esc.py:1:real = "a\\rb"  # hit{note}\nesc.py:2:literal = "a\\rb"  # hit\n',
+        'esc.py:1!:real = \\"a\\rb\\"  # hit\nesc.py:2:literal = "a\\rb"  # hit\n',
         False,
     )
     assert call(repo, "read_file", path="esc.py") == (
-        f'1\treal = "a\\rb"  # hit{note}\n2\tliteral = "a\\rb"  # hit',
+        '1!\treal = \\"a\\rb\\"  # hit\n2\tliteral = "a\\rb"  # hit',
         False,
     )
+
+
+@needs_rg
+def test_no_two_lines_are_shown_alike(repo: Path) -> None:
+    # Each pair once rendered identically: literal escape text beside a forged
+    # note, and controls next to literal backslashes. Every line must decode to
+    # exactly its own text.
+    lines = [
+        "\x01 hit",
+        "\\u0001 [control characters shown escaped] hit",
+        "\r\\u0001 hit",
+        "\\r\x01 hit",
+        "\\\\r hit",
+        'tab\tand "quote" \x01 hit',
+    ]
+    (repo / "pairs.txt").write_text("".join(f"{line}\n" for line in lines), newline="")
+    read = call(repo, "read_file", path="pairs.txt")[0].splitlines()
+    found = call(repo, "grep", pattern="hit", path="pairs.txt")[0].splitlines()
+    assert len(set(read)) == len(set(found)) == len(lines)
+    for shown, line in zip(read, lines, strict=True):
+        number, _, text = shown.partition("\t")
+        assert (json.loads(f'"{text}"') if number.endswith("!") else text) == line
+    for shown, line in zip(sorted(found, key=lambda m: int(m.split(":")[1].rstrip("!"))),
+                           lines, strict=True):
+        _, number, text = shown.split(":", 2)
+        assert (json.loads(f'"{text}"') if number.endswith("!") else text) == line
 
 
 def test_read_file_resumes_by_file_columns_through_escapes(repo: Path, monkeypatch) -> None:
@@ -213,11 +240,34 @@ def test_read_file_resumes_by_file_columns_through_escapes(repo: Path, monkeypat
         text, is_error = call(repo, "read_file", path="ctl.txt", start_column=column)
         assert not is_error
         body, _, rest = text.partition("\n")
-        seen += body.removeprefix("1\t").removesuffix(tools._ESCAPED_NOTE)
+        seen += json.loads('"' + body.removeprefix("1!\t") + '"')
         if not rest:
             break
         column = int(rest.rsplit("start_column=", 1)[1].rstrip("]"))
-    assert seen == json.dumps(raw)[1:-1]
+    assert seen == raw
+
+
+def test_paging_a_long_line_renders_each_page_only(repo: Path, monkeypatch) -> None:
+    # Rendering is bounded by the page, not by the rest of the line, so paging
+    # through a control-dense line costs time in proportion to its length.
+    raw = "\x01" * 20_000
+    (repo / "ctl.txt").write_text(raw + "\n")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 600)
+    rendered = []
+    render = tools._render
+    monkeypatch.setattr(tools, "_render", lambda text: rendered.append(len(text)) or render(text))
+    seen, column, pages = "", 1, 0
+    while True:
+        pages += 1
+        text, _ = call(repo, "read_file", path="ctl.txt", start_column=column)
+        body, _, rest = text.partition("\n")
+        seen += json.loads('"' + body.removeprefix("1!\t") + '"')
+        if not rest:
+            break
+        column = int(rest.rsplit("start_column=", 1)[1].rstrip("]"))
+    assert seen == raw and pages > 100
+    # Each page renders at most one budget of characters, never the whole rest.
+    assert max(rendered) <= 600 and sum(rendered) <= 8 * len(raw)
 
 
 @needs_rg
@@ -299,13 +349,13 @@ def test_one_long_line_stays_reachable(repo: Path, monkeypatch) -> None:
         text, is_error = call(repo, "read_file", path="cr.txt", start_column=column)
         assert not is_error
         body, _, note = text.partition("\n")
-        assert body.startswith("1\t")
-        seen += body.removeprefix("1\t").removesuffix(tools._ESCAPED_NOTE)
+        assert body.startswith("1!\t")
+        seen += json.loads('"' + body.removeprefix("1!\t") + '"')
         if not note:
             break
         column = int(note.rsplit("start_column=", 1)[1].rstrip("]"))
     # Inner CRs are shown escaped; the line's own trailing CR is stripped.
-    assert seen == "x\\r" * 40 + "END"
+    assert seen == "x\r" * 40 + "END"
 
 
 def test_binary_and_non_string_paths_are_refused(repo: Path) -> None:
@@ -356,6 +406,38 @@ def test_grep_signals_its_group_before_reaping_rg(repo: Path, monkeypatch) -> No
     monkeypatch.setattr(tools.os, "killpg", checked_killpg)
     assert call(repo, "grep", pattern="value = 1") == ("pkg/module.py:1:value = 1\n", False)
     assert signalled == [True]
+
+
+@needs_rg
+def test_a_running_timeout_cannot_signal_after_grep_returns(repo: Path, monkeypatch) -> None:
+    # cancel() cannot stop a timeout callback that has already started. grep
+    # must wait for it, or the callback could signal a reaped, reused group.
+    signals: list[str] = []
+    monkeypatch.setattr(tools.os, "killpg", lambda pgid, sig: signals.append("kill"))
+
+    class EnteredTimer(threading.Thread):
+        """A timer whose callback starts as the search finishes, then lags."""
+
+        def __init__(self, interval: float, function) -> None:
+            super().__init__(daemon=True)
+            self.function, self.entered = function, threading.Event()
+
+        def run(self) -> None:
+            self.entered.wait()
+            time.sleep(0.2)
+            self.function()
+
+        def cancel(self) -> None:
+            self.entered.set()
+
+    timers: list[EnteredTimer] = []
+    monkeypatch.setattr(
+        tools.threading, "Timer", lambda *args: timers.append(EnteredTimer(*args)) or timers[-1]
+    )
+    call(repo, "grep", pattern="value = 1")
+    returned = len(signals)
+    timers[0].join(5)
+    assert signals[returned:] == []
 
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:
