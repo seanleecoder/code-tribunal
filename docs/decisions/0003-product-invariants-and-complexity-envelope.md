@@ -1,7 +1,8 @@
 # ADR-0003 — Product invariants and complexity envelope
 
 - **Status:** Accepted; release authority amended by
-  [ADR-0004](0004-simplified-release-process.md)
+  [ADR-0004](0004-simplified-release-process.md); reviewer tool policy amended
+  2026-11-17 ([below](#amendment-2026-11-17-no-shell-codex))
 - **Date:** 2026-08-22
 - **Decision:** Product boundaries and review requirements
 
@@ -45,6 +46,32 @@ preparation, adapter execution, critique, consensus, posting/state, platform
 transport, release/supply chain, or documentation/tooling. Cross-boundary work
 is permitted when the pull request explains why it cannot be staged as contract,
 migration, and deletion.
+
+### Amendment (2026-11-17): no-shell Codex
+
+First-party reviewers read repositories only through fixed, read-only tool
+policies: Claude's `Read,Grep,Glob`, OpenCode's read/glob/grep permissions,
+Cursor's ask mode with shell and writes denied, and Codex with its shell tool
+disabled. Codex 0.169.0 needs an OS sandbox (bwrap with nested user namespaces)
+to confine its shell; default Docker seccomp and AppArmor profiles, and Ubuntu's
+unprivileged user-namespace restriction, block that sandbox on standard Linux
+runners. Relaxing runner kernel policy was rejected.
+
+Codex review therefore reads the copied snapshot through a trusted, internal,
+standard-library stdio MCP server,
+[`ai_review.codex_repo_tools`](../../ai-review/src/ai_review/codex_repo_tools.py),
+which the registry starts in isolated mode. It offers `read_file`, `list_dir` and
+`grep` (the image's pinned `rg`), resolves every path inside the snapshot,
+bounds output, writes nothing, and refuses to start if its environment carries
+anything beyond plain process variables. Critique has no repository tools. The
+registry disables other optional Codex tools that have feature flags;
+`apply_patch` has no supported switch and stays subject to Codex's read-only
+policy. The image gate pins the remaining tool set.
+
+This is a fixed part of one reviewer's trusted invocation, not a plugin
+mechanism: the server is not configurable, discoverable or replaceable by
+consumers. Pinned CLIs remain trusted to honor documented behavior; Code
+Tribunal owns this server's containment and credential isolation.
 
 ## Sources of truth
 

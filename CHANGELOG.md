@@ -9,27 +9,24 @@ versioning.
 
 ### Fixed
 
-- Restore Codex's native code-mode host, pruned in v3.1.0 even though models such
-  as `openai/gpt-6.1-sol` require it. Affected reviews saw the inline diff but
-  could not use repository tools and could falsely report success with zero
-  findings. Codex execution events now reject missing-host, terminal and wholly
-  failed operational tool runs as `model_error`, excluding the seat from review
-  success and resolution eligibility and exposing it in run health. Empty
-  reviews, tool-free critiques, no-match searches and tool recovery remain valid.
-  Linux investigation also found sandbox failures that the CLI exposes only to
-  the provider, leaving the production codec without a failure signal. The
-  sentinel image gate rejects them; no working Linux launch policy is proven.
-  An unconditional network-disabled real-CLI image probe guards CLI pin bumps.
-  The fix requires both runtime images rebuilt and a fresh exact-pair canary;
-  existing v3.1.0 tags and digests remain immutable.
+- Codex reviews could not read repository files in v3.1.0. The image pruned
+  Codex's native code-mode host, which models such as `openai/gpt-6.1-sol`
+  require, and on Linux runners Codex's shell sandbox cannot start under default
+  container security policies. Affected reviews saw only the inline diff and
+  could report success with zero findings. The host is restored, and Codex now
+  runs without a shell: review reads the snapshot through a trusted read-only
+  repository tool server (`read_file`, `list_dir`, `grep`), and other optional
+  Codex tools are disabled. No runner security options are needed. Codex
+  execution events reject missing-host, terminal, unavailable-tool-server and
+  wholly failed operational tool runs as `model_error`, excluding the seat from
+  review success and resolution eligibility and exposing it in run health.
+  Empty reviews, tool-free critiques, no-match searches, tool-reported errors and
+  recovery remain valid. An unconditional network-disabled real-CLI image gate
+  guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
+  exact-pair canary; existing v3.1.0 tags and digests remain immutable.
 
 ### Changed
 
-- The Codex image probe reports every case under an overall time bound, including
-  setup and transport failures, and checks denied snapshot mutations/deletions
-  and writes to runtime/input canaries with independent byte comparisons.
-  A temporary four-way Linux sandbox diagnostic is available for the namespace
-  failure investigation; production launch policy remains unchanged.
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
   using locally available Git objects, and rechecks its identity and the API
   revision before publishing inputs. Stale detached runs and unavailable source

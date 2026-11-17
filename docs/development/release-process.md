@@ -47,8 +47,9 @@ row whose target has arrived, and remove completed spec files from the active
    Image preflight must pass the unconditional Linux/amd64 Codex gate,
    `scripts/smoke_codex_batch_output.sh <reviewer-image>`, as well as the OpenCode
    probes. A local Termux CLI run does not replace image acceptance. The Codex
-   probe needs no credentials or external network; it proves repository reads
-   through code mode and rejects operational failures hidden by valid final JSON.
+   probe needs no credentials or external network; it proves no-shell repository
+   reads through code mode, containment and the pinned tool set, and rejects
+   operational failures hidden by valid final JSON.
 
 2. **Run the canary.** Run the read-only `make demo-preflight`, which catches demo
    drift before tokens are spent. Then dispatch the protected

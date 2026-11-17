@@ -149,6 +149,22 @@ opened, a symlinked `CLAUDE.md` is left out instead of rejecting the snapshot.
 The hostile-symlink and no-follow behavior is exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).
 
+Codex runs with its shell tool disabled, because its shell sandbox cannot start
+under default Linux container policies. Its review reads the copied snapshot only
+through the trusted
+[`codex_repo_tools`](../ai-review/src/ai_review/codex_repo_tools.py) MCP server,
+which Codex starts outside any sandbox. That server therefore enforces the
+boundary itself: it resolves every requested path, symlinks included, inside the
+snapshot, rejects absolute paths, bounds file, listing and search output, runs
+grep through the image's pinned `rg` with fixed arguments and a timeout, and has
+no write operation. It runs in isolated Python mode and refuses to start if its
+environment carries anything beyond plain process variables, so a provider
+credential cannot reach model-driven tool calls; Codex then fails the review
+instead of continuing without tools. Codex's remaining `apply_patch` tool is
+rejected by its read-only policy and writes only to the disposable copy. The
+[image gate](development/testing.md#codex-image-gate) checks containment,
+credential refusal, the pinned tool set and unchanged bytes.
+
 Residual risk: intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary
 Git checkouts cannot create them.

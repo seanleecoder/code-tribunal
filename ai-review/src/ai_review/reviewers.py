@@ -79,6 +79,13 @@ def _definition(
     )
 
 
+# Stable (or deprecated, still default-on) Codex 0.169.0 feature flags. The
+# image gate pins the tool set that remains.
+_CODEX_DISABLED_FEATURES = (
+    "shell_tool", "view_image", "sleep_tool", "goals", "image_generation",
+    "multi_agent", "multi_agent_v2", "apps", "plugins",
+)
+
 REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
     {
         "claude": _definition(
@@ -110,7 +117,19 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 "--config", 'model_providers.openrouter.name="OpenRouter"',
                 "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
                 "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
-                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}", "-",
+                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}",
+                # No shell: Linux runners' default container policies block the
+                # nested bwrap sandbox it needs. Drop tools a reviewer never uses.
+                *(f"--config=features.{feature}=false" for feature in _CODEX_DISABLED_FEATURES),
+                "-",
+            ),
+            # Review reads the snapshot only through the trusted read-only MCP
+            # server; critique has no repository tools. Paths are TOML strings.
+            review_arguments=(
+                "--config=mcp_servers.repo.command={python_toml}",
+                '--config=mcp_servers.repo.args=["-I", {repo_tools_toml}, "--root", {root_toml}]',
+                "--config=mcp_servers.repo.required=true",
+                '--config=mcp_servers.repo.default_tools_approval_mode="approve"',
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),

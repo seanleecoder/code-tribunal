@@ -329,8 +329,11 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     Command exit codes describe repository programs, not tool availability: grep
     with no matches is a working tool. A failed command item is operational only
     when the CLI reports failure to launch, sandbox failure, or shell 126/127.
-    No-tool reviews and critiques remain valid. See captured 0.169.0 fixtures
-    and the real-CLI image gate in scripts/smoke_codex_batch_output.py.
+    Repository MCP calls follow the same rule: a ``failed`` item without an
+    ``error`` is a tool-reported result (missing file, refused path); a set
+    ``error`` means the call itself failed. No-tool reviews and critiques remain
+    valid. See captured 0.169.0 fixtures and the real-CLI image gate in
+    scripts/smoke_codex_batch_output.py.
     """
     if _CODEX_HOST_FAILURE.search(stderr):
         raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
@@ -410,6 +413,14 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
                         re.IGNORECASE,
                     )
                 ):
+                    operational_failures += 1
+            elif item_type == "mcp_tool_call":
+                if item.get("server") != "repo":
+                    raise SchemaValidationError("Codex called an unregistered MCP server")
+                if item.get("status") not in {"completed", "failed"}:
+                    raise SchemaValidationError("Codex MCP call has no terminal result")
+                attempts += 1
+                if item.get("error") is not None:
                     operational_failures += 1
             elif item_type not in {"reasoning", "todo_list"}:
                 raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")

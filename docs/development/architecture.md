@@ -92,19 +92,18 @@ These rules are worth stating because breaking them is silent:
   passes the explicit stage to the shared root normalizer; no decoder guesses
   another reviewer's transport from stdout. Codex uses its `exec --json` events;
   terminal failures, unavailable code-mode host and wholly failed operational tool
-  attempts invalidate even a well-formed final answer. No-tool reviews and
-  critiques, no-match searches and recovery after a failed tool remain usable.
-  Full bounded stderr is retained privately for execution admission before the
-  shorter redacted diagnostic tail is printed; it is never a public artifact.
-  Admission depends on failure signals exposed by that transport. The Linux
-  investigation found sandbox failures visible only in provider tool responses,
-  with no CLI command/error event or stderr; the current codec cannot distinguish
-  those streams from tool-free success. The image gate's random sentinel check
-  rejects them. A manually loaded runner-policy candidate passed the Linux
-  feasibility suite; the default gate still fails. The chosen direction is a
-  no-shell Codex with trusted read-only tools under default launch policies; a
-  hosted-runner feasibility experiment passed, production integration pending. See the
-  [investigation limits](testing.md#temporary-codex-sandbox-investigation).
+  attempts invalidate even a well-formed final answer. A repository MCP call that
+  reports a tool error (missing file, refused path) is a usable result, like a
+  grep with no match; a call whose `error` is set is operational. No-tool reviews
+  and critiques and recovery after a failed tool remain usable. Full bounded
+  stderr is retained privately for execution admission before the shorter
+  redacted diagnostic tail is printed; it is never a public artifact.
+- Codex runs without a shell. Review reads the snapshot through the trusted
+  [`codex_repo_tools`](../../ai-review/src/ai_review/codex_repo_tools.py) MCP
+  server that the registry configures; it is standard-library only and imports
+  nothing from the runner. See the
+  [ADR-0003 amendment](../decisions/0003-product-invariants-and-complexity-envelope.md#amendment-2026-11-17-no-shell-codex)
+  and the [image gate](testing.md#codex-image-gate).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and

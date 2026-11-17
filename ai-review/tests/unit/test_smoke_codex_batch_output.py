@@ -30,7 +30,13 @@ def request() -> dict:
                     {
                         "type": "namespace",
                         "name": "functions",
-                        "tools": [{"type": "custom", "name": "exec"}],
+                        "tools": [
+                            {
+                                "type": "custom",
+                                "name": "exec",
+                                "description": "Deferred tools are listed in `ALL_TOOLS`.",
+                            }
+                        ],
                     }
                 ],
             }
@@ -49,6 +55,8 @@ def request() -> dict:
         "no-read",
         "fabricated-read",
         "stub-error",
+        "no-discovery",
+        "critique-offered-tools",
     ],
 )
 def test_request_proof_rejects_false_positive(damage: str) -> None:
@@ -69,6 +77,10 @@ def test_request_proof_rejects_false_positive(damage: str) -> None:
         second["input"] = []
     elif damage == "fabricated-read":
         second["input"] = [{"type": "message", "role": "assistant", "content": "random-sentinel"}]
+    elif damage == "no-discovery":
+        first["input"][0]["tools"][0]["tools"][0]["description"] = "Run JavaScript."
+    elif damage == "critique-offered-tools":
+        first["input"].append({"type": "message", "content": "tools.mcp__repo__read_file"})
     else:
         errors = ["scripted failure"]
     with pytest.raises(AssertionError):
@@ -78,6 +90,7 @@ def test_request_proof_rejects_false_positive(damage: str) -> None:
             steps=1,
             sentinel="random-sentinel",
             schema=request()["text"]["format"]["schema"],
+            stage="critique" if damage == "critique-offered-tools" else "review",
         )
 
 
@@ -95,7 +108,8 @@ def test_request_proof_accepts_real_tool_result_only() -> None:
 
 def test_stub_drives_responses_tool_call_then_exact_answer_over_loopback() -> None:
     batch = smoke.probe_batch("review")
-    with smoke.StubProvider(batch, [smoke.command({"cmd": "cat sentinel.txt"})]) as stub:
+    read = smoke.mcp_call("read_file", {"path": "sentinel.txt"})
+    with smoke.StubProvider(batch, [read]) as stub:
         responses = []
         for _ in range(2):
             req = Request(
@@ -113,7 +127,7 @@ def test_stub_drives_responses_tool_call_then_exact_answer_over_loopback() -> No
                 )
     item = responses[0][1]["item"]
     assert item["type"] == "custom_tool_call" and item["name"] == "exec"
-    assert "tools.exec_command" in item["input"]
+    assert "tools.mcp__repo__read_file" in item["input"]
     assert json.loads(responses[1][1]["item"]["content"][0]["text"]) == batch
     assert len(stub.requests) == 2 and not stub.errors
 
@@ -131,25 +145,13 @@ def test_image_gate_is_unconditional_and_precedes_image_save() -> None:
     steps = workflow["jobs"]["build-preflight"]["steps"]
     probe = next(s for s in steps if "smoke_codex_batch_output.sh" in s.get("run", ""))
     save = next(s for s in steps if s.get("name") == "Save preflighted image artifact")
-    assert "if" not in probe
+    assert "if" not in probe and "continue-on-error" not in probe
     assert steps.index(probe) < steps.index(save)
     wrapper = (ROOT / "scripts/smoke_codex_batch_output.sh").read_text()
-    assert "--network none" in wrapper
-    assert "readonly" in wrapper
-    diagnostic = next(s for s in steps if s.get("name") == "Diagnose Codex namespace restrictions")
-    assert diagnostic["if"] == "failure() && steps.codex-gate.outcome == 'failure'"
-    assert diagnostic["timeout-minutes"] == 16
-    assert "continue-on-error" not in probe and "continue-on-error" not in diagnostic
-    assert steps.index(probe) < steps.index(diagnostic) < steps.index(save)
-    upload = next(s for s in steps if s.get("name") == "Upload Codex sandbox diagnostic evidence")
-    assert "always()" in upload["if"] and "steps.codex-sandbox.outcome" in upload["if"]
-    assert upload["with"] == {
-        "name": "codex-sandbox-diagnostic",
-        "path": "${{ runner.temp }}/codex-sandbox",
-        "if-no-files-found": "error",
-        "retention-days": 7,
-    }
-    assert steps.index(diagnostic) < steps.index(upload) < steps.index(save)
+    assert "--network none" in wrapper and "readonly" in wrapper
+    # No-shell Codex needs no relaxed container policy or added capability.
+    assert "--security-opt" not in wrapper and "--cap-add" not in wrapper
+    assert "--privileged" not in wrapper
 
 
 def test_collect_all_preserves_assertion_setup_and_transport_failures(tmp_path: Path) -> None:
@@ -203,9 +205,7 @@ def test_independent_byte_check_rejects_mutations(tmp_path: Path, damage: str) -
         smoke.assert_unchanged(protected)
 
 
-def test_full_suite_retains_all_previous_cases_and_adds_read_only(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, monkeypatch) -> None:
     import sys
 
     visited = []
@@ -214,32 +214,41 @@ def test_full_suite_retains_all_previous_cases_and_adds_read_only(
         "argv",
         ["probe", "--install-root", str(ROOT / "ai-review"), "--scratch", str(tmp_path)],
     )
-    monkeypatch.setattr(smoke, "run_case", lambda _i, _s, label, _m, **_kw: visited.append(label))
-    monkeypatch.setattr(smoke, "missing_host_case", lambda *_: visited.append("missing-host"))
-    monkeypatch.setattr(smoke, "read_only_case", lambda *_: visited.append("read-only"))
+    monkeypatch.setattr(
+        smoke,
+        "run_case",
+        lambda _i, scratch, label, _m, **_kw: visited.append(f"{scratch.name}/{label}"),
+    )
+    monkeypatch.setattr(smoke, "containment_case", lambda *_: visited.append("tools/containment"))
+    monkeypatch.setattr(
+        smoke, "missing_host_case", lambda *_: visited.append("failures/missing-host")
+    )
     assert smoke.main() == 0
     assert visited == [
-        "read",
-        "empty",
-        "critique",
-        "read",
-        "empty",
-        "critique",
-        "malformed",
-        "truncated",
-        "all-tools-failed",
-        "recovery",
-        "no-match",
-        "terminal",
-        "missing-host",
-        "read-only",
+        "0/read",
+        "0/empty",
+        "0/critique",
+        "1/read",
+        "1/empty",
+        "1/critique",
+        "tools/search",
+        "tools/no-match",
+        "tools/tool-error",
+        "tools/recovery",
+        "tools/containment",
+        "failures/malformed",
+        "failures/truncated",
+        "failures/terminal",
+        "failures/tool-server-unavailable",
+        "failures/credential-in-tool-env",
+        "failures/missing-host",
     ]
 
 
 @pytest.mark.parametrize("damage", ["none", "write", "delete"])
-@pytest.mark.parametrize("trace", [False, True])
+@pytest.mark.parametrize("overrides", [[], ["-c", 'mcp_servers.repo.env={X="1"}']])
 def test_snapshot_observation_precedes_real_runner_cleanup(
-    tmp_path: Path, monkeypatch, damage: str, trace: bool
+    tmp_path: Path, monkeypatch, damage: str, overrides: list[str]
 ) -> None:
     import shutil
     import sys
@@ -262,14 +271,14 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
             str(capture),
             "",
             str(workspace),
-            str(tmp_path / "trace") if trace else "",
+            json.dumps(overrides),
         ],
     )
-    prepared_env = {}
+    prepared = {}
 
     def prepare(_definition, _stage, env):
-        prepared_env.update(env)
-        return [], root
+        prepared["env"] = dict(env)
+        return ["registry"], root
 
     monkeypatch.setattr(runner, "prepare_shell_adapter", prepare)
 
@@ -281,7 +290,7 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def run_adapter(*_args):
-        runner.prepare_shell_adapter(None, "review", {})
+        prepared["arguments"] = runner.prepare_shell_adapter(None, "review", {})[0]
         runner._run_adapter_process([], {}, 60)
         shutil.rmtree(root)
         return 0
@@ -295,69 +304,84 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
     observed = json.loads(workspace.read_text())["files_after_cli"]
     assert (observed["example.py"] == b"example = 1\n".hex()) == (damage == "none")
     assert observed["sentinel.txt"] == b"secret-sentinel".hex()
-    assert ("CODEX_ROLLOUT_TRACE_ROOT" in prepared_env) == trace
+    assert prepared["env"] == {"OPENROUTER_BASE_URL": "http://127.0.0.1"}
+    # Retry bounds and negative-control overrides follow the registry arguments.
+    assert prepared["arguments"][0] == "registry"
+    assert prepared["arguments"][-len(overrides) or len(prepared["arguments"]) :] == (
+        overrides or []
+    )
+
+
+def surface_stub(probe: dict, outputs: list[str], direct: set[str]) -> SimpleNamespace:
+    first = {"tools": [{"type": "custom", "name": name} for name in sorted(direct)], "input": []}
+    texts = [*outputs, smoke.PROBE_MARKER + json.dumps(probe)]
+    later = [
+        {
+            "input": [
+                {"type": "custom_tool_call_output", "output": [{"type": "input_text", "text": t}]}
+            ]
+        }
+        for t in texts
+    ]
+    return SimpleNamespace(requests=[first, *later])
 
 
 @pytest.mark.parametrize(
-    "syscalls_complete,trace_complete", [(True, True), (False, True), (True, False), (False, False)]
+    "damage",
+    ["", "disclosed", "no-refusal", "shell", "extra-tool", "unlisted", "patch-applied", "direct"],
 )
-@pytest.mark.parametrize("admission_passed", [False, True])
-def test_diagnostic_destroys_raw_trace_and_requires_complete_setup(
-    tmp_path: Path,
-    monkeypatch,
-    syscalls_complete: bool,
-    trace_complete: bool,
-    admission_passed: bool,
-) -> None:
-    import sys
-    from tempfile import TemporaryDirectory
+def test_tool_surface_rejects_each_unsafe_or_vacuous_result(tmp_path: Path, damage: str) -> None:
+    secret = tmp_path / "protected.txt"
+    secret.write_text("protected-value")
+    protected = {secret: secret.read_bytes()}
+    outputs = [
+        '{"content":[{"text":"path is outside the repository snapshot"}]}',
+        '{"content":[{"text":"path must be repository-relative"}]}',
+    ]
+    probe = {
+        "shell": "undefined",
+        "stdin": "undefined",
+        "keys": sorted(smoke.EXPECTED_CODE_MODE_TOOLS),
+        "all_tools": sorted(smoke.EXPECTED_CODE_MODE_TOOLS),
+        "apply_patch": "function",
+        "patch_result": "patch rejected: writing is blocked by read-only sandbox",
+    }
+    direct = set(smoke.EXPECTED_DIRECT_TOOLS)
+    if damage == "disclosed":
+        outputs.append("protected-value")
+    elif damage == "no-refusal":
+        outputs = outputs[1:]
+    elif damage == "shell":
+        probe["shell"] = "function"
+    elif damage == "extra-tool":
+        probe["keys"].append("exec_command")
+    elif damage == "unlisted":
+        probe["all_tools"] = ["apply_patch"]
+    elif damage == "patch-applied":
+        probe["patch_result"] = "Success. Updated the following files"
+    elif damage == "direct":
+        direct.add("spawn_agent")
+    stub = surface_stub(probe, outputs, direct)
+    if damage:
+        with pytest.raises(AssertionError):
+            smoke.assert_tool_surface(stub, protected)
+    else:
+        smoke.assert_tool_surface(stub, protected)
 
-    private = tmp_path / "container-private"
-    private.mkdir()
-    evidence = tmp_path / "uploaded-evidence"
-    roots = []
 
-    def private_directory(*_args, **options):
-        assert options["dir"] == "/tmp"
-        return TemporaryDirectory(dir=private)
+def test_tool_texts_reads_structured_and_plain_outputs() -> None:
+    request = {
+        "input": [
+            {"type": "custom_tool_call_output", "output": [{"type": "input_text", "text": "a"}]},
+            {"type": "function_call_output", "output": "b"},
+            {"type": "message", "content": "not a tool"},
+        ]
+    }
+    assert smoke.tool_texts(request) == ["a", "b"]
 
-    def run_case(*_args, rollout_trace, **_options):
-        assert rollout_trace.is_relative_to(private)
-        assert not rollout_trace.is_relative_to(evidence)
-        (rollout_trace / "sensitive-raw-trace").write_text("private-argument-and-result")
-        roots.append(rollout_trace)
 
-    monkeypatch.setattr(sys, "argv", ["probe", "--diagnostic-read", "--scratch", str(evidence)])
-    monkeypatch.setattr(smoke, "TemporaryDirectory", private_directory)
-    monkeypatch.setattr(smoke, "run_case", run_case)
-    monkeypatch.setitem(
-        sys.modules, "diagnose_codex_sandbox", SimpleNamespace(runtime_context=lambda: {})
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "probe_codex_namespaces",
-        SimpleNamespace(
-            collect_probes=lambda: {"complete": syscalls_complete},
-        ),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "probe_codex_trace",
-        SimpleNamespace(
-            summarize_trace=lambda _root: {"complete": trace_complete},
-        ),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "probe_codex_admission",
-        SimpleNamespace(
-            probe_public_sandbox=lambda *_: {"complete": True, "passed": admission_passed},
-        ),
-    )
-    assert smoke.main() == (0 if syscalls_complete and trace_complete and admission_passed else 1)
-    assert roots and all(not root.exists() for root in roots)
-    assert not any(
-        "private-argument-and-result" in path.read_text()
-        for path in evidence.rglob("*")
-        if path.is_file()
-    )
+def test_containment_steps_name_paths_outside_the_snapshot(tmp_path: Path) -> None:
+    steps = smoke.containment_steps(tmp_path / "inputs/protected.txt", Path("/opt/x/protected.txt"))
+    assert steps[2] == smoke.SURFACE_PROBE
+    assert '"/opt/x/protected.txt"' in steps[1] and "../../" in steps[0]
+    assert all("tools.mcp__repo__read_file" in step for step in (steps[0], steps[1], steps[3]))

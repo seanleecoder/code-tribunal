@@ -37,17 +37,22 @@ def load(data: dict, stage: str = "review") -> dict:
     )
 
 
-@pytest.mark.parametrize("label", ["read", "empty", "critique", "recovery", "no-match"])
+@pytest.mark.parametrize(
+    "label",
+    ["read", "empty", "critique", "recovery", "no-match", "mcp-read", "mcp-tool-error",
+     "mcp-containment"],
+)
 def test_captured_usable_executions(label: str) -> None:
     stage = "critique" if label == "critique" else "review"
     raw = load(capture(label), stage)
     assert len(raw["critiques" if stage == "critique" else "findings"]) == (
-        1 if label in {"read", "recovery"} else 0
+        1 if label in {"read", "recovery", "mcp-read", "mcp-tool-error", "mcp-containment"} else 0
     )
 
 
 @pytest.mark.parametrize(
-    "label", ["all-tools-failed", "missing-host", "terminal", "linux-namespace-denied"]
+    "label",
+    ["all-tools-failed", "missing-host", "terminal", "linux-namespace-denied", "mcp-operational"],
 )
 def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> None:
     with pytest.raises(AdapterModelError):
@@ -158,6 +163,9 @@ def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
         ("all-tools-failed", "model_error"),
         ("linux-namespace-denied", "model_error"),
         ("terminal", "model_error"),
+        ("mcp-read", "success"),
+        ("mcp-tool-error", "success"),
+        ("mcp-operational", "model_error"),
     ],
 )
 def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, label, status) -> None:
@@ -211,3 +219,32 @@ def test_router_failure_without_command_events_is_still_an_attempt() -> None:
     )
     with pytest.raises(AdapterModelError, match="all failed operationally"):
         load(data)
+
+
+@pytest.mark.parametrize("damage", ["server", "status"])
+def test_mcp_calls_must_be_terminal_and_from_the_registered_server(damage: str) -> None:
+    data = capture("mcp-read")
+    events = list(map(json.loads, data["stdout"].splitlines()))
+    for event in events:
+        item = event.get("item", {})
+        if event["type"] == "item.completed" and item.get("type") == "mcp_tool_call":
+            if damage == "server":
+                item["server"] = "other"
+            else:
+                item["status"] = "in_progress"
+    data["stdout"] = "\n".join(json.dumps(e) for e in events) + "\n"
+    with pytest.raises(SchemaValidationError):
+        load(data)
+
+
+def test_one_operational_mcp_failure_still_allows_recovery() -> None:
+    failed = capture("mcp-operational")["stdout"].splitlines()
+    good = capture("mcp-read")
+    events = list(map(json.loads, good["stdout"].splitlines()))
+    broken = [json.loads(line) for line in failed if '"mcp_tool_call"' in line]
+    for event in broken:
+        event["item"]["id"] = "item_failed"
+    turn = next(i for i, e in enumerate(events) if e["type"] == "turn.started")
+    events[turn + 1 : turn + 1] = broken
+    good["stdout"] = "\n".join(json.dumps(e) for e in events) + "\n"
+    assert len(load(good)["findings"]) == 1

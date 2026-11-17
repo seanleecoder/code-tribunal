@@ -23,3 +23,13 @@ The `/bin/bash -lc` command exits 1 with a `bwrap:` namespace-permission error,
 while the CLI exits 0 and emits a valid final batch. This proves failure
 admission for the observed Linux shape; it does not identify the denying layer
 or demonstrate a working launch policy.
+
+The `mcp-*` captures come from the no-shell Linux/amd64 run in
+[workflow run 44073952753](https://github.com/seanleecoder/code-tribunal/actions/runs/44073952753)
+on 2026-11-17, under the default container launch policy. Thread IDs, random
+sentinels, a temporary directory suffix and a stderr timestamp are replaced.
+`mcp-read` reads through the repository MCP server. `mcp-tool-error` is a
+tool-reported missing file: status `failed` with `error: null`, which stays
+usable. `mcp-containment` holds two refused paths, then a successful read; its
+stderr carries Codex's `apply_patch` rejection. `mcp-operational` is derived
+from `mcp-read` by setting the item's `error`, the shape of a failed call.

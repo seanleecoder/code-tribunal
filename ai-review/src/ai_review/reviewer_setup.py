@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -85,6 +86,10 @@ def prepare_shell_adapter(
         "root": str(root),
         "schema_path": str(stage_schema_path(stage)),
         "schema_json": json.dumps(transport_schema(stage)),
+        # JSON strings are valid TOML basic strings for CLI --config values.
+        "root_toml": json.dumps(str(root)),
+        "python_toml": json.dumps(sys.executable),
+        "repo_tools_toml": json.dumps(str(Path(__file__).with_name("codex_repo_tools.py"))),
     }
     env.update(state_environment(definition, tmp_dir, values))
     arguments = definition.cli_arguments + (
