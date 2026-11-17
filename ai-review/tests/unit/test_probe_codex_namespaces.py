@@ -42,6 +42,37 @@ def test_noop_unshare_is_rejected_before_any_mutation(monkeypatch) -> None:
         probe.probe_case("combined")
 
 
+def test_denied_identity_inspection_preserves_context_without_permitting_mutations(
+    monkeypatch,
+) -> None:
+    state = {"isolated": False}
+
+    def unshare(_flags):
+        state["isolated"] = True
+
+    def namespace_id(_name):
+        if state["isolated"]:
+            raise OSError(errno.EACCES, "namespace inspection denied")
+        return 1
+
+    monkeypatch.setattr(probe.os, "unshare", unshare)
+    monkeypatch.setattr(probe, "namespace_id", namespace_id)
+    monkeypatch.setattr(probe, "process_context", lambda: {"status": "post-namespace-context"})
+    monkeypatch.setattr(Path, "write_text", lambda *_: pytest.fail("unverified mapping"))
+    monkeypatch.setattr(probe, "make_root_slave", lambda: pytest.fail("unverified mount"))
+    monkeypatch.setattr(probe, "add_loopback_address", lambda: pytest.fail("unverified network"))
+    result = probe.probe_case("combined")
+    assert result["context_after_unshare"] == {"status": "post-namespace-context"}
+    assert not result["namespace_verification_complete"]
+    assert result["steps"][-1] == {
+        "operation": "verify_namespace_identity",
+        "namespace": "user",
+        "ok": False,
+        "errno": errno.EACCES,
+        "error": "EACCES",
+    }
+
+
 @pytest.mark.parametrize("case", probe.CASES)
 @pytest.mark.parametrize("failed_step", ["", "mapping", "mount", "network"])
 def test_isolated_cases_record_operation_errors_and_stop_at_first_failure(

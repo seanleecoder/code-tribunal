@@ -122,13 +122,31 @@ def probe_case(label: str) -> dict:
     result["unshare_flags"] = flags
     if not step("unshare", lambda: os.unshare(flags)):
         return result
-    changed = {name: namespace_id(name) != identity for name, identity in before.items()}
+    # Read-only context can identify confinement attached by namespace creation,
+    # even when that confinement prevents subsequent namespace-ID inspection.
+    result["context_after_unshare"] = process_context()
+    changed = {}
     result["namespace_changed"] = changed
+    for name, identity in before.items():
+        try:
+            changed[name] = namespace_id(name) != identity
+        except OSError as exc:
+            steps.append(
+                {
+                    "operation": "verify_namespace_identity",
+                    "namespace": name,
+                    "ok": False,
+                    "errno": exc.errno,
+                    "error": errno.errorcode.get(exc.errno, "unknown"),
+                }
+            )
+            result["namespace_verification_complete"] = False
+            return result
+    result["namespace_verification_complete"] = True
     if not all(changed.values()):
         # Fail before touching any mapping, propagation, or interface if the
         # requested private namespace was not actually established.
         raise RuntimeError("namespace isolation was not established")
-    result["context_after_unshare"] = process_context()
     for name, content in (
         ("setgroups", "deny"),
         ("uid_map", f"0 {uid} 1"),
