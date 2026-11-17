@@ -369,6 +369,7 @@ def run_case(
                     "tool_outputs": tool_outputs(r),
                     # COMPAT-012: where shell names occur in CLI-authored request text.
                     "shell_mentions": shell_mentions(r),
+                    "mcp_mentions": shell_mentions(r, r"mcp__repo__\w+|read_file"),
                 }
                 for r in stub.requests
             ]
@@ -528,11 +529,10 @@ def containment_steps(protected_input: Path, protected_runtime: Path) -> list[st
     ]
 
 
-def shell_mentions(request: dict) -> list[str]:
+def shell_mentions(request: dict, pattern: str = r"exec_command|write_stdin") -> list[str]:
     text = json.dumps(request)
     return [
-        text[max(0, m.start() - 120) : m.end() + 120]
-        for m in list(re.finditer(r"exec_command|write_stdin", text))[:3]
+        text[max(0, m.start() - 120) : m.end() + 120] for m in list(re.finditer(pattern, text))[:3]
     ]
 
 
@@ -549,9 +549,9 @@ def assert_no_shell(
     outcome: dict,
     batch: dict,
 ) -> None:
-    offered = json.dumps(stub.requests[0].get("tools", [])) + json.dumps(
-        [i for i in stub.requests[0].get("input", []) if i.get("type") == "additional_tools"]
-    )
+    # Code mode may describe nested tools outside `tools`; a model can only call
+    # what the first request tells it about, wherever that description lives.
+    offered = json.dumps(stub.requests[0])
     # Prose may name the shell; callable shell absence is proven at runtime below.
     for name in ("exec_command", "write_stdin"):
         if name in advertised_tools(stub.requests[0]):
