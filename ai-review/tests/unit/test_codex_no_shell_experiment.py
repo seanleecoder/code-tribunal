@@ -141,9 +141,21 @@ def good_outputs(protected: dict[Path, bytes]) -> list[str]:
     return [
         'mcp__repo__read_file {"isError":true,"text":"outside the repository snapshot"}',
         'mcp__repo__read_file {"isError":true,"text":"must be repository-relative"}',
-        'CODEX_NO_SHELL_PROBE {"shell":"undefined","stdin":"undefined","apply_patch":"undefined"}',
+        'CODEX_NO_SHELL_PROBE {"shell":"undefined","stdin":"undefined","apply_patch":"function",'
+        '"patch_result":"patch rejected: writing is blocked by read-only sandbox"}',
         "mcp__repo__read_file snapshot-only-value",
     ]
+
+
+def event(item: dict) -> str:
+    return json.dumps({"type": "item.completed", "item": item})
+
+
+BATCH = {"findings": []}
+MCP_OUTCOME = {
+    "adapter_status": "schema_error",
+    "error_message_redacted": smoke.MCP_ITEM_UNSUPPORTED,
+}
 
 
 @pytest.mark.parametrize(
@@ -156,8 +168,12 @@ def good_outputs(protected: dict[Path, bytes]) -> list[str]:
         "disclosed",
         "no-refusal",
         "shell-live",
+        "patch-live",
         "env-leak",
         "critique-tools",
+        "other-schema-error",
+        "answer-differs",
+        "operational-mcp-error",
     ],
 )
 def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
@@ -167,11 +183,13 @@ def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
     secret.write_text("protected-value")
     protected = {secret: secret.read_bytes()}
     offered, outputs = ["exec", "mcp__repo__read_file"], good_outputs(protected)
-    stream, names, stage = '{"type":"item.completed"}', ["HOME", "PATH"], "review"
+    mcp = {"id": "i0", "type": "mcp_tool_call", "status": "completed", "error": None}
+    answer = {"id": "i1", "type": "agent_message", "text": json.dumps(BATCH)}
+    names, stage, outcome = ["HOME", "PATH"], "review", dict(MCP_OUTCOME)
     if damage == "offers-shell":
         offered.append("exec_command")
     elif damage == "ran-command":
-        stream += '\n{"item":{"type":"command_execution"}}'
+        mcp = {"id": "i0", "type": "command_execution"}
     elif damage == "missing-tool":
         outputs.append("CODEX_NO_MCP_TOOL []")
     elif damage == "disclosed":
@@ -180,19 +198,44 @@ def test_no_shell_assertions_reject_each_vacuous_or_unsafe_result(
         outputs = outputs[2:]
     elif damage == "shell-live":
         outputs[2] = outputs[2].replace('"shell":"undefined"', '"shell":"function"')
+    elif damage == "patch-live":
+        outputs[2] = outputs[2].replace("patch rejected", "patch applied")
     elif damage == "env-leak":
         names.append("OPENROUTER_API_KEY")
     elif damage == "critique-tools":
         stage = "critique"
+    elif damage == "other-schema-error":
+        outcome["error_message_redacted"] = "Codex item must have an id"
+    elif damage == "answer-differs":
+        answer["text"] = json.dumps({"findings": [{"title": "invented"}]})
+    elif damage == "operational-mcp-error":
+        mcp["error"] = {"message": "server exited"}
     (tmp_path / "mcp-env.json").write_text(json.dumps(names))
-    check = lambda: smoke.assert_no_shell(  # noqa: E731
-        stub(offered, outputs), {"stdout": stream}, tmp_path, stage=stage, protected=protected
-    )
+    capture = {"stdout": "\n".join([event(mcp), event(answer)])}
+
+    def check() -> None:
+        smoke.assert_no_shell(
+            stub(offered, outputs),
+            capture,
+            tmp_path,
+            stage=stage,
+            protected=protected,
+            outcome=outcome,
+            batch=BATCH,
+        )
+
     if damage:
         with pytest.raises(AssertionError):
             check()
     else:
         check()
+
+
+def test_shell_mentions_capture_bounded_context_only() -> None:
+    mentions = smoke.shell_mentions(
+        {"tools": [{"description": "x" * 500 + " exec_command " + "y" * 500}]}
+    )
+    assert len(mentions) == 1 and "exec_command" in mentions[0] and len(mentions[0]) < 300
 
 
 def test_runner_hook_disables_the_shell_and_scopes_tools_to_review() -> None:

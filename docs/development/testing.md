@@ -206,12 +206,24 @@ configured models must read a random snapshot-only sentinel through code mode.
 A search case lists and greps for it, and a no-match search must stay usable.
 The containment case requires refusals for traversal and absolute paths, no
 offered or callable shell, unchanged snapshot/protected bytes, and no runner
-credential in the server's environment names. A missing-file read records the
-adapter outcome without asserting it, because the current codec admits command
-failures only. Fixed item types and statuses go to the console and summary;
+credential in the server's environment names. The current codec fails closed
+on `mcp_tool_call` items, so tool-using cases require exactly that
+`schema_error`, an unchanged scripted final answer and no operational MCP error.
+Admitting MCP items, including tool-reported errors such as a missing file, is
+separate production work. Fixed item types and statuses go to the console and summary;
 captures stay in the approved seven-day artifact. A pass would establish
 feasibility only. A production tool server, codec admission for MCP failures,
 and registry changes need their own reviewed change.
+
+The [first run on `d3eeaab`](https://github.com/seanleecoder/code-tribunal/actions/runs/44068185860)
+used the default launch policy. Both models read the random sentinel through
+`mcp__repo__read_file` in code mode, and listing and grep returned it. Traversal
+and absolute paths were refused. `exec_command` and `write_stdin` were
+`undefined` at runtime. The offered `apply_patch` tool was rejected by Codex's
+read-only policy, and snapshot bytes were unchanged. The server inherited only
+`HOME`, `LC_CTYPE` and `PATH`. Every case still failed a textual check that found
+a shell tool name in the request; that check now records context and relies on
+the runtime probe. Each tool-using case produced the codec rejection above.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review

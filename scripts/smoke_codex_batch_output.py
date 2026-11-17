@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -366,6 +367,8 @@ def run_case(
                     "text": r.get("text"),
                     "tools": advertised_tools(r),
                     "tool_outputs": tool_outputs(r),
+                    # COMPAT-012: where shell names occur in CLI-authored request text.
+                    "shell_mentions": shell_mentions(r),
                 }
                 for r in stub.requests
             ]
@@ -395,7 +398,9 @@ def run_case(
         flush=True,
     )
     if no_shell is not None:
-        assert_no_shell(stub, capture, work, stage=stage, protected=protected)
+        assert_no_shell(
+            stub, capture, work, stage=stage, protected=protected, outcome=outcome, batch=batch
+        )
     if protected_runtime is not None:
         observed = json.loads((work / "workspace.json").read_text())["files_after_cli"]
         if observed != {
@@ -523,15 +528,54 @@ def containment_steps(protected_input: Path, protected_runtime: Path) -> list[st
     ]
 
 
+def shell_mentions(request: dict) -> list[str]:
+    text = json.dumps(request)
+    return [
+        text[max(0, m.start() - 120) : m.end() + 120]
+        for m in list(re.finditer(r"exec_command|write_stdin", text))[:3]
+    ]
+
+
+MCP_ITEM_UNSUPPORTED = "unsupported Codex item type: 'mcp_tool_call'"
+
+
 def assert_no_shell(
-    stub: StubProvider, capture: dict, work: Path, *, stage: str, protected: dict[Path, bytes]
+    stub: StubProvider,
+    capture: dict,
+    work: Path,
+    *,
+    stage: str,
+    protected: dict[Path, bytes],
+    outcome: dict,
+    batch: dict,
 ) -> None:
     offered = json.dumps(stub.requests[0].get("tools", [])) + json.dumps(
         [i for i in stub.requests[0].get("input", []) if i.get("type") == "additional_tools"]
     )
+    # Prose may name the shell; callable shell absence is proven at runtime below.
     for name in ("exec_command", "write_stdin"):
-        if name in offered:
-            raise AssertionError(f"no-shell run still offered {name}")
+        if name in advertised_tools(stub.requests[0]):
+            raise AssertionError(f"no-shell run still advertised {name}")
+    events = [json.loads(line) for line in capture["stdout"].splitlines()]
+    mcp_items = [
+        e["item"]
+        for e in events
+        if e.get("type") == "item.completed" and e.get("item", {}).get("type") == "mcp_tool_call"
+    ]
+    if mcp_items:
+        # The current codec fails closed on MCP items; production admission is
+        # separate work. Prove that exact rejection and the unchanged answer.
+        if MCP_ITEM_UNSUPPORTED not in str(outcome.get("error_message_redacted")):
+            raise AssertionError(f"unexpected outcome for MCP items: {outcome}")
+        answers = [
+            e["item"]["text"]
+            for e in events
+            if e.get("type") == "item.completed" and e["item"].get("type") == "agent_message"
+        ]
+        if not answers or json.loads(answers[-1]) != batch:
+            raise AssertionError("no-shell final answer differs from the scripted batch")
+        if any(item.get("error") is not None for item in mcp_items):
+            raise AssertionError("an MCP call failed operationally")
     if (stage == "review") != ("read_file" in offered):
         raise AssertionError("repository MCP tools were not offered to review only")
     if "command_execution" in capture["stdout"]:
@@ -548,6 +592,8 @@ def assert_no_shell(
                 raise AssertionError(f"containment control missing refusal: {refusal}")
         if '"shell":"undefined"' not in outputs or '"stdin":"undefined"' not in outputs:
             raise AssertionError("code mode still exposed a shell tool")
+        if '"apply_patch":"function"' in outputs and "patch rejected" not in outputs:
+            raise AssertionError("apply_patch was not rejected by the read-only policy")
     if stage == "review":
         names = json.loads((work / "mcp-env.json").read_text())
         leaked = [n for n in names if n == "OPENROUTER_API_KEY" or n.startswith("AI_REVIEW_")]
@@ -642,6 +688,10 @@ def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     configured = load_config(install / "config/review.yaml").reviewers["codex"].model
     cases: list[tuple[str, Callable]] = []
 
+    # Until the codec admits MCP items, a tool-using review fails closed with
+    # schema_error; assert_no_shell checks that exact reason and the answer.
+    tool_status = "schema_error"
+
     def add(directory: Path, label: str, model: str, **options: Any) -> None:
         run = partial(run_case, install, directory, label, model, no_shell=server, **options)
         cases.append((f"{directory.name}/{label}", run))
@@ -655,6 +705,7 @@ def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
             model,
             steps=[mcp_call("read_file", {"path": "sentinel.txt"})],
             sentinel=sentinel,
+            expected_status=tool_status,
         )
         add(directory, "empty", model, empty=True)
         add(directory, "critique", model, stage="critique")
@@ -667,6 +718,7 @@ def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         # A prefix pattern: only the file's content can return the full sentinel.
         steps=[mcp_call("list_dir", {"path": "."}), mcp_call("grep", {"pattern": sentinel[:12]})],
         sentinel=sentinel,
+        expected_status=tool_status,
     )
     add(
         directory,
@@ -674,14 +726,16 @@ def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         REQUIRED_MODEL,
         steps=[mcp_call("grep", {"pattern": "no-such-match"})],
         empty=True,
+        expected_status=tool_status,
     )
-    # Observation only: today's codec admits command failures, not MCP failures.
+    # A tool-reported error (isError) is a failed MCP item without an
+    # operational error; production admission must keep it usable.
     add(
         directory,
         "missing-file",
         REQUIRED_MODEL,
         steps=[mcp_call("read_file", {"path": "missing.txt"})],
-        expected_status=None,
+        expected_status=tool_status,
     )
 
     def containment() -> None:
@@ -696,6 +750,7 @@ def no_shell_cases(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
                 sentinel=secrets.token_hex(24),
                 protected_runtime=protected,
                 no_shell=server,
+                expected_status=tool_status,
             )
 
     cases.append(("tools/containment", containment))
