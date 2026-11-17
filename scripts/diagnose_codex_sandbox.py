@@ -101,6 +101,32 @@ def audit_context() -> dict:
     return context
 
 
+def read_failure_category(work: Path, capture: dict) -> str:
+    """Return a fixed category only; never export raw command/provider data."""
+    try:
+        sentinel = (work / "codex/read/inputs/repo_snapshot/sentinel.txt").read_text()
+        workspace = json.loads((work / "codex/read/workspace.json").read_text())
+        if not sentinel or workspace["files_after_cli"]["sentinel.txt"] != sentinel.encode().hex():
+            return "copied_snapshot_changed"
+    except OSError, ValueError, KeyError:
+        return "snapshot_evidence_unavailable"
+    commands = [
+        event["item"]
+        for event in map(json.loads, capture["stdout"].splitlines())
+        if event.get("type") == "item.completed"
+        and event.get("item", {}).get("type") == "command_execution"
+    ]
+    if not commands:
+        return "no_command_execution"
+    if any(sentinel in item.get("aggregated_output", "") for item in commands):
+        return "sentinel_in_command_but_missing_from_provider_delivery"
+    if any("bwrap:" in item.get("aggregated_output", "") for item in commands):
+        return "sandbox_launch_failure"
+    if any("No such file or directory" in item.get("aggregated_output", "") for item in commands):
+        return "snapshot_not_found_by_command"
+    return "command_did_not_return_sentinel"
+
+
 def classify(work: Path, launch: dict) -> dict:
     # A nonzero docker/driver exit alone cannot count as reproduction. Demand
     # the observed CLI stream and adapter outcome from the exact read case.
@@ -130,6 +156,7 @@ def classify(work: Path, launch: dict) -> dict:
         # Assertion failures describe the scripted read contract. Keep these
         # visible without exporting host/kernel/audit/runtime observations.
         "case_errors": [case["error"] for case in summary["cases"] if not case["passed"]],
+        "read_failure_category": read_failure_category(work, capture),
     }
 
 

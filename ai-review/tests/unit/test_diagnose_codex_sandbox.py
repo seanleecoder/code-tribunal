@@ -42,6 +42,15 @@ def write_evidence(work: Path, *, passed: bool) -> None:
     )
     (case / "provider-evidence.json").write_text('[{"model": "openai/gpt-6.1-sol"}]')
     (work / "codex/runtime.json").write_text('{"files": {}}')
+    (case / "inputs/repo_snapshot").mkdir(parents=True)
+    (case / "inputs/repo_snapshot/sentinel.txt").write_text("private-sentinel")
+    (case / "workspace.json").write_text(
+        json.dumps(
+            {
+                "files_after_cli": {"sentinel.txt": b"private-sentinel".hex()},
+            }
+        )
+    )
 
 
 @pytest.mark.parametrize("damage", ["missing", "bad-exit", "cli-exit", "wrong-failure"])
@@ -57,6 +66,7 @@ def test_reproduction_requires_the_observed_cli_and_adapter_failure(
         result = diagnose.classify(tmp_path, {"exit": 125})
         assert result["result"] == "other_probe_failure"
         assert result["case_errors"] == ["AssertionError: sentinel missing"]
+        assert result["read_failure_category"] == "sandbox_launch_failure"
         return
     else:
         value = json.loads(capture.read_text())
@@ -66,6 +76,32 @@ def test_reproduction_requires_the_observed_cli_and_adapter_failure(
             value["stdout"] = '{"findings": []}'
         capture.write_text(json.dumps(value))
     assert diagnose.classify(tmp_path, {"exit": 1})["result"] != "namespace_denied"
+
+
+@pytest.mark.parametrize(
+    "output,category",
+    [
+        ("private-sentinel", "sentinel_in_command_but_missing_from_provider_delivery"),
+        ("cat: sentinel.txt: No such file or directory", "snapshot_not_found_by_command"),
+        ("private-other-detail", "command_did_not_return_sentinel"),
+    ],
+)
+def test_read_failure_exports_only_a_fixed_category(
+    tmp_path: Path, output: str, category: str
+) -> None:
+    write_evidence(tmp_path, passed=False)
+    capture = {
+        "stdout": json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "aggregated_output": output,
+                },
+            }
+        )
+    }
+    assert diagnose.read_failure_category(tmp_path, capture) == category
 
 
 @pytest.mark.parametrize("fault", ["", "all-denied", "transport", "timeout", "baseline-success"])
