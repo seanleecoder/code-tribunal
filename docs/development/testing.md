@@ -245,6 +245,23 @@ and `apply_patch`, which remain offered (the latter was rejected by the
 read-only policy); the default gate switched to the no-shell cases; COMPAT-012
 removal; and live GitHub/GitLab acceptance.
 
+Production decisions (2026-11-17), recorded before implementation:
+
+| Topic | Decision |
+|---|---|
+| Staging | Finish in PR #304: production no-shell, the switched gate and COMPAT-012 deletion ship together. |
+| Earlier paths | Delete the managed runner-profile tooling, its dispatch input and the public-sandbox admission probe. |
+| Codec | Mirror command semantics: a `failed` MCP item with no `error` is a usable tool result; a non-null `error` or missing terminal status is operational; all-operational failure is `model_error`; tool-free reviews stay valid. |
+| `view_image` | Disable with `features.view_image=false`. |
+| `apply_patch` | No supported 0.169.0 CLI switch exists; keep it and gate that every write is rejected with unchanged bytes. |
+| Other tools | Disable sub-agents and other tools with stable feature flags; gate the exact runtime `tools` key set. |
+| `grep` | Use the image's pinned `rg` with fixed arguments under a per-call timeout. |
+| Records | Amend ADR-0003 and update the security model and architecture trust boundaries. |
+| Live proof | Before merge, one bounded real-model review on the PR image must show successful repository-tool calls. |
+| Weak discovery | If a real model ignores `ALL_TOOLS`, add one registry-owned Codex instruction naming the tools, not a shared prompt change. |
+| Release | Patch `v3.1.1` in the existing 3.1 series. |
+| Compatibility | Claim GitHub-hosted and GitLab shared runners only where the canary shows a successful Codex repository read; other runners are unverified. |
+
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review
 changes to documented defaults, schema versions, and job names against their
