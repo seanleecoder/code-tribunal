@@ -195,12 +195,19 @@ def _display(name: str) -> str:
     four characters in the name.
     """
     raw = os.fsencode(name)
-    try:
-        raw.decode("utf-8")
-    except UnicodeDecodeError:
+    if not _passable(raw):
         escaped = raw.replace(b"\\", b"\\\\").decode("utf-8", errors="backslashreplace")
         return json.dumps(escaped) + _UNADDRESSABLE
     return name if _plain(name) else json.dumps(name)
+
+
+def _passable(raw: bytes) -> bool:
+    """Whether a name can travel back as a JSON path argument: only UTF-8 can."""
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _relative(root: Path, path: Path) -> str:
@@ -431,7 +438,7 @@ def _read_matches(
 
     With ``per_file``, rg stops each file one match past it; that extra match is
     replaced by a note naming the file. A search by its path lifts the cap; a
-    name that cannot be passed as a path is told to narrow the pattern instead.
+    name that cannot be passed as a path is told a narrower pattern may show more.
 
     Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
     shown from its head and skipped rather than consuming the whole search.
@@ -464,8 +471,10 @@ def _read_matches(
                     f"[{_rg_name(path)}: more than {per_file} matching lines; "
                     + (
                         "grep this path to lift the per-file limit]"
-                        if _addressable(path)
-                        else "narrow the pattern to see the rest]"
+                        if _passable(_rg_data(path))
+                        # Repeated lines match every narrower pattern alike.
+                        else "a narrower pattern may show more, "
+                        "but repeated lines can stay hidden]"
                     )
                     if count == per_file + 1
                     else None  # rg's --max-count already stops here.
@@ -510,15 +519,6 @@ def _rg_name(value: dict[str, str]) -> str:
     # rg prints a path as its operand spelled it. Only the "./-" operand grep
     # writes for a file named "-" starts with "./"; _relative never does.
     return _display(os.fsdecode(_rg_data(value).removeprefix(b"./")))
-
-
-def _addressable(value: dict[str, str]) -> bool:
-    # A non-UTF-8 name cannot travel back as a JSON path argument.
-    try:
-        _rg_data(value).decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 def _rg_data(value: dict[str, str]) -> bytes:

@@ -108,7 +108,7 @@ def test_grep_cap_note_for_a_name_that_cannot_be_a_path(repo: Path) -> None:
     lines = call(repo, "grep", pattern="hit")[0].splitlines()
     note = (
         f'["ev\\\\xff.txt"{tools._UNADDRESSABLE}: more than {cap} matching lines; '
-        "narrow the pattern to see the rest]"
+        "a narrower pattern may show more, but repeated lines can stay hidden]"
     )
     assert note in lines
     assert not any("grep this path" in line for line in lines)
