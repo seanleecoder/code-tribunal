@@ -235,14 +235,17 @@ def test_non_utf8_names_are_json_safe(repo: Path) -> None:
 MARKED = '"ev\\\\xff.py" [non-UTF-8 name; cannot be opened by path]'
 
 
+# _plain quotes more than the listed characters: a leading "[", line and
+# paragraph separators, and other category C characters such as private use.
+# Shared by the list_dir and grep tests, and escaped so each code point shows.
+QUOTED_NAMES = ("[notes].txt", "a\u2028b.txt", "pua\ue000.txt")
+
+
 def test_every_quoted_name_is_described_and_opens_decoded(repo: Path) -> None:
-    # _plain quotes more than the listed characters: a leading "[", line and
-    # paragraph separators, and other category C characters such as private use.
-    names = ["[notes].txt", "a\u2028b.txt", "pua\ue000.txt"]
-    for name in names:
+    for name in QUOTED_NAMES:
         (repo / name).write_text("quoted\n")
     listing = call(repo, "list_dir")[0].splitlines()
-    for name in names:
+    for name in QUOTED_NAMES:
         assert json.dumps(name) in listing
         assert call(repo, "read_file", path=name) == ("1\tquoted", False)
     for tool in tools.TOOLS:
@@ -258,11 +261,10 @@ def test_every_quoted_name_is_described_and_opens_decoded(repo: Path) -> None:
 @needs_rg
 def test_grep_shows_quoted_names_as_list_dir_does(repo: Path) -> None:
     # grep renders names through _match_line and _rg_name, not list_dir's path.
-    names = ["[notes].txt", "a b.txt", "pua.txt"]
-    for name in names:
+    for name in QUOTED_NAMES:
         (repo / name).write_text("quoted-hit\n")
     lines = call(repo, "grep", pattern="quoted-hit")[0].splitlines()
-    assert sorted(lines) == sorted(f"{json.dumps(name)}:1:quoted-hit" for name in names)
+    assert sorted(lines) == sorted(f"{json.dumps(name)}:1:quoted-hit" for name in QUOTED_NAMES)
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
