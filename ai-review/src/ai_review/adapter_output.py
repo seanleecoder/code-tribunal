@@ -325,6 +325,8 @@ _CODEX_HOST_FAILURE = re.compile(
 # "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other
 # top-level error is fatal, so an unrecognized problem cannot be admitted with a
 # tool-free answer. The image gate's dropped-stream case pins this wording.
+# The CLI also contains "Reconnecting... waiting for network"; no capture shows
+# it as a stream error on this route, so it stays fatal, as a deliberate choice.
 _CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
 
 

@@ -68,6 +68,8 @@ def test_grep_searches_a_path_named_dash(repo: Path) -> None:
     # The same name as a repository-wide search shows.
     assert call(repo, "grep", pattern="dash-only", path="-") == ("-:1:dash-only\n", False)
     assert call(repo, "grep", pattern="dash-only") == ("-:1:dash-only\n", False)
+    # The name grep shows opens the file.
+    assert call(repo, "read_file", path="-") == ("1\tdash-only", False)
     (repo / "-").unlink()
     (repo / "-").mkdir()
     (repo / "-/inner.txt").write_text("dash-only\n")
@@ -83,7 +85,8 @@ def test_grep_caps_dense_files_in_a_directory_search_and_says_so(repo: Path) -> 
     lines = call(repo, "grep", pattern="hit")[0].splitlines()
     dense = [line for line in lines if line.startswith("dense.txt:")]
     assert dense == [f"dense.txt:{n}:hit" for n in range(1, cap + 1)]
-    assert f"[dense.txt: more than {cap} matching lines; grep this path for all of them]" in lines
+    note = f"[dense.txt: more than {cap} matching lines; grep this path to lift the per-file limit]"
+    assert note in lines
     # A file with exactly the cap is complete, so it gets no note.
     assert len([line for line in lines if line.startswith("exact.txt:")]) == cap
     assert not any(line.startswith("[exact.txt") for line in lines)
@@ -91,7 +94,24 @@ def test_grep_caps_dense_files_in_a_directory_search_and_says_so(repo: Path) -> 
     # A search of that file by path is not capped.
     text, is_error = call(repo, "grep", pattern="hit", path="dense.txt")
     assert not is_error and len(text.splitlines()) == cap + 10
-    assert f"more than {cap} matching lines" in tools.TOOLS[2]["description"]
+    description = tools.TOOLS[2]["description"]
+    assert f"more than {cap} matching lines" in description
+    # A path search lifts only the per-file cap, not the output limit.
+    assert "for all of them" not in description and "total output limit" in description
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_rg
+def test_grep_cap_note_for_a_name_that_cannot_be_a_path(repo: Path) -> None:
+    cap = tools.MAX_MATCHES_PER_FILE
+    Path(os.fsdecode(os.fsencode(repo) + b"/ev\xff.txt")).write_text("hit\n" * (cap + 1))
+    lines = call(repo, "grep", pattern="hit")[0].splitlines()
+    note = (
+        f'["ev\\\\xff.txt"{tools._UNADDRESSABLE}: more than {cap} matching lines; '
+        "narrow the pattern to see the rest]"
+    )
+    assert note in lines
+    assert not any("grep this path" in line for line in lines)
 
 
 @needs_rg

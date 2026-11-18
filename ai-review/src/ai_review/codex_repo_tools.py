@@ -39,8 +39,11 @@ MAX_LIST_ENTRIES = 1000
 MAX_PATTERN_CHARS = 512
 MAX_MATCH_CHARS = 500
 # Matching lines shown per file in a directory search, so one dense file (a lock
-# file, generated code) cannot spend the whole output budget. A search of that
-# file by path is not capped, so every match stays reachable.
+# file, generated code) does not ordinarily spend the whole output budget. The
+# cap counts lines, not bytes, and every line repeats the file's displayed path:
+# a file whose path is long and grows when escaped can still fill the budget
+# within its first lines, and the cut note then asks for a narrower path. A
+# search of that file by path lifts the cap but stays within the output budget.
 MAX_MATCHES_PER_FILE = 50
 # rg --json ignores --max-columns and lists every submatch, so one long line can
 # make a record far larger than the text it renders. Records past this size are
@@ -133,7 +136,9 @@ TOOLS = [
             "text means the matching line was too large to show; read_file the file. "
             f"In a directory search, a file with more than {MAX_MATCHES_PER_FILE} matching "
             f"lines shows its first {MAX_MATCHES_PER_FILE} and a note; grep that file's path "
-            f"for all of them. Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are "
+            "to lift this per-file limit. Every search stops at a total output limit, with "
+            "a note; then narrow the pattern or path, or page through the file with "
+            f"read_file. Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are "
             "not searched." + _NAMES
         ),
         "inputSchema": {
@@ -425,7 +430,8 @@ def _read_matches(
     """Render rg --json match records until EOF; return a note if the search was cut.
 
     With ``per_file``, rg stops each file one match past it; that extra match is
-    replaced by a note naming the file, which a search by its path shows whole.
+    replaced by a note naming the file. A search by its path lifts the cap; a
+    name that cannot be passed as a path is told to narrow the pattern instead.
 
     Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
     shown from its head and skipped rather than consuming the whole search.
@@ -456,7 +462,11 @@ def _read_matches(
                     raise ValueError("rg match record before any begin record")
                 line = (
                     f"[{_rg_name(path)}: more than {per_file} matching lines; "
-                    "grep this path for all of them]"
+                    + (
+                        "grep this path to lift the per-file limit]"
+                        if _addressable(path)
+                        else "narrow the pattern to see the rest]"
+                    )
                     if count == per_file + 1
                     else None  # rg's --max-count already stops here.
                 )
@@ -500,6 +510,15 @@ def _rg_name(value: dict[str, str]) -> str:
     # rg prints a path as its operand spelled it. Only the "./-" operand grep
     # writes for a file named "-" starts with "./"; _relative never does.
     return _display(os.fsdecode(_rg_data(value).removeprefix(b"./")))
+
+
+def _addressable(value: dict[str, str]) -> bool:
+    # A non-UTF-8 name cannot travel back as a JSON path argument.
+    try:
+        _rg_data(value).decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _rg_data(value: dict[str, str]) -> bytes:
