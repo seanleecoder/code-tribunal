@@ -222,13 +222,16 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError(f"binary file: {_display(_relative(root, path))}")
     # Number lines as git and the diff do: only "\n" ends a line. splitlines()
     # also splits on form feeds and Unicode separators, shifting every anchor.
+    content = data[:MAX_FILE_BYTES]
+    # Text after the last "\n" is a line unless, without its "\r", it is empty.
+    total = content.count(b"\n") + (content[content.rfind(b"\n") + 1 :] not in (b"", b"\r"))
+    end = min(total, start - 1 + count)
+    # "\n" is never part of a multi-byte UTF-8 sequence, so decoding only the
+    # requested lines shows exactly what decoding the whole file would.
     lines = [
-        line.removesuffix("\r")
-        for line in data[:MAX_FILE_BYTES].decode("utf-8", errors="replace").split("\n")
+        line.decode("utf-8", errors="replace").removesuffix("\r")
+        for line in content.split(b"\n", end)[start - 1 : end]
     ]
-    if lines[-1] == "":
-        lines.pop()
-    end = min(len(lines), start - 1 + count)
     # Fill the output budget line by line. A line that does not fit (a minified
     # file, or CR-only line endings, which git counts as one line) is cut, and
     # the note says exactly where to resume, so no content is unreachable.
@@ -237,14 +240,14 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     resume: tuple[int, int] | None = None
     for number in range(start, end + 1):
         column = start_column if number == start else 1
-        text = lines[number - 1][column - 1 :]
         room = budget - len(f"{number}\t".encode()) - 1
+        # _fit examines at most room + 1 characters; one more shows the line
+        # continues, without copying the rest of a long line on every page.
+        text = lines[number - start][column - 1 : column + max(room, 0) + 1]
         shown, used, escaped = _fit(text, room)
         if not used and text and not out:
             # Always make progress: show one character, whatever the budget.
-            one, one_escaped = _render(text[:1])
-            mark = len(_ESCAPED_MARK) if one_escaped else 0
-            shown, used, escaped = _fit(text[:1], len(one.encode()) + mark)
+            (shown, escaped), used = _render(text[:1]), 1
         # An empty line still needs room for its numbered prefix; when it has
         # none, resume at that line rather than overrun the budget and lose
         # the continuation note.
@@ -264,8 +267,8 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
             f"[output limit reached; continue with start_line={resume[0]} "
             f"start_column={resume[1]}]"
         )
-    elif end < len(lines):
-        notes.append(f"[{len(lines) - end} more lines; continue with start_line]")
+    elif end < total:
+        notes.append(f"[{total - end} more lines; continue with start_line]")
     if len(data) > MAX_FILE_BYTES:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
     return _bounded("\n".join([*out, *notes]))
@@ -331,6 +334,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         timed_out.set()
         kill()
 
+    assert process.stdout is not None
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
     matches: list[str] = []
@@ -340,7 +344,6 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     # the search finishes must not discard a result that is already whole.
     complete = False
     try:
-        assert process.stdout is not None
         cut = _read_matches(process.stdout, matches)
         if cut is not None:
             complete = True  # The output budget, not rg, ended the result.
@@ -360,8 +363,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         timer.join()
         kill()  # Stop a search still running after the output cap.
         process.wait()
-        if process.stdout is not None:
-            process.stdout.close()
+        process.stdout.close()
     if timed_out.is_set() and not complete:
         raise ToolError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
     # rg exits 1 for no match and 2 on an error, such as an invalid pattern, a
@@ -480,8 +482,6 @@ def _fit(text: str, room: int) -> tuple[str, int, bool]:
     plain_end = control.start() if control else len(window)
     plain = window[:plain_end].encode()
     if control is None or len(plain) > room:
-        if control is None and len(window) == len(text) and len(plain) <= room:
-            return text, len(text), False
         fitted = plain[: max(room, 0)].decode("utf-8", errors="ignore")
         return fitted, len(fitted), False
     # The plain prefix fits whole; take a longer, escaped prefix if one fits.

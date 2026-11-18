@@ -19,7 +19,8 @@ versioning.
   Codex tools are disabled. No runner security options are needed. Codex
   execution events reject missing-host, terminal, unavailable-tool-server and
   wholly failed operational tool runs as `model_error`, excluding the seat from
-  review success and resolution eligibility and exposing it in run health.
+  review success and resolution eligibility and exposing it in run health; a
+  shell command event is rejected as a schema error.
   Empty reviews, tool-free critiques, no-match searches, tool-reported errors and
   recovery remain valid. An unconditional network-disabled real-CLI image gate
   guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh

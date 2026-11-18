@@ -92,7 +92,8 @@ These rules are worth stating because breaking them is silent:
   passes the explicit stage to the shared root normalizer; no decoder guesses
   another reviewer's transport from stdout. Codex uses its `exec --json` events;
   terminal failures, unavailable code-mode host and wholly failed operational tool
-  attempts invalidate even a well-formed final answer. A repository MCP call that
+  attempts invalidate even a well-formed final answer, and a shell command item
+  is a schema error because Codex runs without a shell. A repository MCP call that
   reports a tool error (missing file, refused path) is a usable result, like a
   grep with no match; a call whose `error` is set is operational. No-tool reviews
   and critiques and recovery after a failed tool remain usable. Full bounded

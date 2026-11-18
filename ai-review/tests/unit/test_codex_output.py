@@ -13,11 +13,11 @@ import pytest
 from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import _AdapterResult, _run_adapter_process
 from ai_review.adapter_runner import run_adapter
+from ai_review.config import load_config
 from ai_review.consensus import build_consensus
 from ai_review.schema import AdapterModelError, SchemaValidationError, batch_quality_fields
 
 from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
-from tests.unit.test_consensus_groups import _config, _manifest
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
 CONFIG = Path(__file__).resolve().parents[2] / "config/review.yaml"
@@ -39,20 +39,19 @@ def load(data: dict, stage: str = "review") -> dict:
 
 @pytest.mark.parametrize(
     "label",
-    ["read", "empty", "critique", "recovery", "no-match", "mcp-read", "mcp-tool-error",
-     "mcp-containment"],
+    ["empty", "critique", "mcp-read", "mcp-tool-error", "mcp-containment"],
 )
 def test_captured_usable_executions(label: str) -> None:
     stage = "critique" if label == "critique" else "review"
     raw = load(capture(label), stage)
     assert len(raw["critiques" if stage == "critique" else "findings"]) == (
-        1 if label in {"read", "recovery", "mcp-read", "mcp-tool-error", "mcp-containment"} else 0
+        1 if label in {"mcp-read", "mcp-tool-error", "mcp-containment"} else 0
     )
 
 
 @pytest.mark.parametrize(
     "label",
-    ["all-tools-failed", "missing-host", "terminal", "linux-namespace-denied", "mcp-operational"],
+    ["missing-host", "terminal", "mcp-operational"],
 )
 def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> None:
     with pytest.raises(AdapterModelError):
@@ -155,13 +154,8 @@ def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
 @pytest.mark.parametrize(
     "label,status",
     [
-        ("read", "success"),
-        ("recovery", "success"),
         ("empty", "success"),
-        ("no-match", "success"),
         ("missing-host", "model_error"),
-        ("all-tools-failed", "model_error"),
-        ("linux-namespace-denied", "model_error"),
         ("terminal", "model_error"),
         ("mcp-read", "success"),
         ("mcp-tool-error", "success"),
@@ -190,7 +184,8 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     # shortcut can stand in for adapter execution status here.
     batch = copy.deepcopy(outcome)
     batch.update(run_id="run", model="model")
-    consensus = build_consensus(_manifest(), [batch], _config())
+    manifest = {"run_id": "run", "project_id": "1", "merge_request_iid": "2", "head_sha": "h" * 40}
+    consensus = build_consensus(manifest, [batch], load_config(CONFIG))
     expected = ["codex"] if status == "success" else []
     assert consensus["successful_reviewers"] == expected
     assert consensus["resolution_eligible_reviewers"] == expected
@@ -212,12 +207,19 @@ def test_startup_error_item_is_fatal_without_stderr_or_command_events() -> None:
         load(data)
 
 
-def test_router_failure_without_command_events_is_still_an_attempt() -> None:
-    data = capture("all-tools-failed")
-    data["stdout"] = "\n".join(
-        line for line in data["stdout"].splitlines() if "command_execution" not in line
-    )
-    with pytest.raises(AdapterModelError, match="all failed operationally"):
+def test_shell_command_item_is_outside_the_no_shell_contract() -> None:
+    data = capture("empty")
+    lines = data["stdout"].splitlines()
+    command = {
+        "id": "command",
+        "type": "command_execution",
+        "status": "completed",
+        "exit_code": 0,
+        "aggregated_output": "",
+    }
+    lines.insert(2, json.dumps({"type": "item.completed", "item": command}))
+    data["stdout"] = "\n".join(lines)
+    with pytest.raises(SchemaValidationError, match="command_execution"):
         load(data)
 
 

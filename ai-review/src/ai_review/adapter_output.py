@@ -326,13 +326,11 @@ _CODEX_HOST_FAILURE = re.compile(
 def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
-    Command exit codes describe repository programs, not tool availability: grep
-    with no matches is a working tool. A failed command item is operational only
-    when the CLI reports failure to launch, sandbox failure, or shell 126/127.
-    Repository MCP calls follow the same rule: a ``failed`` item without an
-    ``error`` is a tool-reported result (missing file, refused path); a set
-    ``error`` means the call itself failed. No-tool reviews and critiques remain
-    valid. See captured 0.169.0 fixtures and the real-CLI image gate in
+    Codex runs without a shell, so a command item is outside the contract.
+    A ``failed`` repository MCP call without an ``error`` is a tool-reported
+    result (missing file, refused path, no match); a set ``error`` means the
+    call itself failed. No-tool reviews and critiques remain valid. See captured
+    0.169.0 fixtures and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
     if _CODEX_HOST_FAILURE.search(stderr):
@@ -342,12 +340,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     thread_started = turn_started = turn_completed = False
     active: set[str] = set()
     finished: set[str] = set()
-    # Router failures can precede command events. They count as failed attempts
-    # even when there is no command item; successful command items allow recovery.
-    router_failures = len(
-        re.findall(r"ERROR codex_core::tools::router: error=exec_command failed:", stderr)
-    )
-    attempts = operational_failures = router_failures
+    attempts = operational_failures = 0
     answer: str | None = None
     for line in stdout.splitlines():
         if not line.strip():
@@ -367,7 +360,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
             and isinstance(event.get("item"), dict)
             and event["item"].get("type") == "error"
         ):
-            # Startup error items can precede turn.started, with no command
+            # Startup error items can precede turn.started, with no tool
             # events at all. This also covers missing/disabled host warnings.
             raise AdapterModelError("Codex emitted an execution error item")
         if turn_completed:
@@ -394,26 +387,6 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
                 if not isinstance(item.get("text"), str):
                     raise SchemaValidationError("Codex agent_message must contain text")
                 answer = item["text"]
-            elif item_type == "command_execution":
-                status, exit_code = item.get("status"), item.get("exit_code")
-                output = item.get("aggregated_output")
-                if status not in {"completed", "failed"} or not isinstance(output, str):
-                    raise SchemaValidationError("Codex command has no terminal execution result")
-                if exit_code is not None and type(exit_code) is not int:
-                    raise SchemaValidationError(
-                        "Codex command exit code must be an integer or null"
-                    )
-                attempts += 1
-                if status == "failed" and (
-                    exit_code in {None, -1, 126, 127}
-                    or re.search(
-                        r"^(?:exec_command failed:|Failed to create unified exec process:|"
-                        r"bwrap:|sandbox-exec:)",
-                        output,
-                        re.IGNORECASE,
-                    )
-                ):
-                    operational_failures += 1
             elif item_type == "mcp_tool_call":
                 if item.get("server") != "repo":
                     raise SchemaValidationError("Codex called an unregistered MCP server")
