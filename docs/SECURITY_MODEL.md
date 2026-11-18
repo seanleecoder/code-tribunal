@@ -163,9 +163,10 @@ entry, a tool note or a `path:line` prefix is shown as a JSON string (non-UTF-8
 names are also marked as unopenable), so no file can be shown under another
 file's name. A read or matched line holding a control or line-separator
 character is shown as the body of a JSON string, and its line number is marked
-in the tool-written prefix; other lines are shown exactly. File content
-therefore cannot pose as another line or match, and no two different lines are
-shown alike. It runs in isolated Python
+in the tool-written prefix; other lines are shown exactly. A grep match cut at
+its length limit is marked in that prefix too, never by a note beside the text.
+File content therefore cannot pose as another line or match, and no two
+different lines are shown alike. It runs in isolated Python
 mode and refuses to start if its environment carries anything beyond plain
 process variables, so a provider credential cannot reach model-driven tool
 calls; Codex then fails the review

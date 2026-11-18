@@ -155,7 +155,7 @@ def test_grep_shows_matches_only_and_bounds_long_lines(repo: Path) -> None:
     assert not is_error
     lines = sorted(text.splitlines())
     assert lines[0] == "blob.bin:1:hit"  # No binary-file notice follows it.
-    assert lines[1] == "min.js:1:" + "x" * 500 + " [line truncated; read_file with start_column]"
+    assert lines[1] == "min.js:1+:" + "x" * 500  # Cut: marked in the prefix, never in the text.
     assert len(lines) == 2
 
 
@@ -254,8 +254,10 @@ def test_paging_a_long_line_renders_each_page_only(repo: Path, monkeypatch) -> N
     (repo / "ctl.txt").write_text(raw + "\n")
     monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 600)
     rendered = []
-    render = tools._render
-    monkeypatch.setattr(tools, "_render", lambda text: rendered.append(len(text)) or render(text))
+    encode = tools._json_body
+    monkeypatch.setattr(
+        tools, "_json_body", lambda text: rendered.append(len(text)) or encode(text)
+    )
     seen, column, pages = "", 1, 0
     while True:
         pages += 1
@@ -266,8 +268,9 @@ def test_paging_a_long_line_renders_each_page_only(repo: Path, monkeypatch) -> N
             break
         column = int(rest.rsplit("start_column=", 1)[1].rstrip("]"))
     assert seen == raw and pages > 100
-    # Each page renders at most one budget of characters, never the whole rest.
-    assert max(rendered) <= 600 and sum(rendered) <= 8 * len(raw)
+    # Each page renders at most one budget of characters, never the whole rest;
+    # the longest-fit search renders a few such prefixes per page.
+    assert max(rendered) <= 600 and sum(rendered) <= 32 * len(raw)
 
 
 @needs_rg
@@ -279,17 +282,12 @@ def test_one_match_dense_line_does_not_hide_other_results(repo: Path, monkeypatc
     text, is_error = call(repo, "grep", pattern="value")
     assert not is_error
     lines = sorted(text.splitlines())
-    assert lines[0] == "min.js:1:" + ("value;" * 2000)[: tools.MAX_MATCH_CHARS] + (
-        " [line truncated; read_file with start_column]"
-    )
+    assert lines[0] == "min.js:1+:" + ("value;" * 2000)[: tools.MAX_MATCH_CHARS]
     assert lines[1:] == ["pkg/module.py:1:value = 1", "sentinel.txt:1:snapshot-only-value"]
     # A line whose text alone overflows the record budget is still reported.
     monkeypatch.setattr(tools, "MAX_GREP_RECORD_BYTES", 256)
     text, is_error = call(repo, "grep", pattern="value", path="min.js")
-    assert (text, is_error) == (
-        "min.js:?: [matching line too large to show; read_file the file]\n",
-        False,
-    )
+    assert (text, is_error) == ("min.js:?+:\n", False)
 
 
 @needs_rg
@@ -356,6 +354,79 @@ def test_one_long_line_stays_reachable(repo: Path, monkeypatch) -> None:
         column = int(note.rsplit("start_column=", 1)[1].rstrip("]"))
     # Inner CRs are shown escaped; the line's own trailing CR is stripped.
     assert seen == "x\r" * 40 + "END"
+
+
+def test_blank_lines_never_overrun_the_page_budget(repo: Path, monkeypatch) -> None:
+    # A nearly full page followed by blank lines must still end with an exact
+    # continuation note, not be cut by the final output cap.
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 40)
+    (repo / "blank.txt").write_text("x" * 30 + "\n" * 400 + "tail\n")
+    text, is_error = call(repo, "read_file", path="blank.txt")
+    assert not is_error
+    assert len(text.encode()) <= tools.MAX_OUTPUT_BYTES
+    rows, note = text.rsplit("\n", 1)
+    resume = int(note.removeprefix("[output limit reached; continue with start_line=").split()[0])
+    assert rows.splitlines()[-1] == f"{resume - 1}\t"
+    rows_seen = len(rows.splitlines())
+    while "start_line=" in note:
+        page, _ = call(repo, "read_file", path="blank.txt", start_line=resume)
+        assert len(page.encode()) <= tools.MAX_OUTPUT_BYTES
+        rows, _, note = page.rpartition("\n") if "start_line=" in page else (page, "", "")
+        rows_seen += len(rows.splitlines())
+        if note:
+            resume = int(note.split("start_line=")[1].split()[0])
+    assert rows.splitlines()[-1] == "401\ttail" and rows_seen == 401
+
+
+@pytest.mark.parametrize(
+    ("text", "room", "expected"),
+    [
+        # The control in the lookahead is not part of what fits: show "a" exactly.
+        ("a\r", 1, ("a", 1, False)),
+        ("abc\rdef", 3, ("abc", 3, False)),
+        # Room for the escaped prefix, the mark included: escape it.
+        ("a\rb", 6, ("a\\rb", 3, True)),
+        ("a\rb", 4, ("a\\r", 2, True)),
+        # Not even the escaped control fits: stop before it, unmarked.
+        ("ab\rc", 3, ("ab", 2, False)),
+        ("", 0, ("", 0, False)),
+    ],
+)
+def test_fit_escapes_only_a_prefix_that_holds_a_control(text, room, expected) -> None:
+    assert tools._fit(text, room) == expected
+
+
+def test_a_page_ending_before_a_control_is_shown_exactly(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 12)
+    # Nine characters fit; the CR is the tenth, inside the lookahead window.
+    (repo / "late.txt").write_text("abcdefghi\rk\n")
+    text, _ = call(repo, "read_file", path="late.txt")
+    assert text.splitlines()[0] == "1\tabcdefghi"
+
+
+@needs_rg
+def test_cut_and_capped_matches_stay_decodable(repo: Path, monkeypatch) -> None:
+    # A marked, cut match decodes to exactly its first MAX_MATCH_CHARS
+    # characters; no note shares the text field.
+    raw = "hit\r" + "y\"\\" * 300
+    (repo / "long.py").write_text(raw + "\n")
+    text, is_error = call(repo, "grep", pattern="hit", path="long.py")
+    assert not is_error
+    prefix, body = text.removesuffix("\n").split(":1!+:", 1)
+    assert prefix == "long.py"
+    assert json.loads(f'"{body}"') == raw[: tools.MAX_MATCH_CHARS]
+    # The overall cap stops between complete records and keeps its note.
+    for index in range(40):
+        (repo / f"m{index:02}.py").write_text(f"hit = '\\x01{index}'\n" + "hit\x01\n")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 300)
+    text, is_error = call(repo, "grep", pattern="hit")
+    assert not is_error and len(text.encode()) <= tools.MAX_OUTPUT_BYTES
+    *records, note = text.removesuffix("\n").split("\n")
+    assert note == f"[search output truncated at {tools.MAX_OUTPUT_BYTES} bytes]"
+    for record in records:
+        name, number, shown = record.split(":", 2)
+        if number.endswith("!"):
+            json.loads(f'"{shown}"')  # Never cut inside an escape.
 
 
 def test_binary_and_non_string_paths_are_refused(repo: Path) -> None:
@@ -434,7 +505,8 @@ def test_a_running_timeout_cannot_signal_after_grep_returns(repo: Path, monkeypa
     monkeypatch.setattr(
         tools.threading, "Timer", lambda *args: timers.append(EnteredTimer(*args)) or timers[-1]
     )
-    call(repo, "grep", pattern="value = 1")
+    # The search completed before the timeout decided anything: its result stands.
+    assert call(repo, "grep", pattern="value = 1") == ("pkg/module.py:1:value = 1\n", False)
     returned = len(signals)
     timers[0].join(5)
     assert signals[returned:] == []

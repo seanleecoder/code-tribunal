@@ -54,6 +54,9 @@ _CONTROL = re.compile("[" + re.escape("".join(map(chr, _CONTROL_POINTS))) + "]")
 # number carries _ESCAPED_MARK. The mark sits in the tool-written prefix, where
 # file content cannot imitate it; every other line is shown exactly.
 _ESCAPED_MARK = "!"
+# A grep match cut at MAX_MATCH_CHARS carries this mark in its prefix too, so
+# no note ever shares the text field with file content.
+_TRUNCATED_MARK = "+"
 # json.dumps(ensure_ascii=False) leaves these raw; str.replace stays C-fast,
 # unlike str.translate with multi-character replacements.
 _JSON_RAW_CONTROLS = (*map(chr, range(0x7F, 0xA0)), "\u2028", "\u2029")
@@ -118,7 +121,10 @@ TOOLS = [
         "description": (
             "Search the repository under review with a ripgrep regular expression. "
             "Returns path:line:text matches, including hidden files except .git. A line "
-            "number ending in '!' marks text shown as in read_file's marked lines." + _NAMES
+            "number ending in '!' marks text shown as in read_file's marked lines; one "
+            f"ending in '+' marks text cut at {MAX_MATCH_CHARS} characters (read_file with "
+            "start_column for the rest). A line number of '?' means the matching line was "
+            "too large to show; read_file the file." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -233,12 +239,19 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         room = budget - len(f"{number}\t".encode()) - 1
         shown, used, escaped = _fit(text, room)
         if not used and text and not out:
-            shown, used, escaped = _fit(text[:1], len(_render(text[:1])[0].encode()))
-        if used or not text:
+            # Always make progress: show one character, whatever the budget.
+            one, one_escaped = _render(text[:1])
+            mark = len(_ESCAPED_MARK) if one_escaped else 0
+            shown, used, escaped = _fit(text[:1], len(one.encode()) + mark)
+        # An empty line still needs room for its numbered prefix; when it has
+        # none, resume at that line rather than overrun the budget and lose
+        # the continuation note.
+        fits = used > 0 or (not text and room >= 0)
+        if fits:
             line = f"{number}{_ESCAPED_MARK if escaped else ''}\t{shown}"
             out.append(line)
             budget -= len(line.encode()) + 1
-        if used == len(text):
+        if fits and used == len(text):
             continue
         # Columns count the file's own characters, not their escaped display.
         resume = (number, column + used)
@@ -307,14 +320,21 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     )
 
     timed_out = threading.Event()
+    # Completion and timeout are decided once, under this lock: a timeout that
+    # fires as the search finishes must not discard results already complete.
+    decided = threading.Lock()
+    finished = False
 
     def kill() -> None:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
 
     def expire() -> None:
-        timed_out.set()
-        kill()
+        with decided:
+            if finished:
+                return
+            timed_out.set()
+            kill()
 
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
@@ -327,6 +347,8 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
             # rg closed its output; wait for its status without reaping it, so
             # its PID, and so its group, stays reserved until kill() below.
             os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+        with decided:
+            finished = not timed_out.is_set()
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ToolError("search output could not be read") from exc
     finally:
@@ -359,9 +381,11 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
     Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
     shown from its head and skipped rather than consuming the whole search.
     Every byte read, a skipped remainder included, counts toward
-    MAX_GREP_INPUT_BYTES.
+    MAX_GREP_INPUT_BYTES. Output stops between complete records, leaving room
+    for the closing notes, so the final cap never splits a match.
     """
     consumed, size, path = 0, 0, None
+    budget = MAX_OUTPUT_BYTES - _NOTE_RESERVE_BYTES
     while record := stream.readline(MAX_GREP_RECORD_BYTES):
         consumed += len(record)
         if record.endswith(b"\n"):
@@ -377,10 +401,11 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
                 if rest.endswith(b"\n"):
                     break
         if line is not None:
-            matches.append(line)
-            size += len(line.encode()) + 1
-            if size > MAX_OUTPUT_BYTES:
+            added = len(line.encode()) + 1
+            if size + added > budget:
                 return f"[search output truncated at {MAX_OUTPUT_BYTES} bytes]"
+            matches.append(line)
+            size += added
         if consumed > MAX_GREP_INPUT_BYTES:
             return (
                 f"[search stopped after reading {MAX_GREP_INPUT_BYTES} bytes of results; "
@@ -408,7 +433,7 @@ def _oversized_match_line(head: bytes, path: dict[str, str] | None) -> str | Non
     if path is None:
         raise ValueError("oversized rg match record before any begin record")
     name = _display(os.fsdecode(_rg_data(path)))
-    return f"{name}:?: [matching line too large to show; read_file the file]"
+    return f"{name}:?{_TRUNCATED_MARK}:"
 
 
 def _rg_data(value: dict[str, str]) -> bytes:
@@ -440,30 +465,35 @@ def _fit(text: str, room: int) -> tuple[str, int, bool]:
     """Show the longest prefix of text whose display fits in room bytes.
 
     Returns the display, how many of text's characters it covers, and whether
-    it is escaped; an escaped display also spends room on _ESCAPED_MARK. Every
-    character shows as at least one byte, so only the first room + 1 characters
-    are examined: paging a long line costs time in proportion to each page,
-    not to the rest of the line.
+    it is escaped. Whether to escape follows the prefix actually returned, not
+    the lookahead: a prefix without a control character is shown exactly, and
+    only one that includes one is escaped and spends room on _ESCAPED_MARK.
+    Every character shows as at least one byte, so only the first room + 1
+    characters are examined: paging a long line costs time in proportion to
+    each page, not to the rest of the line.
     """
     window = text[: max(room, 0) + 1]
-    shown, escaped = _render(window)
-    if escaped:
-        room -= len(_ESCAPED_MARK)
-    data = shown.encode()
-    if len(window) == len(text) and len(data) <= room:
-        return shown, len(text), escaped
-    if not escaped:
-        fitted = data[: max(room, 0)].decode("utf-8", errors="ignore")
+    control = _CONTROL.search(window)
+    plain_end = control.start() if control else len(window)
+    plain = window[:plain_end].encode()
+    if control is None or len(plain) > room:
+        if control is None and len(window) == len(text) and len(plain) <= room:
+            return text, len(text), False
+        fitted = plain[: max(room, 0)].decode("utf-8", errors="ignore")
         return fitted, len(fitted), False
+    # The plain prefix fits whole; take a longer, escaped prefix if one fits.
+    escaped_room = room - len(_ESCAPED_MARK)
     # Escapes are per character, so a prefix's display is a prefix of the
     # display and its size grows with the prefix: search for the longest fit.
-    low, high = 0, len(window)
+    low, high = plain_end, len(window)
     while low < high:
         middle = (low + high + 1) // 2
-        if len(_json_body(window[:middle]).encode()) <= room:
+        if len(_json_body(window[:middle]).encode()) <= escaped_room:
             low = middle
         else:
             high = middle - 1
+    if low == plain_end:
+        return window[:plain_end], plain_end, False
     return _json_body(window[:low]), low, True
 
 
@@ -471,12 +501,10 @@ def _match_line(data: dict[str, Any]) -> str:
     name = _display(os.fsdecode(_rg_data(data["path"])))
     text = _rg_data(data["lines"]).decode("utf-8", errors="replace").removesuffix("\n")
     text = text.removesuffix("\r")
-    note = ""
-    if len(text) > MAX_MATCH_CHARS:
-        text, note = text[:MAX_MATCH_CHARS], " [line truncated; read_file with start_column]"
-    shown, escaped = _render(text)
-    mark = _ESCAPED_MARK if escaped else ""
-    return f"{name}:{data['line_number']}{mark}:{shown}{note}"
+    cut = len(text) > MAX_MATCH_CHARS
+    shown, escaped = _render(text[:MAX_MATCH_CHARS])
+    mark = (_ESCAPED_MARK if escaped else "") + (_TRUNCATED_MARK if cut else "")
+    return f"{name}:{data['line_number']}{mark}:{shown}"
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}
