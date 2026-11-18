@@ -329,7 +329,9 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     Codex runs without a shell, so a command item is outside the contract.
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
-    call itself failed. No-tool reviews and critiques remain valid. See captured
+    call itself failed. A top-level ``error`` event is fatal only when the turn
+    then fails or never completes: Codex also reports a stream reconnect that
+    way and continues. No-tool reviews and critiques remain valid. See captured
     0.169.0 fixtures and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
@@ -337,12 +339,14 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
     if returncode:
         raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
-    thread_started = turn_started = turn_completed = False
+    thread_started = turn_started = turn_completed = reported_error = False
     active: set[str] = set()
     finished: set[str] = set()
     attempts = operational_failures = 0
     answer: str | None = None
-    for line in stdout.splitlines():
+    # JSONL ends records only at "\n". str.splitlines() would also split at
+    # U+2028, U+2029 and U+0085, which Codex leaves unescaped inside strings.
+    for line in stdout.split("\n"):
         if not line.strip():
             continue
         try:
@@ -352,9 +356,14 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         if not isinstance(event, dict) or not isinstance(event.get("type"), str):
             raise SchemaValidationError("Codex stream event must be an object with a type")
         kind = event["type"]
-        if kind in {"error", "turn.failed"}:
-            # Do not include raw model/tool diagnostics: they can contain secrets.
+        # Do not include raw model/tool diagnostics: they can contain secrets.
+        if kind == "turn.failed" or (kind == "error" and turn_completed):
             raise AdapterModelError("Codex stream reported a terminal model failure")
+        if kind == "error":
+            # Codex reports a stream reconnect ("Reconnecting... 1/5") this way
+            # and continues; a fatal error never reaches turn.completed.
+            reported_error = True
+            continue
         if (
             kind == "item.completed"
             and isinstance(event.get("item"), dict)
@@ -400,6 +409,8 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         else:
             raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
     if not turn_completed or active or answer is None:
+        if reported_error:
+            raise AdapterModelError("Codex stream reported a terminal model failure")
         raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
     if attempts and attempts == operational_failures:
         raise AdapterModelError("Codex repository-tool attempts all failed operationally")

@@ -21,3 +21,11 @@ tool-reported missing file: status `failed` with `error: null`, which stays
 usable. `mcp-containment` holds two refused paths, then a successful read; its
 stderr carries Codex's `apply_patch` rejection. `mcp-operational` is derived
 from `mcp-read` by setting the item's `error`, the shape of a failed call.
+
+`reconnect` and `separator` were captured on 2026-11-18 with the Termux aarch64
+Codex 0.169.1 build against a loopback stub. Thread IDs are replaced and stderr,
+which held only a Termux helper-alias warning, is cleared. In `reconnect` the
+stub closes the first stream before `response.completed`. Codex reports
+`Reconnecting... 1/5` as a top-level `error` event, retries, and completes with
+exit 0. In `separator` the answer text ends in U+2028, which Codex writes
+unescaped inside the event's JSON string.

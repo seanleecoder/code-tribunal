@@ -70,6 +70,28 @@ def prepare_workspace(
     return tmp_dir, root
 
 
+# TOML basic strings must escape these; every other Unicode scalar value may
+# appear as itself. JSON escapes would encode a non-BMP character as a
+# surrogate pair, which TOML rejects.
+_TOML_ESCAPES = {
+    **{code: f"\\u{code:04x}" for code in (*range(0x00, 0x20), 0x7F)},
+    ord('"'): '\\"',
+    ord("\\"): "\\\\",
+}
+
+
+def toml_string(value: str) -> str:
+    """Encode ``value`` as a TOML basic string, or refuse it."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # A surrogate-escaped filesystem byte is not a Unicode scalar value.
+        raise ValueError(
+            f"path cannot be passed to the reviewer CLI as TOML: {ascii(value)}"
+        ) from exc
+    return '"' + value.translate(_TOML_ESCAPES) + '"'
+
+
 def prepare_shell_adapter(
     definition: ReviewerDefinition, stage: str, env: dict[str, str]
 ) -> tuple[list[str], Path]:
@@ -85,10 +107,10 @@ def prepare_shell_adapter(
         "root": str(root),
         "schema_path": str(stage_schema_path(stage)),
         "schema_json": json.dumps(transport_schema(stage)),
-        # JSON strings are valid TOML basic strings for CLI --config values.
-        "root_toml": json.dumps(str(root)),
-        "python_toml": json.dumps(sys.executable),
-        "repo_tools_toml": json.dumps(str(Path(__file__).with_name("codex_repo_tools.py"))),
+        # TOML basic strings for CLI --config values.
+        "root_toml": toml_string(str(root)),
+        "python_toml": toml_string(sys.executable),
+        "repo_tools_toml": toml_string(str(Path(__file__).with_name("codex_repo_tools.py"))),
     }
     env.update(state_environment(definition, tmp_dir, values))
     arguments = definition.cli_arguments + (

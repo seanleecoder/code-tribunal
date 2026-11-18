@@ -59,6 +59,39 @@ def test_grep_uses_rg_including_hidden_files(repo: Path) -> None:
     assert call(repo, "grep", pattern="no-such-match") == ("", False)
     assert call(repo, "grep", pattern="(")[1] is True
     assert call(repo, "grep", pattern="x" * 513)[1] is True
+    assert call(repo, "grep", pattern="a\x00b") == ("pattern must not contain NUL", True)
+
+
+@needs_rg
+def test_grep_searches_a_path_named_dash(repo: Path) -> None:
+    (repo / "-").write_text("dash-only\n")
+    assert call(repo, "grep", pattern="dash-only", path="-") == ("./-:1:dash-only\n", False)
+    assert call(repo, "read_file", path="./-") == ("1\tdash-only", False)
+
+
+@needs_rg
+def test_grep_reports_every_match_and_files_read_file_serves(repo: Path) -> None:
+    (repo / "dense.txt").write_text("hit\n" * 60)
+    text, is_error = call(repo, "grep", pattern="hit", path="dense.txt")
+    assert not is_error and len(text.splitlines()) == 60
+    (repo / "large.txt").write_text("x" * 63 + "\n")
+    with (repo / "large.txt").open("a") as handle:
+        handle.write(("y" * 63 + "\n") * 32768 + "late-needle\n")
+    assert (repo / "large.txt").stat().st_size > 2 * 1024 * 1024
+    assert call(repo, "grep", pattern="late-needle") == ("large.txt:32770:late-needle\n", False)
+    with (repo / "too-large.txt").open("w") as handle:
+        handle.write("z" * tools.MAX_FILE_BYTES + "\nlate-needle\n")
+    assert "too-large.txt" not in call(repo, "grep", pattern="late-needle")[0]
+    assert "4 MiB are not searched" in tools.TOOLS[2]["description"]
+
+
+@needs_rg
+def test_grep_keeps_a_carriage_return_without_a_line_feed(repo: Path) -> None:
+    (repo / "cr.txt").write_bytes(b"needle\r\nneedle\r")
+    assert call(repo, "grep", pattern="needle", path="cr.txt") == (
+        "cr.txt:1:needle\ncr.txt:2!:needle\\r\n",
+        False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -97,6 +130,44 @@ def test_read_file_numbers_lines_as_git_does(repo: Path) -> None:
     assert call(repo, "read_file", path="empty.txt") == ("", False)
     (repo / "no-eol.txt").write_bytes(b"x\n\ny")
     assert call(repo, "read_file", path="no-eol.txt") == ("1\tx\n2\t\n3\ty", False)
+    # Only a CRLF terminator loses its "\r"; git counts a lone final "\r" as a line.
+    (repo / "cr-eof.txt").write_bytes(b"a\nb\r")
+    assert call(repo, "read_file", path="cr-eof.txt") == ("1\ta\n2!\tb\\r", False)
+    (repo / "cr-only.txt").write_bytes(b"a\n\r")
+    assert call(repo, "read_file", path="cr-only.txt") == ("1\ta\n2!\t\\r", False)
+
+
+def test_read_limit_between_cr_and_lf_ends_a_crlf_line(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "MAX_FILE_BYTES", 4)
+    (repo / "crlf.txt").write_bytes(b"abc\r\nd\r\n")
+    assert call(repo, "read_file", path="crlf.txt") == (
+        "1\tabc\n[file truncated at 4 bytes]",
+        False,
+    )
+    (repo / "cr.txt").write_bytes(b"abc\rd\n")
+    assert call(repo, "read_file", path="cr.txt") == (
+        "1!\tabc\\r\n[file truncated at 4 bytes]",
+        False,
+    )
+
+
+def test_read_past_the_end_says_where_the_file_ends(repo: Path, monkeypatch) -> None:
+    (repo / "three.txt").write_bytes(b"a\nb\nc\n")
+    assert call(repo, "read_file", path="three.txt", start_line=50) == (
+        "[start_line 50 is past the end of the file, which has 3 lines]",
+        False,
+    )
+    (repo / "one.txt").write_bytes(b"a")
+    assert call(repo, "read_file", path="one.txt", start_line=2)[0].endswith("has 1 line]")
+    (repo / "empty.txt").write_bytes(b"")
+    assert call(repo, "read_file", path="empty.txt") == ("", False)
+    assert call(repo, "read_file", path="empty.txt", start_line=2)[0].endswith("has 0 lines]")
+    monkeypatch.setattr(tools, "MAX_FILE_BYTES", 4)
+    assert call(repo, "read_file", path="three.txt", start_line=9) == (
+        "[start_line 9 is past line 2, the last line within the read limit]\n"
+        "[file truncated at 4 bytes]",
+        False,
+    )
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
@@ -352,8 +423,8 @@ def test_one_long_line_stays_reachable(repo: Path, monkeypatch) -> None:
         if not note:
             break
         column = int(note.rsplit("start_column=", 1)[1].rstrip("]"))
-    # Inner CRs are shown escaped; the line's own trailing CR is stripped.
-    assert seen == "x\r" * 40 + "END"
+    # Every CR is shown escaped: without a following LF, none is a terminator.
+    assert seen == "x\r" * 40 + "END\r"
 
 
 def test_blank_lines_never_overrun_the_page_budget(repo: Path, monkeypatch) -> None:
@@ -639,6 +710,22 @@ def test_stdio_protocol_offers_only_read_only_tools(repo: Path) -> None:
     assert replies[3]["error"]["code"] == -32601 and replies[4]["error"]["code"] == -32700
 
 
+def test_a_nul_pattern_cannot_end_the_server(repo: Path) -> None:
+    grep = {"name": "grep", "arguments": {"pattern": "a\x00b"}}
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": grep},
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    ]
+    out = io.StringIO()
+    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
+    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    assert first["result"]["isError"] is True and second == {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {},
+    }
+
+
 def test_module_is_standard_library_only() -> None:
     source = Path(tools.__file__).read_text()
     assert "ai_review" not in source.split('"""', 2)[2].split("def ", 1)[0]
@@ -653,12 +740,17 @@ def merge(target: dict, update: dict) -> None:
 
 
 @pytest.mark.parametrize("stage", ["review", "critique"])
-def test_registry_renders_parseable_no_shell_configuration(tmp_path: Path, stage: str) -> None:
+# A non-BMP character, which JSON would escape as a surrogate pair, and DEL,
+# which TOML requires escaped.
+@pytest.mark.parametrize("output_name", ['out "dir"', "out \\ \U0001f600 \x7f"])
+def test_registry_renders_parseable_no_shell_configuration(
+    tmp_path: Path, stage: str, output_name: str
+) -> None:
     inputs = tmp_path / 'in\'puts "q"'
     (inputs / "repo_snapshot").mkdir(parents=True)
     env = {
         "AI_REVIEW_INPUT_DIR": str(inputs),
-        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / 'out "dir"'),
+        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / output_name),
         "AI_REVIEW_MODEL": "openai/gpt-6.1-sol",
         "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
     }
@@ -686,3 +778,18 @@ def test_registry_renders_parseable_no_shell_configuration(tmp_path: Path, stage
     assert server["args"] == ["-I", tools.__file__, "--root", str(root)]
     assert server["required"] is True and server["default_tools_approval_mode"] == "approve"
     assert "env" not in server
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+def test_registry_refuses_a_path_toml_cannot_represent(tmp_path: Path) -> None:
+    inputs = tmp_path / "inputs"
+    (inputs / "repo_snapshot").mkdir(parents=True)
+    output = Path(os.fsdecode(bytes(tmp_path) + b"/out-\xff"))
+    env = {
+        "AI_REVIEW_INPUT_DIR": str(inputs),
+        "AI_REVIEW_OUTPUT_DIR": str(output),
+        "AI_REVIEW_MODEL": "openai/gpt-6.1-sol",
+        "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
+    }
+    with pytest.raises(ValueError, match="cannot be passed to the reviewer CLI as TOML"):
+        prepare_shell_adapter(get_reviewer_definition("codex"), "review", env)

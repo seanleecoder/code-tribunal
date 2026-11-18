@@ -39,7 +39,15 @@ def load(data: dict, stage: str = "review") -> dict:
 
 @pytest.mark.parametrize(
     "label",
-    ["empty", "critique", "mcp-read", "mcp-tool-error", "mcp-containment"],
+    [
+        "empty",
+        "critique",
+        "mcp-read",
+        "mcp-tool-error",
+        "mcp-containment",
+        "reconnect",
+        "separator",
+    ],
 )
 def test_captured_usable_executions(label: str) -> None:
     stage = "critique" if label == "critique" else "review"
@@ -130,6 +138,28 @@ def test_terminal_failure_overrides_valid_answer_without_leaking_detail(event: d
     assert "private" not in str(caught.value)
 
 
+def test_recovered_reconnect_is_usable_but_an_unrecovered_error_is_terminal() -> None:
+    data = capture("reconnect")
+    assert '"type":"error"' in data["stdout"] and load(data) == {"findings": []}
+    # The same error with no completed turn afterwards is a model failure,
+    # not a damaged transport.
+    lines = data["stdout"].split("\n")
+    data["stdout"] = "\n".join(line for line in lines if "turn.completed" not in line)
+    with pytest.raises(AdapterModelError, match="terminal model failure"):
+        load(data)
+
+
+def test_events_split_only_at_newlines() -> None:
+    data = capture("separator")
+    assert "\u2028" in data["stdout"]
+    assert load(data) == {"findings": []}
+    events = data["stdout"].split("\n")
+    reasoning = {"id": "thinking", "type": "reasoning", "text": "a\u2029b\x85c"}
+    events.insert(2, json.dumps({"type": "item.completed", "item": reasoning}, ensure_ascii=False))
+    data["stdout"] = "\n".join(events)
+    assert load(data) == {"findings": []}
+
+
 def test_nonzero_cli_exit_overrides_valid_answer() -> None:
     data = capture("empty")
     data["returncode"] = 7
@@ -139,11 +169,11 @@ def test_nonzero_cli_exit_overrides_valid_answer() -> None:
 
 def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
     diagnostic = "failed to spawn code-mode host\n" + "progress\n" * 2000
-    result = _run_adapter_process(
-        [sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r})"],
-        os.environ.copy(),
-        5,
-    )
+    command = [sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r})"]
+    # Other codecs keep only the diagnostic tail; no full capture is redacted.
+    default = _run_adapter_process(command, os.environ.copy(), 5)
+    assert default.stderr_complete == default.stderr
+    result = _run_adapter_process(command, os.environ.copy(), 5, full_stderr=True)
     assert "failed to spawn" not in result.stderr
     data = capture("empty")
     data["stderr"] = result.stderr_complete
@@ -175,8 +205,10 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     with mock.patch(
         "ai_review.adapter_runner._run_adapter_process",
         return_value=_AdapterResult(data["returncode"], data["stdout"], data["stderr"]),
-    ):
+    ) as process:
         assert run_adapter("codex", "review") == (0 if status == "success" else 1)
+    # Only the Codex codec asks for the full redacted stderr capture.
+    assert process.call_args.kwargs["full_stderr"] is True
     outcome = json.loads((output / "findings/codex.json").read_text())
     assert outcome["adapter_status"] == status
     assert batch_quality_fields(outcome)["usable_for_resolution"] == (status == "success")

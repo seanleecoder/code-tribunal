@@ -191,6 +191,7 @@ def _run_adapter_process(
     timeout_seconds: int,
     *,
     cwd: Path | None = None,
+    full_stderr: bool = False,
 ) -> _AdapterResult:
     # Anonymous, private files never enter the output/artifact directory. Unlike
     # pipes, reading them cannot wait on EOF from a surviving CLI descendant.
@@ -236,11 +237,12 @@ def _run_adapter_process(
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
             )
+        # Only a codec that reads startup diagnostics pays for the full capture.
+        complete = (
+            redact_file_tail(stderr, limit=_ADAPTER_OUTPUT_LIMIT_BYTES + 1) if full_stderr else ""
+        )
         return _AdapterResult(
-            proc.returncode,
-            captured_stdout,
-            captured_stderr,
-            stderr_complete=redact_file_tail(stderr, limit=_ADAPTER_OUTPUT_LIMIT_BYTES + 1),
+            proc.returncode, captured_stdout, captured_stderr, stderr_complete=complete
         )
 
 

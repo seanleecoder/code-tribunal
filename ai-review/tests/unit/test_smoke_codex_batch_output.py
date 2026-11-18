@@ -132,6 +132,30 @@ def test_stub_drives_responses_tool_call_then_exact_answer_over_loopback() -> No
     assert len(stub.requests) == 2 and not stub.errors
 
 
+def test_stub_can_drop_the_first_stream_before_completion() -> None:
+    batch = smoke.probe_batch("review")
+    with smoke.StubProvider(batch, [], drop_first=True) as stub:
+        streams = []
+        for _ in range(2):
+            req = Request(
+                stub.url + "/responses",
+                data=json.dumps(request()).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(req, timeout=5) as response:
+                streams.append(
+                    [
+                        json.loads(line[6:])["type"]
+                        for line in response.read().decode().splitlines()
+                        if line.startswith("data: ")
+                    ]
+                )
+    assert "response.completed" not in streams[0]
+    assert streams[1][-1] == "response.completed"
+    # The retried request takes the dropped one's place in the sequence.
+    assert stub.dropped == 1 and len(stub.requests) == 1 and not stub.errors
+
+
 def test_terminal_provider_failure_can_follow_a_valid_answer() -> None:
     events = smoke.response_events(1, code=None, answer='{"findings":[]}', terminal=True)
     assert events[-2]["item"]["content"][0]["text"] == '{"findings":[]}'
@@ -235,6 +259,7 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "tools/no-match",
         "tools/tool-error",
         "tools/recovery",
+        "tools/reconnect",
         "tools/containment",
         "failures/malformed",
         "failures/truncated",
@@ -272,6 +297,7 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
             "",
             str(workspace),
             json.dumps(overrides),
+            "0",
         ],
     )
     prepared = {}
@@ -307,6 +333,7 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
     assert prepared["env"] == {"OPENROUTER_BASE_URL": "http://127.0.0.1"}
     # Retry bounds and negative-control overrides follow the registry arguments.
     assert prepared["arguments"][0] == "registry"
+    assert "model_providers.openrouter.stream_max_retries=0" in prepared["arguments"]
     assert prepared["arguments"][-len(overrides) or len(prepared["arguments"]) :] == (
         overrides or []
     )

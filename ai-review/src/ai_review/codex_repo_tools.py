@@ -126,7 +126,8 @@ TOOLS = [
             "number may be followed by '!', '+' or both ('!+'): '!' marks text shown as in "
             f"read_file's marked lines, and '+' marks text cut at {MAX_MATCH_CHARS} "
             "characters (read_file with start_column for the rest). 'path:?+:' with no "
-            "text means the matching line was too large to show; read_file the file." + _NAMES
+            "text means the matching line was too large to show; read_file the file. "
+            f"Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are not searched." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -223,14 +224,18 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     # Number lines as git and the diff do: only "\n" ends a line. splitlines()
     # also splits on form feeds and Unicode separators, shifting every anchor.
     content = data[:MAX_FILE_BYTES]
-    # Text after the last "\n" is a line unless, without its "\r", it is empty.
-    total = content.count(b"\n") + (content[content.rfind(b"\n") + 1 :] not in (b"", b"\r"))
+    newlines = content.count(b"\n")
+    # Any text after the last "\n" is a line, a lone "\r" included, as git counts.
+    total = newlines + (content[content.rfind(b"\n") + 1 :] != b"")
     end = min(total, start - 1 + count)
+    # Only a CRLF terminator loses its "\r"; an unterminated last line keeps it.
+    # The read limit can separate a CRLF line's "\r" from its "\n".
+    tail_terminated = data[MAX_FILE_BYTES:] == b"\n"
     # "\n" is never part of a multi-byte UTF-8 sequence, so decoding only the
     # requested lines shows exactly what decoding the whole file would.
     lines = [
-        line.decode("utf-8", errors="replace").removesuffix("\r")
-        for line in content.split(b"\n", end)[start - 1 : end]
+        _line_text(line, terminated=index < newlines or tail_terminated)
+        for index, line in enumerate(content.split(b"\n", end)[start - 1 : end], start - 1)
     ]
     # Fill the output budget line by line. A line that does not fit (a minified
     # file, or CR-only line endings, which git counts as one line) is cut, and
@@ -269,9 +274,20 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         )
     elif end < total:
         notes.append(f"[{total - end} more lines; continue with start_line]")
+    elif start > max(total, 1):
+        if len(data) > MAX_FILE_BYTES:
+            where = f"line {total}, the last line within the read limit"
+        else:
+            where = f"the end of the file, which has {total} line{'' if total == 1 else 's'}"
+        notes.append(f"[start_line {start} is past {where}]")
     if len(data) > MAX_FILE_BYTES:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
     return _bounded("\n".join([*out, *notes]))
+
+
+def _line_text(line: bytes, *, terminated: bool) -> str:
+    text = line.decode("utf-8", errors="replace")
+    return text.removesuffix("\r") if terminated else text
 
 
 def list_dir(root: Path, arguments: dict[str, Any]) -> str:
@@ -291,6 +307,9 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     pattern = arguments.get("pattern")
     if not isinstance(pattern, str) or not pattern or len(pattern) > MAX_PATTERN_CHARS:
         raise ToolError(f"pattern must be 1-{MAX_PATTERN_CHARS} characters")
+    if "\x00" in pattern:
+        # A process argument cannot hold NUL; Popen would raise and end the server.
+        raise ToolError("pattern must not contain NUL")
     target = contained(root, arguments.get("path"))
     argv = [
         RG,
@@ -304,16 +323,18 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--no-ignore",
         "--glob",
         "!.git",
+        # The same size read_file serves. Match counts are bounded by the
+        # output, input and time budgets, which report when they cut a search.
         "--max-filesize",
-        "1M",
-        "--max-count",
-        "50",
+        str(MAX_FILE_BYTES),
         "--regexp",
         pattern,
         "--",
     ]
     if target != root:
-        argv.append(_relative(root, target))
+        operand = _relative(root, target)
+        # rg reads stdin for a bare "-" operand, even after "--".
+        argv.append("./-" if operand == "-" else operand)
     process = subprocess.Popen(
         argv,
         cwd=root,
@@ -507,8 +528,9 @@ def _fit(text: str, room: int) -> tuple[str, int, bool]:
 
 def _match_line(data: dict[str, Any]) -> str:
     name = _display(os.fsdecode(_rg_data(data["path"])))
-    text = _rg_data(data["lines"]).decode("utf-8", errors="replace").removesuffix("\n")
-    text = text.removesuffix("\r")
+    text = _rg_data(data["lines"]).decode("utf-8", errors="replace")
+    if text.endswith("\n"):
+        text = text[:-1].removesuffix("\r")
     cut = len(text) > MAX_MATCH_CHARS
     shown, escaped = _render(text[:MAX_MATCH_CHARS])
     mark = (_ESCAPED_MARK if escaped else "") + (_TRUNCATED_MARK if cut else "")

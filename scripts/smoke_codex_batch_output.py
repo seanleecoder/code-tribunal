@@ -48,7 +48,7 @@ RUNNER = r"""
 import json, sys
 from pathlib import Path
 from ai_review import adapter_runner as runner
-url, capture_path, fault, workspace_path, overrides = sys.argv[2:7]
+url, capture_path, fault, workspace_path, overrides, retries = sys.argv[2:8]
 original_prepare = runner.prepare_shell_adapter
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = url
@@ -56,7 +56,7 @@ def prepare(definition, stage, env):
     Path(workspace_path).write_text(json.dumps({"root": str(root)}))
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
     arguments += ["-c", "model_providers.openrouter.request_max_retries=0",
-                  "-c", "model_providers.openrouter.stream_max_retries=0"]
+                  "-c", f"model_providers.openrouter.stream_max_retries={retries}"]
     # Negative controls only: trusted overrides after the registry's arguments.
     arguments += json.loads(overrides)
     return arguments, root
@@ -88,9 +88,13 @@ raise SystemExit(runner.run_adapter("codex", sys.argv[1]))
 
 
 class StubProvider:
-    def __init__(self, batch: dict, steps: list[str], *, terminal: bool = False) -> None:
+    def __init__(
+        self, batch: dict, steps: list[str], *, terminal: bool = False, drop_first: bool = False
+    ) -> None:
         self.steps, self.answer, self.terminal = steps, json.dumps(batch), terminal
         self.requests: list[dict] = []
+        # A first stream closed before response.completed; Codex retries it.
+        self.drop_first, self.dropped = drop_first, 0
         self.errors: list[str] = []
         stub = self
 
@@ -101,8 +105,12 @@ class StubProvider:
             def do_POST(self) -> None:  # noqa: N802
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                    stub.requests.append(request)
-                    index = len(stub.requests)
+                    dropping = stub.drop_first and not stub.dropped
+                    if dropping:
+                        stub.dropped += 1
+                    else:
+                        stub.requests.append(request)
+                    index = len(stub.requests) + dropping
                     code = stub.steps[index - 1] if index <= len(stub.steps) else None
                     if index > len(stub.steps) + 1:
                         raise ValueError("unexpected extra provider request")
@@ -112,6 +120,8 @@ class StubProvider:
                         answer=stub.answer,
                         terminal=stub.terminal and code is None,
                     )
+                    if dropping:
+                        events = events[:-1]
                     body = b"".join(
                         f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
                         for event in events
@@ -373,6 +383,7 @@ def run_case(
     stream_fault: str = "",
     overrides: list[str] | None = None,
     protected_runtime: Path | None = None,
+    drop_first_stream: bool = False,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -410,7 +421,7 @@ def run_case(
         protected = {p: p.read_bytes() for p in (protected_input, protected_runtime)}
         steps = containment_steps(protected_input, protected_runtime)
     batch = {"findings": []} if empty else probe_batch(stage)
-    with StubProvider(batch, steps, terminal=terminal) as stub:
+    with StubProvider(batch, steps, terminal=terminal, drop_first=drop_first_stream) as stub:
         result = subprocess.run(
             [
                 sys.executable,
@@ -423,6 +434,8 @@ def run_case(
                 stream_fault,
                 str(work / "workspace.json"),
                 json.dumps(overrides or []),
+                # One stream retry is enough for the dropped-stream case.
+                str(int(drop_first_stream)),
             ],
             env={
                 "PATH": cli_path or os.environ["PATH"],
@@ -520,6 +533,14 @@ def run_case(
         for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
     ):
         raise AssertionError("missing-host control did not exercise the absent host")
+    if drop_first_stream and (
+        stub.dropped != 1
+        or not any(
+            event.get("type") == "error" and "Reconnecting" in event.get("message", "")
+            for event in map(json.loads, filter(None, capture["stdout"].split("\n")))
+        )
+    ):
+        raise AssertionError(f"{label}: control did not exercise a recovered stream retry")
     if label in {"tool-error", "recovery"} and "not a file: missing.txt" not in tool_outputs(
         stub.requests[1]
     ):
@@ -653,6 +674,15 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     add(directory, "tool-error", REQUIRED_MODEL, steps=[missing])
     recovery = [missing, read]
     add(directory, "recovery", REQUIRED_MODEL, steps=recovery, sentinel=secrets.token_hex(24))
+    # Codex reports the reconnect as a top-level error event, then completes.
+    add(
+        directory,
+        "reconnect",
+        REQUIRED_MODEL,
+        steps=[read],
+        drop_first_stream=True,
+        sentinel=secrets.token_hex(24),
+    )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("tools/containment", partial(containment_case, install, directory)))
     directory = scratch / "failures"
