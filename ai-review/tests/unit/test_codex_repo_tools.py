@@ -404,6 +404,17 @@ def test_a_page_ending_before_a_control_is_shown_exactly(repo: Path, monkeypatch
     assert text.splitlines()[0] == "1\tabcdefghi"
 
 
+def test_an_escaped_line_that_fits_is_encoded_once(monkeypatch) -> None:
+    # Most escaped lines fit whole; only a line that must be cut needs the
+    # longest-fit search.
+    encoded = []
+    encode = tools._json_body
+    monkeypatch.setattr(tools, "_json_body", lambda text: encoded.append(text) or encode(text))
+    line = ("\x01" + "q" * 99) * 300
+    assert tools._fit(line, 1_000_000) == (encode(line), len(line), True)
+    assert encoded == [line]
+
+
 @needs_rg
 def test_cut_and_capped_matches_stay_decodable(repo: Path, monkeypatch) -> None:
     # A marked, cut match decodes to exactly its first MAX_MATCH_CHARS
@@ -422,7 +433,7 @@ def test_cut_and_capped_matches_stay_decodable(repo: Path, monkeypatch) -> None:
     text, is_error = call(repo, "grep", pattern="hit")
     assert not is_error and len(text.encode()) <= tools.MAX_OUTPUT_BYTES
     *records, note = text.removesuffix("\n").split("\n")
-    assert note == f"[search output truncated at {tools.MAX_OUTPUT_BYTES} bytes]"
+    assert note == "[search output limit reached; narrow the path or pattern]"
     for record in records:
         name, number, shown = record.split(":", 2)
         if number.endswith("!"):
@@ -510,6 +521,72 @@ def test_a_running_timeout_cannot_signal_after_grep_returns(repo: Path, monkeypa
     returned = len(signals)
     timers[0].join(5)
     assert signals[returned:] == []
+
+
+
+class _DeadlineAtReturn:
+    """A timer that fires its callback just as the reader returns, then is spent."""
+
+    def __init__(self, interval: float, function) -> None:
+        self.function = function
+
+    def start(self) -> None:
+        pass
+
+    def cancel(self) -> None:
+        pass
+
+    def join(self, timeout: float | None = None) -> None:
+        pass
+
+
+def _fire_deadline_after_reading(monkeypatch, *, wait_for_exit: bool) -> None:
+    timers: list[_DeadlineAtReturn] = []
+
+    def recorded_timer(*args) -> _DeadlineAtReturn:
+        timers.append(_DeadlineAtReturn(*args))
+        return timers[-1]
+
+    monkeypatch.setattr(tools.threading, "Timer", recorded_timer)
+    pids: list[int] = []
+    popen = tools.subprocess.Popen
+
+    def recorded_popen(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        pids.append(process.pid)
+        return process
+
+    monkeypatch.setattr(tools.subprocess, "Popen", recorded_popen)
+    read = tools._read_matches
+
+    def read_then_expire(stream, matches):
+        cut = read(stream, matches)
+        if wait_for_exit:  # Let rg exit by itself before the deadline lands.
+            os.waitid(os.P_PID, pids[0], os.WEXITED | os.WNOWAIT)
+        timers[0].function()
+        return cut
+
+    monkeypatch.setattr(tools, "_read_matches", read_then_expire)
+
+
+@needs_rg
+def test_a_deadline_at_completion_keeps_a_finished_search(repo: Path, monkeypatch) -> None:
+    # rg wrote every record and exited by itself; a deadline that lands before
+    # grep records that must not turn the whole result into a timeout.
+    _fire_deadline_after_reading(monkeypatch, wait_for_exit=True)
+    assert call(repo, "grep", pattern="value = 1") == ("pkg/module.py:1:value = 1\n", False)
+
+
+@needs_rg
+def test_a_deadline_after_the_output_cap_keeps_the_capped_result(repo: Path, monkeypatch) -> None:
+    # The output budget had already ended the result when the deadline landed.
+    for index in range(40):
+        (repo / f"m{index:02}.py").write_text("hit\n")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", tools._NOTE_RESERVE_BYTES + 60)
+    _fire_deadline_after_reading(monkeypatch, wait_for_exit=False)
+    text, is_error = call(repo, "grep", pattern="hit")
+    assert not is_error
+    assert text.splitlines()[-1] == "[search output limit reached; narrow the path or pattern]"
 
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:

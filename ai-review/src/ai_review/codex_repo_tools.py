@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import IO, Any
 
 MAX_OUTPUT_BYTES = 256 * 1024
-_NOTE_RESERVE_BYTES = 512  # Room for read_file notes inside the output cap.
+# Room inside the output cap for the closing notes that read_file and grep
+# append after the content they fit.
+_NOTE_RESERVE_BYTES = 512
 MAX_FILE_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_LINES = 2000
 MAX_LIST_ENTRIES = 1000
@@ -120,11 +122,11 @@ TOOLS = [
         "name": "grep",
         "description": (
             "Search the repository under review with a ripgrep regular expression. "
-            "Returns path:line:text matches, including hidden files except .git. A line "
-            "number ending in '!' marks text shown as in read_file's marked lines; one "
-            f"ending in '+' marks text cut at {MAX_MATCH_CHARS} characters (read_file with "
-            "start_column for the rest). A line number of '?' means the matching line was "
-            "too large to show; read_file the file." + _NAMES
+            "Returns path:line:text matches, including hidden files except .git. The line "
+            "number may be followed by '!', '+' or both ('!+'): '!' marks text shown as in "
+            f"read_file's marked lines, and '+' marks text cut at {MAX_MATCH_CHARS} "
+            "characters (read_file with start_column for the rest). 'path:?+:' with no "
+            "text means the matching line was too large to show; read_file the file." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -320,35 +322,35 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     )
 
     timed_out = threading.Event()
-    # Completion and timeout are decided once, under this lock: a timeout that
-    # fires as the search finishes must not discard results already complete.
-    decided = threading.Lock()
-    finished = False
 
     def kill() -> None:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
 
     def expire() -> None:
-        with decided:
-            if finished:
-                return
-            timed_out.set()
-            kill()
+        timed_out.set()
+        kill()
 
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
     matches: list[str] = []
     cut: str | None = None
+    # Whether the result is complete is decided from what was read, not from
+    # which of the reader and the timer got there first: a deadline reached as
+    # the search finishes must not discard a result that is already whole.
+    complete = False
     try:
         assert process.stdout is not None
         cut = _read_matches(process.stdout, matches)
-        if cut is None:
-            # rg closed its output; wait for its status without reaping it, so
-            # its PID, and so its group, stays reserved until kill() below.
-            os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
-        with decided:
-            finished = not timed_out.is_set()
+        if cut is not None:
+            complete = True  # The output budget, not rg, ended the result.
+        else:
+            # rg closed its output. Wait for its status without reaping it, so
+            # its PID, and so its group, stays reserved until kill() below. Only
+            # an rg that exited by itself, not one the timeout killed, has
+            # written every record.
+            status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+            complete = status is not None and status.si_code == os.CLD_EXITED
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ToolError("search output could not be read") from exc
     finally:
@@ -360,7 +362,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         process.wait()
         if process.stdout is not None:
             process.stdout.close()
-    if timed_out.is_set():
+    if timed_out.is_set() and not complete:
         raise ToolError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
     # rg exits 1 for no match and 2 on an error, such as an invalid pattern, a
     # missing path or an unreadable file; an error can accompany partial results.
@@ -403,7 +405,8 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
         if line is not None:
             added = len(line.encode()) + 1
             if size + added > budget:
-                return f"[search output truncated at {MAX_OUTPUT_BYTES} bytes]"
+                # Whole records stop before the budget, so this is not a byte cut.
+                return "[search output limit reached; narrow the path or pattern]"
             matches.append(line)
             size += added
         if consumed > MAX_GREP_INPUT_BYTES:
@@ -483,6 +486,11 @@ def _fit(text: str, room: int) -> tuple[str, int, bool]:
         return fitted, len(fitted), False
     # The plain prefix fits whole; take a longer, escaped prefix if one fits.
     escaped_room = room - len(_ESCAPED_MARK)
+    if len(window) == len(text):
+        # Most escaped lines fit whole: encode once rather than search.
+        body = _json_body(text)
+        if len(body.encode()) <= escaped_room:
+            return body, len(text), True
     # Escapes are per character, so a prefix's display is a prefix of the
     # display and its size grows with the prefix: search for the longest fit.
     low, high = plain_end, len(window)
