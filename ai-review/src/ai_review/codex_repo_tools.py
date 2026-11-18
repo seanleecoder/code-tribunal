@@ -84,8 +84,9 @@ _UNADDRESSABLE = " [non-UTF-8 name; cannot be opened by path]"
 _NAMES = (
     " A name shown in double quotes is a JSON string (for example one containing "
     "':', '\"', '\\', a control character or a line separator, or starting with "
-    "'['); pass its decoded value as path. A name that is not valid UTF-8 is shown "
-    f"escaped and followed by '{_UNADDRESSABLE.strip()}'; it cannot be opened."
+    "'['); pass its decoded value as path, unless the quoted text is followed by "
+    f"'{_UNADDRESSABLE.strip()}'. That marks a name that is not valid UTF-8, shown "
+    "escaped: it cannot be opened, and its quoted text is not a path."
 )
 TOOLS = [
     {

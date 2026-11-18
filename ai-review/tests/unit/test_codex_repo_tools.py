@@ -248,8 +248,21 @@ def test_every_quoted_name_is_described_and_opens_decoded(repo: Path) -> None:
     for tool in tools.TOOLS:
         if tool["name"] != "read_file":
             assert "A name shown in double quotes is a JSON string" in tool["description"]
-            assert tools._UNADDRESSABLE.strip() in tool["description"]
+            # The rule itself excepts a marked name: its quoted text is no path.
+            assert f"unless the quoted text is followed by '{tools._UNADDRESSABLE.strip()}'" in (
+                tool["description"]
+            )
     assert "when its name can be passed as a path" in tools.TOOLS[2]["description"]
+
+
+@needs_rg
+def test_grep_shows_quoted_names_as_list_dir_does(repo: Path) -> None:
+    # grep renders names through _match_line and _rg_name, not list_dir's path.
+    names = ["[notes].txt", "a b.txt", "pua.txt"]
+    for name in names:
+        (repo / name).write_text("quoted-hit\n")
+    lines = call(repo, "grep", pattern="quoted-hit")[0].splitlines()
+    assert sorted(lines) == sorted(f"{json.dumps(name)}:1:quoted-hit" for name in names)
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
