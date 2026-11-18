@@ -17,8 +17,8 @@ versioning.
   runs without a shell: review reads the snapshot through a trusted read-only
   repository tool server (`read_file`, `list_dir`, `grep`), and other optional
   Codex tools are disabled. No runner security options are needed. Codex
-  execution events reject missing-host, terminal, unavailable-tool-server and
-  wholly failed operational tool runs as `model_error`, excluding the seat from
+  execution events reject missing-host, terminal, unavailable-tool-server,
+  unrecognized top-level error and wholly failed operational tool runs as `model_error`, excluding the seat from
   review success and resolution eligibility and exposing it in run health; a
   shell command event is rejected as a schema error.
   Empty reviews, tool-free critiques, no-match searches, tool-reported errors,

@@ -65,15 +65,37 @@ def test_grep_uses_rg_including_hidden_files(repo: Path) -> None:
 @needs_rg
 def test_grep_searches_a_path_named_dash(repo: Path) -> None:
     (repo / "-").write_text("dash-only\n")
-    assert call(repo, "grep", pattern="dash-only", path="-") == ("./-:1:dash-only\n", False)
-    assert call(repo, "read_file", path="./-") == ("1\tdash-only", False)
+    # The same name as a repository-wide search shows.
+    assert call(repo, "grep", pattern="dash-only", path="-") == ("-:1:dash-only\n", False)
+    assert call(repo, "grep", pattern="dash-only") == ("-:1:dash-only\n", False)
+    (repo / "-").unlink()
+    (repo / "-").mkdir()
+    (repo / "-/inner.txt").write_text("dash-only\n")
+    assert call(repo, "grep", pattern="dash-only", path="-") == ("-/inner.txt:1:dash-only\n", False)
 
 
 @needs_rg
-def test_grep_reports_every_match_and_files_read_file_serves(repo: Path) -> None:
-    (repo / "dense.txt").write_text("hit\n" * 60)
+def test_grep_caps_dense_files_in_a_directory_search_and_says_so(repo: Path) -> None:
+    cap = tools.MAX_MATCHES_PER_FILE
+    (repo / "dense.txt").write_text("hit\n" * (cap + 10))
+    (repo / "exact.txt").write_text("hit\n" * cap)
+    (repo / "pkg/sparse.py").write_text("hit\n")
+    lines = call(repo, "grep", pattern="hit")[0].splitlines()
+    dense = [line for line in lines if line.startswith("dense.txt:")]
+    assert dense == [f"dense.txt:{n}:hit" for n in range(1, cap + 1)]
+    assert f"[dense.txt: more than {cap} matching lines; grep this path for all of them]" in lines
+    # A file with exactly the cap is complete, so it gets no note.
+    assert len([line for line in lines if line.startswith("exact.txt:")]) == cap
+    assert not any(line.startswith("[exact.txt") for line in lines)
+    assert "pkg/sparse.py:1:hit" in lines
+    # A search of that file by path is not capped.
     text, is_error = call(repo, "grep", pattern="hit", path="dense.txt")
-    assert not is_error and len(text.splitlines()) == 60
+    assert not is_error and len(text.splitlines()) == cap + 10
+    assert f"more than {cap} matching lines" in tools.TOOLS[2]["description"]
+
+
+@needs_rg
+def test_grep_reports_files_read_file_serves(repo: Path) -> None:
     (repo / "large.txt").write_text("x" * 63 + "\n")
     with (repo / "large.txt").open("a") as handle:
         handle.write(("y" * 63 + "\n") * 32768 + "late-needle\n")
@@ -82,6 +104,11 @@ def test_grep_reports_every_match_and_files_read_file_serves(repo: Path) -> None
     with (repo / "too-large.txt").open("w") as handle:
         handle.write("z" * tools.MAX_FILE_BYTES + "\nlate-needle\n")
     assert "too-large.txt" not in call(repo, "grep", pattern="late-needle")[0]
+    # rg would search a file named as its operand whatever its size.
+    assert call(repo, "grep", pattern="late-needle", path="too-large.txt") == (
+        "file larger than 4 MiB is not searched: too-large.txt",
+        True,
+    )
     assert "4 MiB are not searched" in tools.TOOLS[2]["description"]
 
 
@@ -630,8 +657,8 @@ def _fire_deadline_after_reading(monkeypatch, *, wait_for_exit: bool) -> None:
     monkeypatch.setattr(tools.subprocess, "Popen", recorded_popen)
     read = tools._read_matches
 
-    def read_then_expire(stream, matches):
-        cut = read(stream, matches)
+    def read_then_expire(stream, matches, **options):
+        cut = read(stream, matches, **options)
         if wait_for_exit:  # Let rg exit by itself before the deadline lands.
             os.waitid(os.P_PID, pids[0], os.WEXITED | os.WNOWAIT)
         timers[0].function()
@@ -792,4 +819,10 @@ def test_registry_refuses_a_path_toml_cannot_represent(tmp_path: Path) -> None:
         "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
     }
     with pytest.raises(ValueError, match="cannot be passed to the reviewer CLI as TOML"):
-        prepare_shell_adapter(get_reviewer_definition("codex"), "review", env)
+        prepare_shell_adapter(get_reviewer_definition("codex"), "review", dict(env))
+    # The refusal comes before the snapshot copy, so nothing is left behind.
+    assert not output.exists()
+    # Seats whose arguments never pass these paths as TOML still launch.
+    for reviewer, stage in (("claude", "review"), ("cursor", "review"), ("codex", "critique")):
+        arguments, root = prepare_shell_adapter(get_reviewer_definition(reviewer), stage, dict(env))
+        assert arguments and root.is_dir()

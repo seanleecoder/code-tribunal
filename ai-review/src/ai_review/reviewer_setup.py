@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -46,11 +47,18 @@ def state_environment(
     }
 
 
+def workspace_paths(
+    definition: ReviewerDefinition, stage: str, output_dir: Path
+) -> tuple[Path, Path]:
+    """Return the seat's state directory and working root, without creating them."""
+    tmp_dir = (output_dir / ".tmp").resolve()
+    return tmp_dir, tmp_dir / f"{definition.reviewer_id}-{stage}-root.{os.getpid()}"
+
+
 def prepare_workspace(
     definition: ReviewerDefinition, stage: str, input_dir: Path, output_dir: Path
 ) -> tuple[Path, Path]:
-    tmp_dir = (output_dir / ".tmp").resolve()
-    root = tmp_dir / f"{definition.reviewer_id}-{stage}-root.{os.getpid()}"
+    tmp_dir, root = workspace_paths(definition, stage, output_dir)
     for directory in (root, *(tmp_dir / name for _, name in definition.state_directories)):
         directory.mkdir(parents=True, exist_ok=True)
     home = tmp_dir / dict(definition.state_directories)["HOME"]
@@ -96,9 +104,26 @@ def prepare_shell_adapter(
     definition: ReviewerDefinition, stage: str, env: dict[str, str]
 ) -> tuple[list[str], Path]:
     """Complete ``env`` for a shell seat; return its CLI arguments and working root."""
-    tmp_dir, root = prepare_workspace(
-        definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
+    output_dir = Path(env["AI_REVIEW_OUTPUT_DIR"])
+    arguments = definition.cli_arguments + (
+        definition.review_arguments if stage == "review" else definition.critique_arguments
     )
+    if effort := env.get("AI_REVIEW_EFFORT"):
+        arguments += definition.effort_arguments
+    tmp_dir, root = workspace_paths(definition, stage, output_dir)
+    # TOML basic strings for CLI --config values. Encode only the values this
+    # invocation's templates use, and before the snapshot is copied: a path
+    # toml_string refuses must neither block a seat that never passes it nor
+    # leave a copied snapshot behind.
+    templates = (*arguments, *(value for _, value in definition.environment))
+    used = {field for text in templates for _, field, _, _ in string.Formatter().parse(text)}
+    toml_paths = {
+        "root_toml": str(root),
+        "python_toml": sys.executable,
+        "repo_tools_toml": str(Path(__file__).with_name("codex_repo_tools.py")),
+    }
+    toml = {name: toml_string(value) for name, value in toml_paths.items() if name in used}
+    prepare_workspace(definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), output_dir)
     values = {
         **env,
         # The adapter itself reports a missing credential; templates must not.
@@ -107,18 +132,11 @@ def prepare_shell_adapter(
         "root": str(root),
         "schema_path": str(stage_schema_path(stage)),
         "schema_json": json.dumps(transport_schema(stage)),
-        # TOML basic strings for CLI --config values.
-        "root_toml": toml_string(str(root)),
-        "python_toml": toml_string(sys.executable),
-        "repo_tools_toml": toml_string(str(Path(__file__).with_name("codex_repo_tools.py"))),
+        **toml,
     }
-    env.update(state_environment(definition, tmp_dir, values))
-    arguments = definition.cli_arguments + (
-        definition.review_arguments if stage == "review" else definition.critique_arguments
-    )
-    if effort := env.get("AI_REVIEW_EFFORT"):
+    if effort:
         values["effort"] = effort
-        arguments += definition.effort_arguments
+    env.update(state_environment(definition, tmp_dir, values))
     return [argument.format_map(values) for argument in arguments], root
 
 

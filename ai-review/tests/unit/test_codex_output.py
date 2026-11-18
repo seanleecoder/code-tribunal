@@ -149,6 +149,29 @@ def test_recovered_reconnect_is_usable_but_an_unrecovered_error_is_terminal() ->
         load(data)
 
 
+@pytest.mark.parametrize(
+    "message",
+    ["Unexpected diagnostic", "Reconnecting later", "Reconnecting... 1/5x", "", None, 3],
+)
+def test_only_a_reconnect_notice_is_recoverable(message: object) -> None:
+    # Any other top-level error fails closed, even when the turn completes.
+    data = capture("reconnect")
+    notice = next(line for line in data["stdout"].split("\n") if '"type":"error"' in line)
+    replacement = json.dumps({"type": "error", "message": message})
+    data["stdout"] = data["stdout"].replace(notice, replacement)
+    with pytest.raises(AdapterModelError, match="terminal model failure"):
+        load(data)
+
+
+def test_a_recovered_reconnect_does_not_change_how_a_missing_answer_is_classified() -> None:
+    for label in ("reconnect", "empty"):
+        data = capture(label)
+        lines = data["stdout"].split("\n")
+        data["stdout"] = "\n".join(line for line in lines if "agent_message" not in line)
+        with pytest.raises(SchemaValidationError, match="no final answer"):
+            load(data)
+
+
 def test_events_split_only_at_newlines() -> None:
     data = capture("separator")
     assert "\u2028" in data["stdout"]

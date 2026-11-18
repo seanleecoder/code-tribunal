@@ -50,7 +50,8 @@ transport failures as failures:
 - Listing and grep find the sentinel; a no-match search, a tool-reported missing
   file, and recovery after one stay usable. So does a provider stream dropped
   before completion: Codex reports the reconnect as a top-level `error` event,
-  retries once, and completes.
+  retries once, and completes. That notice is the only top-level error the
+  parser admits, so a reworded notice fails this case.
 - Containment: traversal and absolute paths are refused, and protected bytes
   outside the snapshot never reach the model. `exec_command`/`write_stdin` are
   absent at runtime; `apply_patch` is rejected by the read-only policy and

@@ -38,6 +38,10 @@ DEFAULT_MAX_LINES = 2000
 MAX_LIST_ENTRIES = 1000
 MAX_PATTERN_CHARS = 512
 MAX_MATCH_CHARS = 500
+# Matching lines shown per file in a directory search, so one dense file (a lock
+# file, generated code) cannot spend the whole output budget. A search of that
+# file by path is not capped, so every match stays reachable.
+MAX_MATCHES_PER_FILE = 50
 # rg --json ignores --max-columns and lists every submatch, so one long line can
 # make a record far larger than the text it renders. Records past this size are
 # shown from their head instead of being parsed whole.
@@ -127,7 +131,10 @@ TOOLS = [
             f"read_file's marked lines, and '+' marks text cut at {MAX_MATCH_CHARS} "
             "characters (read_file with start_column for the rest). 'path:?+:' with no "
             "text means the matching line was too large to show; read_file the file. "
-            f"Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are not searched." + _NAMES
+            f"In a directory search, a file with more than {MAX_MATCHES_PER_FILE} matching "
+            f"lines shows its first {MAX_MATCHES_PER_FILE} and a note; grep that file's path "
+            f"for all of them. Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are "
+            "not searched." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -311,6 +318,15 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # A process argument cannot hold NUL; Popen would raise and end the server.
         raise ToolError("pattern must not contain NUL")
     target = contained(root, arguments.get("path"))
+    if target.is_file() and target.stat().st_size > MAX_FILE_BYTES:
+        # rg applies --max-filesize only to files it finds while walking a
+        # directory, not to a file named as an operand.
+        raise ToolError(
+            f"file larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB is not searched: "
+            f"{_display(_relative(root, target))}"
+        )
+    # One more match than is shown, so a capped file is known to have more.
+    per_file = MAX_MATCHES_PER_FILE if target.is_dir() else None
     argv = [
         RG,
         "--no-config",
@@ -324,16 +340,19 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--glob",
         "!.git",
         # The same size read_file serves. Match counts are bounded by the
-        # output, input and time budgets, which report when they cut a search.
+        # per-file cap and the output, input and time budgets, which report
+        # when they cut a search.
         "--max-filesize",
         str(MAX_FILE_BYTES),
+        *(("--max-count", str(per_file + 1)) if per_file is not None else ()),
         "--regexp",
         pattern,
         "--",
     ]
     if target != root:
         operand = _relative(root, target)
-        # rg reads stdin for a bare "-" operand, even after "--".
+        # rg reads stdin for a bare "-" operand, even after "--". _rg_name drops
+        # the "./" again, so the file keeps the name every other result shows.
         argv.append("./-" if operand == "-" else operand)
     process = subprocess.Popen(
         argv,
@@ -365,7 +384,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     # the search finishes must not discard a result that is already whole.
     complete = False
     try:
-        cut = _read_matches(process.stdout, matches)
+        cut = _read_matches(process.stdout, matches, per_file=per_file)
         if cut is not None:
             complete = True  # The output budget, not rg, ended the result.
         else:
@@ -400,8 +419,13 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     return _bounded("".join(f"{line}\n" for line in matches))
 
 
-def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
+def _read_matches(
+    stream: IO[bytes], matches: list[str], *, per_file: int | None = None
+) -> str | None:
     """Render rg --json match records until EOF; return a note if the search was cut.
+
+    With ``per_file``, rg stops each file one match past it; that extra match is
+    replaced by a note naming the file, which a search by its path shows whole.
 
     Each record is read up to MAX_GREP_RECORD_BYTES, so one oversized record is
     shown from its head and skipped rather than consuming the whole search.
@@ -409,14 +433,14 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
     MAX_GREP_INPUT_BYTES. Output stops between complete records, leaving room
     for the closing notes, so the final cap never splits a match.
     """
-    consumed, size, path = 0, 0, None
+    consumed, size, path, count = 0, 0, None, 0
     budget = MAX_OUTPUT_BYTES - _NOTE_RESERVE_BYTES
     while record := stream.readline(MAX_GREP_RECORD_BYTES):
         consumed += len(record)
         if record.endswith(b"\n"):
             event = json.loads(record)
             if event.get("type") == "begin":
-                path = event["data"]["path"]
+                path, count = event["data"]["path"], 0
             line = _match_line(event["data"]) if event.get("type") == "match" else None
         else:
             line = _oversized_match_line(record, path)
@@ -425,6 +449,17 @@ def _read_matches(stream: IO[bytes], matches: list[str]) -> str | None:
                 consumed += len(rest)
                 if rest.endswith(b"\n"):
                     break
+        if line is not None:  # Only a match record renders a line.
+            count += 1
+            if per_file is not None and count > per_file:
+                if path is None:
+                    raise ValueError("rg match record before any begin record")
+                line = (
+                    f"[{_rg_name(path)}: more than {per_file} matching lines; "
+                    "grep this path for all of them]"
+                    if count == per_file + 1
+                    else None  # rg's --max-count already stops here.
+                )
         if line is not None:
             added = len(line.encode()) + 1
             if size + added > budget:
@@ -458,8 +493,13 @@ def _oversized_match_line(head: bytes, path: dict[str, str] | None) -> str | Non
         return _match_line(json.loads(head[:cut] + b"}}")["data"])
     if path is None:
         raise ValueError("oversized rg match record before any begin record")
-    name = _display(os.fsdecode(_rg_data(path)))
-    return f"{name}:?{_TRUNCATED_MARK}:"
+    return f"{_rg_name(path)}:?{_TRUNCATED_MARK}:"
+
+
+def _rg_name(value: dict[str, str]) -> str:
+    # rg prints a path as its operand spelled it. Only the "./-" operand grep
+    # writes for a file named "-" starts with "./"; _relative never does.
+    return _display(os.fsdecode(_rg_data(value).removeprefix(b"./")))
 
 
 def _rg_data(value: dict[str, str]) -> bytes:
@@ -527,7 +567,7 @@ def _fit(text: str, room: int) -> tuple[str, int, bool]:
 
 
 def _match_line(data: dict[str, Any]) -> str:
-    name = _display(os.fsdecode(_rg_data(data["path"])))
+    name = _rg_name(data["path"])
     text = _rg_data(data["lines"]).decode("utf-8", errors="replace")
     if text.endswith("\n"):
         text = text[:-1].removesuffix("\r")

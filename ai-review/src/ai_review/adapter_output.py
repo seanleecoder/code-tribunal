@@ -321,6 +321,11 @@ _CODEX_HOST_FAILURE = re.compile(
     r"code.mode host.*(?:executable was not found|unavailable)",
     re.IGNORECASE,
 )
+# The only top-level error Codex recovers from: a stream reconnect, reported as
+# "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other
+# top-level error is fatal, so an unrecognized problem cannot be admitted with a
+# tool-free answer. The image gate's dropped-stream case pins this wording.
+_CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
 
 
 def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
@@ -329,9 +334,9 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     Codex runs without a shell, so a command item is outside the contract.
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
-    call itself failed. A top-level ``error`` event is fatal only when the turn
-    then fails or never completes: Codex also reports a stream reconnect that
-    way and continues. No-tool reviews and critiques remain valid. See captured
+    call itself failed. A top-level ``error`` event is fatal unless it is a
+    stream reconnect notice before ``turn.completed``, which Codex reports that
+    way and recovers from. No-tool reviews and critiques remain valid. See captured
     0.169.0 fixtures and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
@@ -339,7 +344,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
     if returncode:
         raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
-    thread_started = turn_started = turn_completed = reported_error = False
+    thread_started = turn_started = turn_completed = reconnected = False
     active: set[str] = set()
     finished: set[str] = set()
     attempts = operational_failures = 0
@@ -356,14 +361,17 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         if not isinstance(event, dict) or not isinstance(event.get("type"), str):
             raise SchemaValidationError("Codex stream event must be an object with a type")
         kind = event["type"]
-        # Do not include raw model/tool diagnostics: they can contain secrets.
-        if kind == "turn.failed" or (kind == "error" and turn_completed):
-            raise AdapterModelError("Codex stream reported a terminal model failure")
         if kind == "error":
-            # Codex reports a stream reconnect ("Reconnecting... 1/5") this way
-            # and continues; a fatal error never reaches turn.completed.
-            reported_error = True
+            message = event.get("message")
+            if turn_completed or not (
+                isinstance(message, str) and _CODEX_RECONNECT.match(message)
+            ):
+                # Do not include raw model/tool diagnostics: they can contain secrets.
+                raise AdapterModelError("Codex stream reported a terminal model failure")
+            reconnected = True
             continue
+        if kind == "turn.failed":
+            raise AdapterModelError("Codex stream reported a terminal model failure")
         if (
             kind == "item.completed"
             and isinstance(event.get("item"), dict)
@@ -409,7 +417,8 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         else:
             raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
     if not turn_completed or active or answer is None:
-        if reported_error:
+        if reconnected and not turn_completed:
+            # A reconnect that never led to completion is the provider failing.
             raise AdapterModelError("Codex stream reported a terminal model failure")
         raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
     if attempts and attempts == operational_failures:
