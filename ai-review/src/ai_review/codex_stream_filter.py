@@ -11,11 +11,12 @@ own strict parser rejects is left for the codec to reject. Codex's stdin and
 stderr are inherited, and its exit status is kept.
 
 Two runner guarantees survive the wrapper. A record longer than
-MAX_RECORD_BYTES is forwarded unchanged as it arrives, so the runner's output
-limit still sees it, rather than being held here. And the wrapper stops when
-Codex exits, after forwarding what Codex already wrote: a descendant that
-inherited Codex's stdout cannot hold the run open, which is why the runner
-captures through files rather than pipes.
+MAX_RECORD_BYTES is forwarded unchanged, however the pipe splits it, so the
+runner's output limit still sees it, rather than being held here. And the
+wrapper stops when Codex exits, after forwarding only the bytes already queued
+in the pipe, which hold everything Codex wrote: a descendant that inherited
+Codex's stdout cannot hold the run open, whether it keeps the pipe open or keeps
+writing to it. That is why the runner captures through files rather than pipes.
 
 Standard library only, plus the codec's standard-library JSON parser: the
 adapter shell runs it as ``python -P -m ai_review.codex_stream_filter codex ARGS...``.
@@ -23,11 +24,14 @@ adapter shell runs it as ``python -P -m ai_review.codex_stream_filter codex ARGS
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import select
+import struct
 import subprocess
 import sys
+import termios
 from typing import IO
 
 from .canonical import json_loads_no_duplicates
@@ -88,7 +92,10 @@ class _Forwarder:
             record = bytes(self.pending[: end + 1])
             del self.pending[: end + 1]
             self.scanned = 0
-            self.out.write(record if self.passing else strip_payloads(record))
+            # Past the bound whether or not its newline came in the read that
+            # crossed it: the same record must not shrink on one pipe split only.
+            oversized = self.passing or end > MAX_RECORD_BYTES
+            self.out.write(record if oversized else strip_payloads(record))
             self.passing = False
         self.scanned = len(self.pending)
         if self.passing or len(self.pending) > MAX_RECORD_BYTES:
@@ -104,15 +111,22 @@ class _Forwarder:
         self.out.flush()
 
 
-def _drain(fd: int, forwarder: _Forwarder) -> None:
-    """Forward what is already in the pipe, without waiting for its writers."""
-    while True:
+def _queued(fd: int) -> int:
+    """Return how many bytes are waiting to be read from the pipe ``fd``."""
+    (count,) = struct.unpack("i", fcntl.ioctl(fd, termios.FIONREAD, bytes(4)))
+    return int(count)
+
+
+def _drain(fd: int, forwarder: _Forwarder, limit: int) -> None:
+    """Forward up to ``limit`` bytes already in the pipe, without waiting for its writers."""
+    while limit > 0:
         try:
-            chunk = os.read(fd, _CHUNK_BYTES)
+            chunk = os.read(fd, min(limit, _CHUNK_BYTES))
         except BlockingIOError:
             return
         if not chunk:
             return
+        limit -= len(chunk)
         forwarder.feed(chunk)
 
 
@@ -135,8 +149,9 @@ def main(argv: list[str]) -> int:
                 break
             forwarder.feed(chunk)
     # Codex has exited (or closed its stdout): everything it wrote is already
-    # in the pipe. Stop at the first empty read rather than waiting for EOF.
-    _drain(fd, forwarder)
+    # queued in the pipe. Forward just that, rather than reading until EOF or
+    # until a descendant that inherited the pipe stops writing to it.
+    _drain(fd, forwarder, _queued(fd))
     forwarder.close()
     process.stdout.close()
     status = process.wait()

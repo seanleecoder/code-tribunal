@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 from ai_review.adapter_output import _load_adapter_json
-from ai_review.codex_stream_filter import MAX_RECORD_BYTES, _Forwarder, main, strip_payloads
+from ai_review.codex_stream_filter import (
+    MAX_RECORD_BYTES,
+    _drain,
+    _Forwarder,
+    _queued,
+    main,
+    strip_payloads,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
 
@@ -207,23 +218,96 @@ def test_oversized_record_is_forwarded_unchanged_as_it_arrives() -> None:
     assert json.loads(out.getvalue()[len(big) :])["item"]["result"] is None
 
 
+def sized_record(content_bytes: int) -> bytes:
+    """A completed tool call whose record, without its newline, has this many bytes."""
+    empty = tool_call("item.completed", arguments={"path": ""}, result={"text": "secret"})
+    record = tool_call(
+        "item.completed", arguments={"path": "x" * (content_bytes + 1 - len(empty))}, result=None
+    ).replace(b'"result":null', b'"result":{"text":"secret"}')
+    assert len(record) == content_bytes + 1
+    return record
+
+
+@pytest.mark.parametrize("newline_read", ["crossing", "later"])
+def test_record_past_the_bound_is_forwarded_however_the_pipe_splits_it(newline_read: str) -> None:
+    record = sized_record(MAX_RECORD_BYTES + 10)
+    # The first read stays within the bound. The second crosses it, with or
+    # without the record's newline.
+    cut = len(record) if newline_read == "crossing" else len(record) - 1
+    reads = [record[:MAX_RECORD_BYTES], record[MAX_RECORD_BYTES:cut], record[cut:]]
+    assert forward(reads) == record
+
+
+def test_record_at_the_bound_is_still_stripped() -> None:
+    record = sized_record(MAX_RECORD_BYTES)
+    forwarded = forward([record[:MAX_RECORD_BYTES], record[MAX_RECORD_BYTES:]])
+    assert json.loads(forwarded)["item"]["result"] is None
+
+
+def test_queued_counts_the_bytes_waiting_in_a_pipe() -> None:
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, b"x" * 1234)
+        assert _queued(read_fd) == 1234
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_drain_stops_at_its_limit_while_a_writer_keeps_the_pipe_readable() -> None:
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    stop = threading.Event()
+
+    def keep_writing() -> None:
+        # As a descendant that inherited the pipe would after Codex exits.
+        with contextlib.suppress(OSError):
+            while not stop.is_set():
+                os.write(write_fd, b"{}\n" * 1024)
+
+    writer = threading.Thread(target=keep_writing, daemon=True)
+    try:
+        writer.start()
+        while _queued(read_fd) < 3 * 1024:
+            time.sleep(0.01)
+        out = io.BytesIO()
+        forwarder = _Forwarder(out)
+        _drain(read_fd, forwarder, 10_000)
+        forwarder.close()
+        assert 0 < len(out.getvalue()) <= 10_000
+    finally:
+        stop.set()
+        os.close(read_fd)  # Ends a write blocked on a full pipe with EPIPE.
+        writer.join(timeout=5)
+        os.close(write_fd)
+
+
 def test_wrapper_stops_when_the_cli_exits_despite_a_descendant(tmp_path: Path) -> None:
     script = tmp_path / "cli.py"
+    helper_pid = tmp_path / "helper.pid"
     # The child inherits stdout and outlives the CLI, as a leaked helper would.
     script.write_text(
-        "import subprocess, sys\n"
-        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],"
+        "import pathlib, subprocess, sys\n"
+        "helper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],"
         " stderr=subprocess.DEVNULL)\n"
+        f"pathlib.Path({str(helper_pid)!r}).write_text(str(helper.pid))\n"
         'print(\'{"type":"turn.completed"}\', flush=True)\n'
     )
-    started = time.monotonic()
-    result = subprocess.run(
-        [sys.executable, "-P", "-m", "ai_review.codex_stream_filter", sys.executable, str(script)],
-        capture_output=True,
-        check=False,
-        timeout=20,
-        env={"PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
-    )
-    assert time.monotonic() - started < 10
-    assert result.returncode == 0
-    assert result.stdout == b'{"type":"turn.completed"}\n'
+    wrapper = [sys.executable, "-P", "-m", "ai_review.codex_stream_filter"]
+    try:
+        started = time.monotonic()
+        result = subprocess.run(
+            [*wrapper, sys.executable, str(script)],
+            capture_output=True,
+            check=False,
+            timeout=20,
+            env={"PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        )
+        assert time.monotonic() - started < 10
+        assert result.returncode == 0
+        assert result.stdout == b'{"type":"turn.completed"}\n'
+    finally:
+        # The helper outlives the wrapper by design; do not leave it running.
+        if helper_pid.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(helper_pid.read_text()), signal.SIGKILL)
