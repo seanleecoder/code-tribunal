@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -258,54 +259,121 @@ def test_queued_counts_the_bytes_waiting_in_a_pipe() -> None:
 def test_drain_forwards_exactly_its_limit_and_leaves_the_rest_unread() -> None:
     # More bytes are queued than the limit, as when a descendant keeps writing
     # after Codex exits. No writer thread: the result cannot depend on scheduling.
-    queued = b"{}\n" * 4096
+    # The preload stays below one page, the smallest capacity Linux gives a pipe,
+    # so the blocking write cannot fill the pipe before the same thread drains it.
+    queued = b"{}\n" * 1000
+    limit = 2000
     read_fd, write_fd = os.pipe()
     try:
         os.set_blocking(read_fd, False)
         os.write(write_fd, queued)
         out = io.BytesIO()
         forwarder = _Forwarder(out)
-        _drain(read_fd, forwarder, 10_000)
+        _drain(read_fd, forwarder, limit)
         forwarder.close()
-        assert out.getvalue() == queued[:10_000]
-        assert _queued(read_fd) == len(queued) - 10_000
+        assert out.getvalue() == queued[:limit]
+        assert _queued(read_fd) == len(queued) - limit
     finally:
         os.close(read_fd)
         os.close(write_fd)
 
 
-def test_wrapper_keeps_codex_output_and_status_when_fionread_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
-) -> None:
+def _deny_fionread(monkeypatch: pytest.MonkeyPatch) -> None:
     def denied(fd: int) -> int:
         raise OSError(errno.ENOTTY, "FIONREAD denied")
 
     monkeypatch.setattr(codex_stream_filter, "_queued", denied)
+
+
+def test_fallback_drain_stops_at_its_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A regular file stays readable to its end, as a pipe a descendant keeps
+    # full would, so only the fallback bound can end this drain.
+    _deny_fionread(monkeypatch)
+    data = b"{}\n" * (codex_stream_filter._FALLBACK_DRAIN_BYTES // 3 * 2)
+    source = tmp_path / "readable"
+    source.write_bytes(data)
+    fd = os.open(source, os.O_RDONLY)
+    try:
+        out = io.BytesIO()
+        forwarder = _Forwarder(out)
+        _drain(fd, forwarder, codex_stream_filter._drain_limit(fd))
+        forwarder.close()
+    finally:
+        os.close(fd)
+    assert out.getvalue() == data[: codex_stream_filter._FALLBACK_DRAIN_BYTES]
+
+
+def _hold_output_until_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make main() leave everything the CLI writes queued until the CLI has exited."""
+
+    def never_ready(read: list[int], write: list[int], error: list[int], timeout: float) -> tuple:
+        time.sleep(timeout)
+        return [], [], []
+
+    monkeypatch.setattr(codex_stream_filter, "select", types.SimpleNamespace(select=never_ready))
+
+
+def _cli(tmp_path: Path, output: bytes, status: int) -> list[str]:
+    # Below one page, so the CLI's write cannot block on a pipe nobody reads yet.
+    assert len(output) < 4096
     script = tmp_path / "cli.py"
-    script.write_text('import sys\nprint(\'{"type":"turn.completed"}\')\nsys.exit(3)\n')
-    assert main([sys.executable, str(script)]) == 3
-    assert capsysbinary.readouterr().out == b'{"type":"turn.completed"}\n'
+    script.write_text(f"import os, sys\nos.write(1, {output!r})\nsys.exit({status})\n")
+    return [sys.executable, str(script)]
+
+
+def test_wrapper_drains_only_the_bytes_queued_when_codex_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    # The snapshot covers Codex's record; the bytes after it stand for a
+    # descendant's writes that arrive once the snapshot has been taken.
+    marker = b'{"type":"turn.completed"}\n'
+    _hold_output_until_exit(monkeypatch)
+    monkeypatch.setattr(codex_stream_filter, "_queued", lambda fd: len(marker))
+    assert main(_cli(tmp_path, marker + b"{}\n" * 100, 0)) == 0
+    assert capsysbinary.readouterr().out == marker
+
+
+def test_wrapper_keeps_codex_output_and_status_when_fionread_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    # The record is still unread when Codex exits, so only the fallback drain
+    # can forward it.
+    marker = b'{"type":"turn.completed"}\n'
+    _hold_output_until_exit(monkeypatch)
+    _deny_fionread(monkeypatch)
+    assert main(_cli(tmp_path, marker, 3)) == 3
+    assert capsysbinary.readouterr().out == marker
 
 
 def test_wrapper_stops_when_a_descendant_keeps_writing(tmp_path: Path) -> None:
     script = tmp_path / "cli.py"
     helper = tmp_path / "helper.py"
     helper_pid = tmp_path / "helper.pid"
-    # The helper keeps the inherited pipe full after the CLI exits, so only the
-    # drain bound, not an empty read or end-of-file, can end the wrapper's drain.
-    # It stops by itself on EPIPE once the wrapper closes the pipe, or after 30 s.
+    helper_started = tmp_path / "helper.started"
+    # The helper is already writing when the CLI exits and keeps the inherited
+    # pipe full afterwards, as a leaked descendant would. It stops by itself on
+    # EPIPE once the wrapper closes the pipe, or after 30 s.
     helper.write_text(
-        "import os, time\n"
+        "import os, pathlib, time\n"
+        "chunk = b'{}\\n' * 21845\n"
+        "os.write(1, chunk)\n"
+        f"pathlib.Path({str(helper_started)!r}).touch()\n"
         "end = time.monotonic() + 30\n"
         "while time.monotonic() < end:\n"
-        "    os.write(1, b'{}\\n' * 21845)\n"
+        "    os.write(1, chunk)\n"
     )
+    # The marker goes out before the helper starts, so it is always first.
     script.write_text(
-        "import pathlib, subprocess, sys\n"
+        "import pathlib, subprocess, sys, time\n"
+        'print(\'{"type":"turn.completed"}\', flush=True)\n'
         f"helper = subprocess.Popen([sys.executable, {str(helper)!r}],"
         " stderr=subprocess.DEVNULL)\n"
         f"pathlib.Path({str(helper_pid)!r}).write_text(str(helper.pid))\n"
-        'print(\'{"type":"turn.completed"}\', flush=True)\n'
+        "deadline = time.monotonic() + 10\n"
+        f"while not pathlib.Path({str(helper_started)!r}).exists():\n"
+        "    if time.monotonic() > deadline:\n"
+        "        sys.exit('helper never started writing')\n"
+        "    time.sleep(0.01)\n"
     )
     wrapper = [sys.executable, "-P", "-m", "ai_review.codex_stream_filter"]
     try:

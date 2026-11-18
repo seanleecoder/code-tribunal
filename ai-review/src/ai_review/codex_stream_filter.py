@@ -15,9 +15,9 @@ MAX_RECORD_BYTES is forwarded unchanged, however the pipe splits it, so the
 runner's output limit still sees it, rather than being held here. And the
 wrapper stops when Codex exits, after forwarding only the bytes already queued
 in the pipe, which hold everything Codex wrote (at most 1 MiB if the pipe cannot
-report that): a descendant that inherited Codex's stdout cannot hold the run open,
-whether it keeps the pipe open or keeps writing to it. That is why the runner
-captures through files rather than pipes.
+report that, with the limits _drain_limit states): a descendant that inherited
+Codex's stdout cannot hold the run open, whether it keeps the pipe open or keeps
+writing to it. That is why the runner captures through files rather than pipes.
 
 Standard library only, plus the codec's standard-library JSON parser: the
 adapter shell runs it as ``python -P -m ai_review.codex_stream_filter codex ARGS...``.
@@ -123,9 +123,13 @@ def _drain_limit(fd: int) -> int:
     """Bound the post-exit drain by the queued bytes, or by a fixed size if FIONREAD fails.
 
     The fallback is Linux's default maximum pipe size (/proc/sys/fs/pipe-max-size).
-    The wrapper's own pipe keeps the 64 KiB default, so it still covers everything
-    Codex wrote, and the drain stays bounded without a second query that could fail
-    the same way. A failure here must not lose Codex's last records or its status.
+    The drain stays bounded without a second query that could fail the same way,
+    and a failure here keeps Codex's exit status. Two limits hold only on this
+    path. It keeps all of Codex's last records only while the pipe holds at most
+    1 MiB: the wrapper creates it at the default size (16 pages) and nothing here
+    resizes it, but a pipe grown past 1 MiB would lose the tail beyond the bound.
+    And it is not a snapshot: bytes a descendant writes during the drain are
+    forwarded too, up to the bound, and the codec rejects them after the turn.
     """
     try:
         return _queued(fd)
