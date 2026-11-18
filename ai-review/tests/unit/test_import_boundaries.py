@@ -177,14 +177,16 @@ class ImportBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(offenders, [])
 
-    def test_codex_repo_tools_is_standard_library_only(self) -> None:
-        """The Codex tool server runs as ``python -I <file>``, outside the package."""
+    def test_codex_process_helpers_are_standard_library_only(self) -> None:
+        """The tool server runs as ``python -I <file>``, outside the package, and the
+        stream filter runs under any interpreter the adapter shell finds."""
         src = Path(__file__).resolve().parents[2] / "src" / "ai_review"
-        imported = _imported_module_names(src / "codex_repo_tools.py")
-        offenders = sorted(
-            name for name in imported if name.split(".")[0] not in sys.stdlib_module_names
-        )
-        self.assertEqual(offenders, [])
+        for module in ("codex_repo_tools.py", "codex_stream_filter.py"):
+            imported = _imported_module_names(src / module)
+            offenders = sorted(
+                name for name in imported if name.split(".")[0] not in sys.stdlib_module_names
+            )
+            self.assertEqual(offenders, [], module)
 
 
 if __name__ == "__main__":

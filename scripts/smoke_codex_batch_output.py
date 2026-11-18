@@ -223,6 +223,20 @@ def tool_outputs(request: dict[str, Any]) -> str:
     return "\n".join(tool_texts(request))
 
 
+def mcp_results(request: dict[str, Any]) -> list[tuple[bool, str]]:
+    """Each repository call's (isError, text), as an mcp_call step reported it."""
+    results = []
+    for text in tool_texts(request):
+        try:
+            result = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(result, dict) and "isError" in result:
+            content = "".join(str(part.get("text", "")) for part in result.get("content", []))
+            results.append((result["isError"], content))
+    return results
+
+
 def _offered_tools(request: dict) -> list[dict]:
     tools = list(request.get("tools", []))
     for item in request.get("input", []):
@@ -277,6 +291,16 @@ def mcp_call(tool: str, arguments: dict) -> str:
     )
 
 
+# Each read fills read_file's 256 KiB output limit; together they exceed the
+# runner's 32 MiB stdout limit by half again.
+LARGE_FILE = ("x" * 199 + "\n").encode() * 2000
+LARGE_READ_COUNT = 200
+LARGE_READS = (
+    f"let n = 0; for (let i = 0; i < {LARGE_READ_COUNT}; i++) {{"
+    " const r = await tools.mcp__repo__read_file({path: 'large.txt'});"
+    " if (r.isError || !r.content[0].text.startsWith('1\\t')) throw new Error('read failed');"
+    " n++; } text('LARGE_READS ' + n);"
+)
 PATCH = (
     "*** Begin Patch\n*** Update File: example.py\n@@\n-example = 1\n+example = 2\n*** End Patch\n"
 )
@@ -386,6 +410,8 @@ def run_case(
     protected_runtime: Path | None = None,
     drop_first_stream: bool = False,
     expect_text: str | None = None,
+    files: dict[str, bytes] | None = None,
+    results: list[tuple[bool, str]] | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -397,6 +423,8 @@ def run_case(
     # Only the prepared snapshot contains this random value; it is absent from
     # prompts, scripts and the stub's answer. The follow-up request must carry it.
     (source / "sentinel.txt").write_text(sentinel or secrets.token_hex(24))
+    for name, data in (files or {}).items():
+        (source / name).write_bytes(data)
     diff = work / "change.diff"
     diff.write_text("--- a/example.py\n+++ b/example.py\n@@ -1 +1 @@\n-example = 0\n+example = 1\n")
     config = load_config(install / "config/review.yaml")
@@ -531,6 +559,9 @@ def run_case(
             raise AssertionError("repository tools changed copied snapshot bytes")
         assert_unchanged(protected)
         assert_tool_surface(stub, protected)
+    if results is not None and mcp_results(stub.requests[-1]) != results:
+        # A step's own result, not just the final review, must be what it claims.
+        raise AssertionError(f"{label}: repository tool results differ")
     if expect_text is not None and not any(
         expect_text in text
         for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
@@ -667,9 +698,22 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     sentinel = secrets.token_hex(24)
     # A prefix pattern: only the file's content can return the full sentinel.
     search = [mcp_call("list_dir", {}), mcp_call("grep", {"pattern": sentinel[:12]})]
-    add(directory, "search", REQUIRED_MODEL, steps=search, sentinel=sentinel)
+    found = [(False, "example.py\nsentinel.txt"), (False, f"sentinel.txt:1:{sentinel}\n")]
+    add(directory, "search", REQUIRED_MODEL, steps=search, sentinel=sentinel, results=found)
     no_match = [mcp_call("grep", {"pattern": "no-such-match"})]
-    add(directory, "no-match", REQUIRED_MODEL, steps=no_match, empty=True)
+    add(directory, "no-match", REQUIRED_MODEL, steps=no_match, empty=True, results=[(False, "")])
+    # Code mode can read in a loop while the model keeps only a summary, so the
+    # results alone would pass the runner's output limit unless the adapter
+    # drops them from the captured stream.
+    add(
+        directory,
+        "large-reads",
+        REQUIRED_MODEL,
+        steps=[LARGE_READS],
+        empty=True,
+        files={"large.txt": LARGE_FILE},
+        expect_text=f"LARGE_READS {LARGE_READ_COUNT}",
+    )
     # A tool-reported error is a usable result, not an unusable runtime.
     reported = "not a file: missing.txt"
     add(directory, "tool-error", REQUIRED_MODEL, steps=[missing], expect_text=reported)

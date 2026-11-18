@@ -29,3 +29,9 @@ stub closes the first stream before `response.completed`. Codex reports
 `Reconnecting... 1/5` as a top-level `error` event, retries, and completes with
 exit 0. In `separator` the answer text ends in U+2028, which Codex writes
 unescaped inside the event's JSON string.
+
+`fallback-metadata` was captured on 2026-11-18 with the Termux aarch64 Codex
+0.170.0 build against the gate's loopback stub, configured with a model that is
+not in the CLI's catalog (renamed to `example/uncatalogued-model`; the thread ID
+is replaced). Codex reports its fallback metadata as an `error` item before
+`turn.started`, then completes with exit 0 and a valid answer.

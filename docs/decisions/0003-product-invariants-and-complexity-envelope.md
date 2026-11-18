@@ -66,7 +66,10 @@ bounds output, writes nothing, and refuses to start if its environment carries
 anything beyond plain process variables. Critique has no repository tools. The
 registry disables other optional Codex tools that have feature flags;
 `apply_patch` has no supported switch and stays subject to Codex's read-only
-policy. The image gate pins the remaining tool set.
+policy. The image gate pins the remaining tool set. A model the pinned CLI has
+no catalog metadata for runs on fallback metadata, which drops code mode and
+offers a different tool surface, including a provider-hosted web search; such
+reviews fail closed with that cause rather than run on an unverified surface.
 
 This is a fixed part of one reviewer's trusted invocation, not a plugin
 mechanism: the server is not configurable, discoverable or replaceable by

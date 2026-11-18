@@ -173,7 +173,10 @@ calls; Codex then fails the review
 instead of continuing without tools. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
 [image gate](development/testing.md#codex-image-gate) checks containment,
-credential refusal, the pinned tool set and unchanged bytes.
+credential refusal, the pinned tool set and unchanged bytes. That tool set is
+pinned for models in the CLI's catalog; with any other model Codex falls back to
+a different surface, including a provider-hosted web search, and the review
+fails closed.
 
 Residual risk: intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary

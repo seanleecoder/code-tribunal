@@ -122,7 +122,9 @@ TOOLS = [
     {
         "name": "list_dir",
         "description": (
-            "List one directory of the repository under review. Directories end in '/'." + _NAMES
+            "List one directory of the repository under review. Directories end in '/'. "
+            f"A listing shows at most {MAX_LIST_ENTRIES} whole entries within the output "
+            "limit, then a note with how many were left out." + _NAMES
         ),
         "inputSchema": {
             "type": "object",
@@ -321,9 +323,19 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
         names = sorted(
             _display(e.name + ("/" if e.is_dir(follow_symlinks=False) else "")) for e in entries
         )
-    if len(names) > MAX_LIST_ENTRIES:
-        names = [*names[:MAX_LIST_ENTRIES], f"[truncated at {MAX_LIST_ENTRIES} entries]"]
-    return _bounded("\n".join(names))
+    # Whole entries only, as grep shows whole matches: a cut name could pose as
+    # another path, and a cut quoted name would not decode. A quoted name can be
+    # several times its size on disk, so bytes can run out before the count.
+    budget = MAX_OUTPUT_BYTES - _NOTE_RESERVE_BYTES
+    shown: list[str] = []
+    for name in names[:MAX_LIST_ENTRIES]:
+        budget -= len(name.encode()) + 1
+        if budget < 0:
+            break
+        shown.append(name)
+    if omitted := len(names) - len(shown):
+        shown.append(f"[{omitted} more entries not shown]")
+    return "\n".join(shown)
 
 
 def grep(root: Path, arguments: dict[str, Any]) -> str:

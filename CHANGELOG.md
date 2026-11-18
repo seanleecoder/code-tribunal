@@ -20,7 +20,11 @@ versioning.
   execution events reject missing-host, terminal, unavailable-tool-server,
   unrecognized top-level error and wholly failed operational tool runs as `model_error`, excluding the seat from
   review success and resolution eligibility and exposing it in run health; a
-  shell command event is rejected as a schema error.
+  shell command event is rejected as a schema error. A model outside the pinned
+  Codex CLI's catalog also fails as `model_error`, with that cause named:
+  Codex would run it on fallback metadata with an unverified tool surface.
+  Tool results are dropped from the captured stream, so heavy tool use cannot
+  reach the output limit, and directory listings stop between whole entries.
   Empty reviews, tool-free critiques, no-match searches, tool-reported errors,
   recovery and a recovered stream reconnect remain valid. An unconditional network-disabled real-CLI image gate
   guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh

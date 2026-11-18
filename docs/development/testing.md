@@ -47,8 +47,12 @@ transport failures as failures:
 - Both configured models read a random snapshot-only sentinel through
   `mcp__repo__read_file`; empty reviews and tool-free critiques stay usable,
   and critiques are offered no repository tool.
-- Listing and grep find the sentinel; a no-match search, a tool-reported missing
-  file, and recovery after one stay usable. So does a provider stream dropped
+- Listing and grep find the sentinel, and each call's own result is checked, so a
+  failed listing or search cannot hide behind a later success; a no-match search
+  returns a successful empty result. A tool-reported missing file and recovery
+  after one stay usable. Two hundred full-size reads in one code-mode cell stay
+  usable too: the adapter drops tool results the parser never reads, so they
+  cannot reach the runner's output limit. So does a provider stream dropped
   before completion: Codex reports the reconnect as a top-level `error` event,
   retries once, and completes. That notice is the only top-level error the
   parser admits, so a reworded notice fails this case.

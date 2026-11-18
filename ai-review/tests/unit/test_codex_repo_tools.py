@@ -321,9 +321,29 @@ def test_non_utf8_names_with_backslashes_stay_distinct(repo: Path) -> None:
 
 @needs_rg
 def test_names_cannot_pose_as_tool_notes(repo: Path) -> None:
-    (repo / "[truncated at 1000 entries]").write_text("hit\n")
-    assert '"[truncated at 1000 entries]"' in call(repo, "list_dir")[0].splitlines()
-    assert call(repo, "grep", pattern="hit") == ('"[truncated at 1000 entries]":1:hit\n', False)
+    (repo / "[3 more entries not shown]").write_text("hit\n")
+    assert '"[3 more entries not shown]"' in call(repo, "list_dir")[0].splitlines()
+    assert call(repo, "grep", pattern="hit") == ('"[3 more entries not shown]":1:hit\n', False)
+
+
+def test_listing_stops_at_the_entry_cap_with_a_count(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "MAX_LIST_ENTRIES", 2)
+    assert call(repo, "list_dir") == (".github/\npkg/\n[1 more entries not shown]", False)
+
+
+def test_listing_stops_between_whole_entries_at_the_byte_limit(repo: Path) -> None:
+    # ':' quotes a name, and JSON escapes each CJK character as six bytes, so
+    # these names pass the byte limit well before the entry cap.
+    names = {f"{index:03d}:" + "\u4e00" * 80 for index in range(600)}
+    for name in names:
+        (repo / name).touch()
+    text, is_error = call(repo, "list_dir")
+    lines = text.splitlines()
+    assert not is_error and len(text.encode()) <= tools.MAX_OUTPUT_BYTES
+    shown = [json.loads(line) for line in lines[:-1] if line.startswith('"')]
+    assert set(shown) <= names and len(shown) == len(lines) - 1 < tools.MAX_LIST_ENTRIES
+    # Every entry not shown is counted: the snapshot also has three plain ones.
+    assert lines[-1] == f"[{len(names) + 3 - len(shown)} more entries not shown]"
 
 
 @needs_rg

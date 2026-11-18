@@ -59,7 +59,7 @@ def test_captured_usable_executions(label: str) -> None:
 
 @pytest.mark.parametrize(
     "label",
-    ["missing-host", "terminal", "mcp-operational"],
+    ["missing-host", "terminal", "mcp-operational", "fallback-metadata"],
 )
 def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> None:
     with pytest.raises(AdapterModelError):
@@ -260,6 +260,19 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
 def test_startup_error_item_is_fatal_without_stderr_or_command_events() -> None:
     data = capture("missing-host")
     data["stderr"] = ""
+    with pytest.raises(AdapterModelError, match="execution error item"):
+        load(data)
+
+
+def test_uncatalogued_model_fails_closed_and_names_the_cause() -> None:
+    # Codex exits 0 with a valid answer, but on fallback metadata it runs
+    # without code mode and with an unverified tool surface.
+    data = capture("fallback-metadata")
+    assert data["returncode"] == 0 and '"agent_message"' in data["stdout"]
+    with pytest.raises(AdapterModelError, match="no catalog metadata"):
+        load(data)
+    # Only the cause is named; other warning items still fail generically.
+    data["stdout"] = data["stdout"].replace("Model metadata for", "Metadata for")
     with pytest.raises(AdapterModelError, match="execution error item"):
         load(data)
 

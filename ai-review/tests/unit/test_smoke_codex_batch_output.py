@@ -249,6 +249,7 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "1/critique",
         "tools/search",
         "tools/no-match",
+        "tools/large-reads",
         "tools/tool-error",
         "tools/recovery",
         "tools/reconnect",
@@ -386,6 +387,26 @@ def test_tool_surface_rejects_each_unsafe_or_vacuous_result(tmp_path: Path, dama
             smoke.assert_tool_surface(stub, protected)
     else:
         smoke.assert_tool_surface(stub, protected)
+
+
+def test_mcp_results_report_each_call_and_skip_script_status() -> None:
+    request = {
+        "input": [
+            {"type": "custom_tool_call_output", "output": "Script completed\nOutput:\n"},
+            {
+                "type": "custom_tool_call_output",
+                "output": json.dumps(
+                    {"content": [{"type": "text", "text": "read failed"}], "isError": True}
+                ),
+            },
+            {
+                "type": "custom_tool_call_output",
+                "output": json.dumps({"content": [{"type": "text", "text": ""}], "isError": False}),
+            },
+        ]
+    }
+    # A no-match search that could not run is a tool error, not an empty result.
+    assert smoke.mcp_results(request) == [(True, "read failed"), (False, "")]
 
 
 def test_tool_texts_reads_structured_and_plain_outputs() -> None:

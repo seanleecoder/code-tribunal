@@ -330,6 +330,16 @@ _CODEX_HOST_FAILURE = re.compile(
 _CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
 # Do not include raw model/tool diagnostics: they can contain secrets.
 _CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
+# A model missing from the pinned CLI's catalog runs on fallback metadata,
+# which turns code mode off and offers a different, unverified tool surface
+# (direct MCP tools plus a provider-hosted web search). Codex reports it only as
+# a warning item, so it fails closed like every error item, but with the cause.
+# Matching the wording only names the cause: any other error item still fails.
+_CODEX_FALLBACK_METADATA = re.compile(r"Model metadata for `.*` not found\. ")
+_CODEX_UNCATALOGUED_MODEL = (
+    "Codex has no catalog metadata for the configured model; choose a model the "
+    "pinned Codex CLI lists"
+)
 
 
 def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
@@ -382,6 +392,9 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         ):
             # Startup error items can precede turn.started, with no tool
             # events at all. This also covers missing/disabled host warnings.
+            message = event["item"].get("message")
+            if isinstance(message, str) and _CODEX_FALLBACK_METADATA.match(message):
+                raise AdapterModelError(_CODEX_UNCATALOGUED_MODEL)
             raise AdapterModelError("Codex emitted an execution error item")
         if turn_completed:
             raise SchemaValidationError("Codex stream continued after turn.completed")
