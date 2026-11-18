@@ -79,11 +79,13 @@ ALLOWED_ENVIRONMENT = frozenset(
 
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 _PATH = {"type": "string", "description": "Repository-relative path; defaults to the root"}
+_UNADDRESSABLE = " [non-UTF-8 name; cannot be opened by path]"
 # Shared by every tool that prints repository names.
 _NAMES = (
-    " A name containing ':', '\"', '\\' or a control or format character is shown "
-    "as a JSON string; pass its decoded value as path. A name that is not valid "
-    "UTF-8 is shown escaped and marked; it cannot be opened."
+    " A name shown in double quotes is a JSON string (for example one containing "
+    "':', '\"', '\\', a control character or a line separator, or starting with "
+    "'['); pass its decoded value as path. A name that is not valid UTF-8 is shown "
+    f"escaped and followed by '{_UNADDRESSABLE.strip()}'; it cannot be opened."
 )
 TOOLS = [
     {
@@ -135,9 +137,10 @@ TOOLS = [
             "characters (read_file with start_column for the rest). 'path:?+:' with no "
             "text means the matching line was too large to show; read_file the file. "
             f"In a directory search, a file with more than {MAX_MATCHES_PER_FILE} matching "
-            f"lines shows its first {MAX_MATCHES_PER_FILE} and a note; grep that file's path "
-            "to lift this per-file limit. Every search stops at a total output limit, with "
-            "a note; then narrow the pattern or path, or page through the file with "
+            f"lines shows its first {MAX_MATCHES_PER_FILE} and a note; grep that file's path, "
+            "when its name can be passed as a path, to lift this per-file limit. Every "
+            "search stops at a total output limit, with a note; then narrow the pattern "
+            "or path, or page through the file with "
             f"read_file. Files larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB are "
             "not searched." + _NAMES
         ),
@@ -167,9 +170,6 @@ def contained(root: Path, requested: Any) -> Path:
     if resolved != root and root not in resolved.parents:
         raise ToolError("path is outside the repository snapshot")
     return resolved
-
-
-_UNADDRESSABLE = " [non-UTF-8 name; cannot be opened by path]"
 
 
 def _plain(name: str) -> bool:
@@ -472,7 +472,10 @@ def _read_matches(
                     + (
                         "grep this path to lift the per-file limit]"
                         if _passable(_rg_data(path))
-                        # Repeated lines match every narrower pattern alike.
+                        # Repeated lines match every narrower pattern alike, so
+                        # past the cap they stay hidden for such a name. Accepted:
+                        # they repeat shown text, and passing raw-byte paths
+                        # would change the path contract.
                         else "a narrower pattern may show more, "
                         "but repeated lines can stay hidden]"
                     )

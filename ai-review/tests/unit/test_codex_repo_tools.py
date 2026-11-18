@@ -235,6 +235,23 @@ def test_non_utf8_names_are_json_safe(repo: Path) -> None:
 MARKED = '"ev\\\\xff.py" [non-UTF-8 name; cannot be opened by path]'
 
 
+def test_every_quoted_name_is_described_and_opens_decoded(repo: Path) -> None:
+    # _plain quotes more than the listed characters: a leading "[", line and
+    # paragraph separators, and other category C characters such as private use.
+    names = ["[notes].txt", "a\u2028b.txt", "pua\ue000.txt"]
+    for name in names:
+        (repo / name).write_text("quoted\n")
+    listing = call(repo, "list_dir")[0].splitlines()
+    for name in names:
+        assert json.dumps(name) in listing
+        assert call(repo, "read_file", path=name) == ("1\tquoted", False)
+    for tool in tools.TOOLS:
+        if tool["name"] != "read_file":
+            assert "A name shown in double quotes is a JSON string" in tool["description"]
+            assert tools._UNADDRESSABLE.strip() in tool["description"]
+    assert "when its name can be passed as a path" in tools.TOOLS[2]["description"]
+
+
 @pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
 @needs_rg
 def test_no_crafted_name_is_shown_like_another(repo: Path) -> None:
