@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
 import os
@@ -10,11 +11,11 @@ import re
 import signal
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 import pytest
+from ai_review import codex_stream_filter
 from ai_review.adapter_output import _load_adapter_json
 from ai_review.codex_stream_filter import (
     MAX_RECORD_BYTES,
@@ -254,32 +255,75 @@ def test_queued_counts_the_bytes_waiting_in_a_pipe() -> None:
         os.close(write_fd)
 
 
-def test_drain_stops_at_its_limit_while_a_writer_keeps_the_pipe_readable() -> None:
+def test_drain_forwards_exactly_its_limit_and_leaves_the_rest_unread() -> None:
+    # More bytes are queued than the limit, as when a descendant keeps writing
+    # after Codex exits. No writer thread: the result cannot depend on scheduling.
+    queued = b"{}\n" * 4096
     read_fd, write_fd = os.pipe()
-    os.set_blocking(read_fd, False)
-    stop = threading.Event()
-
-    def keep_writing() -> None:
-        # As a descendant that inherited the pipe would after Codex exits.
-        with contextlib.suppress(OSError):
-            while not stop.is_set():
-                os.write(write_fd, b"{}\n" * 1024)
-
-    writer = threading.Thread(target=keep_writing, daemon=True)
     try:
-        writer.start()
-        while _queued(read_fd) < 3 * 1024:
-            time.sleep(0.01)
+        os.set_blocking(read_fd, False)
+        os.write(write_fd, queued)
         out = io.BytesIO()
         forwarder = _Forwarder(out)
         _drain(read_fd, forwarder, 10_000)
         forwarder.close()
-        assert 0 < len(out.getvalue()) <= 10_000
+        assert out.getvalue() == queued[:10_000]
+        assert _queued(read_fd) == len(queued) - 10_000
     finally:
-        stop.set()
-        os.close(read_fd)  # Ends a write blocked on a full pipe with EPIPE.
-        writer.join(timeout=5)
+        os.close(read_fd)
         os.close(write_fd)
+
+
+def test_wrapper_keeps_codex_output_and_status_when_fionread_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    def denied(fd: int) -> int:
+        raise OSError(errno.ENOTTY, "FIONREAD denied")
+
+    monkeypatch.setattr(codex_stream_filter, "_queued", denied)
+    script = tmp_path / "cli.py"
+    script.write_text('import sys\nprint(\'{"type":"turn.completed"}\')\nsys.exit(3)\n')
+    assert main([sys.executable, str(script)]) == 3
+    assert capsysbinary.readouterr().out == b'{"type":"turn.completed"}\n'
+
+
+def test_wrapper_stops_when_a_descendant_keeps_writing(tmp_path: Path) -> None:
+    script = tmp_path / "cli.py"
+    helper = tmp_path / "helper.py"
+    helper_pid = tmp_path / "helper.pid"
+    # The helper keeps the inherited pipe full after the CLI exits, so only the
+    # drain bound, not an empty read or end-of-file, can end the wrapper's drain.
+    # It stops by itself on EPIPE once the wrapper closes the pipe, or after 30 s.
+    helper.write_text(
+        "import os, time\n"
+        "end = time.monotonic() + 30\n"
+        "while time.monotonic() < end:\n"
+        "    os.write(1, b'{}\\n' * 21845)\n"
+    )
+    script.write_text(
+        "import pathlib, subprocess, sys\n"
+        f"helper = subprocess.Popen([sys.executable, {str(helper)!r}],"
+        " stderr=subprocess.DEVNULL)\n"
+        f"pathlib.Path({str(helper_pid)!r}).write_text(str(helper.pid))\n"
+        'print(\'{"type":"turn.completed"}\', flush=True)\n'
+    )
+    wrapper = [sys.executable, "-P", "-m", "ai_review.codex_stream_filter"]
+    try:
+        started = time.monotonic()
+        result = subprocess.run(
+            [*wrapper, sys.executable, str(script)],
+            capture_output=True,
+            check=False,
+            timeout=60,
+            env={"PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        )
+        assert time.monotonic() - started < 10
+        assert result.returncode == 0
+        assert result.stdout.startswith(b'{"type":"turn.completed"}\n')
+    finally:
+        if helper_pid.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(helper_pid.read_text()), signal.SIGKILL)
 
 
 def test_wrapper_stops_when_the_cli_exits_despite_a_descendant(tmp_path: Path) -> None:

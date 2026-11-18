@@ -14,9 +14,10 @@ Two runner guarantees survive the wrapper. A record longer than
 MAX_RECORD_BYTES is forwarded unchanged, however the pipe splits it, so the
 runner's output limit still sees it, rather than being held here. And the
 wrapper stops when Codex exits, after forwarding only the bytes already queued
-in the pipe, which hold everything Codex wrote: a descendant that inherited
-Codex's stdout cannot hold the run open, whether it keeps the pipe open or keeps
-writing to it. That is why the runner captures through files rather than pipes.
+in the pipe, which hold everything Codex wrote (at most 1 MiB if the pipe cannot
+report that): a descendant that inherited Codex's stdout cannot hold the run open,
+whether it keeps the pipe open or keeps writing to it. That is why the runner
+captures through files rather than pipes.
 
 Standard library only, plus the codec's standard-library JSON parser: the
 adapter shell runs it as ``python -P -m ai_review.codex_stream_filter codex ARGS...``.
@@ -41,6 +42,7 @@ from .canonical import json_loads_no_duplicates
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 _CHUNK_BYTES = 64 * 1024
 _EXIT_POLL_SECONDS = 0.1
+_FALLBACK_DRAIN_BYTES = 1024 * 1024
 _TOOL_CALL = b'"mcp_tool_call"'
 _PAYLOADS = ("arguments", "result")
 
@@ -117,6 +119,20 @@ def _queued(fd: int) -> int:
     return int(count)
 
 
+def _drain_limit(fd: int) -> int:
+    """Bound the post-exit drain by the queued bytes, or by a fixed size if FIONREAD fails.
+
+    The fallback is Linux's default maximum pipe size (/proc/sys/fs/pipe-max-size).
+    The wrapper's own pipe keeps the 64 KiB default, so it still covers everything
+    Codex wrote, and the drain stays bounded without a second query that could fail
+    the same way. A failure here must not lose Codex's last records or its status.
+    """
+    try:
+        return _queued(fd)
+    except OSError:
+        return _FALLBACK_DRAIN_BYTES
+
+
 def _drain(fd: int, forwarder: _Forwarder, limit: int) -> None:
     """Forward up to ``limit`` bytes already in the pipe, without waiting for its writers."""
     while limit > 0:
@@ -151,7 +167,7 @@ def main(argv: list[str]) -> int:
     # Codex has exited (or closed its stdout): everything it wrote is already
     # queued in the pipe. Forward just that, rather than reading until EOF or
     # until a descendant that inherited the pipe stops writing to it.
-    _drain(fd, forwarder, _queued(fd))
+    _drain(fd, forwarder, _drain_limit(fd))
     forwarder.close()
     process.stdout.close()
     status = process.wait()

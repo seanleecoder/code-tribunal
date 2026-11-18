@@ -117,8 +117,8 @@ These rules are worth stating because breaking them is silent:
   the captured stream. It parses with the codec's own strict loader, forwards a
   record above its size bound unchanged so the runner's output limit still
   applies, and stops once Codex exits, forwarding only the bytes already queued
-  in the pipe rather than reading for as long as a descendant holds it or keeps
-  writing to it. Claude's image-build acceptance probe uses the runtime
+  in the pipe (at most 1 MiB if the pipe cannot report that) rather than reading
+  for as long as a descendant holds it or keeps writing to it. Claude's image-build acceptance probe uses the runtime
   argument builder, so it cannot drift to a different flag or schema combination.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.
