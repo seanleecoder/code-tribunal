@@ -23,8 +23,9 @@ versioning.
   shell command event is rejected as a schema error. A model outside the pinned
   Codex CLI's catalog also fails as `model_error`, with that cause named:
   Codex would run it on fallback metadata with an unverified tool surface.
-  Tool results are dropped from the captured stream, so heavy tool use cannot
-  reach the output limit, and directory listings stop between whole entries.
+  Tool arguments and results are dropped from the captured stream, so ordinary
+  heavy tool use cannot reach the output limit, while an oversized record still
+  counts toward it. Directory listings stop between whole entries.
   Empty reviews, tool-free critiques, no-match searches, tool-reported errors,
   recovery and a recovered stream reconnect remain valid. An unconditional network-disabled real-CLI image gate
   guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
@@ -32,6 +33,9 @@ versioning.
 
 ### Changed
 
+- `make quality` now also runs `ruff format --check`. The Python sources were
+  reformatted once with the pinned Ruff, with no behavior change, so formatting
+  stays consistent from here on.
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
   using locally available Git objects, and rechecks its identity and the API
   revision before publishing inputs. Stale detached runs and unavailable source

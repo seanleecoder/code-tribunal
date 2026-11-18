@@ -179,12 +179,18 @@ class ImportBoundaryTests(unittest.TestCase):
 
     def test_codex_process_helpers_are_standard_library_only(self) -> None:
         """The tool server runs as ``python -I <file>``, outside the package, and the
-        stream filter runs under any interpreter the adapter shell finds."""
+        stream filter runs under any interpreter the adapter shell finds. The filter
+        may also import the codec's standard-library JSON parser, so the stream it
+        rewrites is parsed exactly as the codec parses it."""
         src = Path(__file__).resolve().parents[2] / "src" / "ai_review"
-        for module in ("codex_repo_tools.py", "codex_stream_filter.py"):
+        allowed = {"codex_stream_filter.py": {".canonical", "ai_review.canonical"}}
+        for module in ("codex_repo_tools.py", "codex_stream_filter.py", "canonical.py"):
             imported = _imported_module_names(src / module)
             offenders = sorted(
-                name for name in imported if name.split(".")[0] not in sys.stdlib_module_names
+                name
+                for name in imported
+                if name.split(".")[0] not in sys.stdlib_module_names
+                and name not in allowed.get(module, set())
             )
             self.assertEqual(offenders, [], module)
 

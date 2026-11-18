@@ -29,6 +29,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 REQUIRED_MODEL = "openai/gpt-6.1-sol"
+# No Codex catalog lists this slug, so Codex runs it on fallback metadata.
+UNCATALOGUED_MODEL = "code-tribunal/uncatalogued-probe"
 REPO_TOOLS = frozenset({"mcp__repo__read_file", "mcp__repo__list_dir", "mcp__repo__grep"})
 # Pinned tool surface after the registry's feature flags. A CLI bump that adds
 # a tool fails here and needs review. apply_patch has no supported switch; the
@@ -412,6 +414,7 @@ def run_case(
     expect_text: str | None = None,
     files: dict[str, bytes] | None = None,
     results: list[tuple[bool, str]] | None = None,
+    expect_error: str | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -534,6 +537,11 @@ def run_case(
         raise AssertionError(f"{label}: wrong outcome: {outcome}; {result.stderr}")
     if '"command_execution"' in capture["stdout"]:
         raise AssertionError(f"{label}: the no-shell reviewer executed a command")
+    if expect_error is not None:
+        # A rejection is checked for its stated cause; nothing past it ran usefully.
+        if outcome.get("error_message_redacted") != expect_error:
+            raise AssertionError(f"{label}: wrong error: {outcome.get('error_message_redacted')}")
+        return capture
     if overrides:
         # Negative controls stop at tool-server startup, before a usable answer.
         if capture["returncode"] == 0:
@@ -755,6 +763,17 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         REQUIRED_MODEL,
         overrides=["-c", 'mcp_servers.repo.env={OPENROUTER_API_KEY="smoke-credential"}'],
         expected_status="model_error",
+    )
+    # The named cause depends on the pinned CLI's fallback-metadata wording.
+    from ai_review.adapter_output import _CODEX_UNCATALOGUED_MODEL  # noqa: PLC0415
+
+    add(
+        directory,
+        "uncatalogued-model",
+        UNCATALOGUED_MODEL,
+        empty=True,
+        expected_status="model_error",
+        expect_error=_CODEX_UNCATALOGUED_MODEL,
     )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("failures/missing-host", partial(missing_host_case, install, directory)))

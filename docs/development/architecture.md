@@ -113,8 +113,11 @@ These rules are worth stating because breaking them is silent:
   critique an empty working root. The shell adapters only check prerequisites
   and invoke the CLI; Codex's runs through the standard-library
   [`codex_stream_filter`](../../ai-review/src/ai_review/codex_stream_filter.py),
-  which drops repository-tool results its codec never reads from the captured
-  stream. Claude's image-build acceptance probe uses the runtime
+  which drops repository-tool arguments and results its codec never reads from
+  the captured stream. It parses with the codec's own strict loader, forwards a
+  record above its size bound unchanged so the runner's output limit still
+  applies, and stops once Codex exits rather than waiting for end-of-file on a
+  pipe a descendant could hold. Claude's image-build acceptance probe uses the runtime
   argument builder, so it cannot drift to a different flag or schema combination.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.

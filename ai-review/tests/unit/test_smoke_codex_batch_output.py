@@ -259,6 +259,7 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "failures/terminal",
         "failures/tool-server-unavailable",
         "failures/credential-in-tool-env",
+        "failures/uncatalogued-model",
         "failures/missing-host",
     ]
 

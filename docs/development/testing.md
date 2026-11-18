@@ -51,11 +51,11 @@ transport failures as failures:
   failed listing or search cannot hide behind a later success; a no-match search
   returns a successful empty result. A tool-reported missing file and recovery
   after one stay usable. Two hundred full-size reads in one code-mode cell stay
-  usable too: the adapter drops tool results the parser never reads, so they
-  cannot reach the runner's output limit. So does a provider stream dropped
-  before completion: Codex reports the reconnect as a top-level `error` event,
-  retries once, and completes. That notice is the only top-level error the
-  parser admits, so a reworded notice fails this case.
+  usable too: the adapter drops tool arguments and results the parser never
+  reads, so they cannot reach the runner's output limit. So does a provider
+  stream dropped before completion: Codex reports the reconnect as a top-level
+  `error` event, retries once, and completes. That notice is the only top-level
+  error the parser admits, so a reworded notice fails this case.
 - Containment: traversal and absolute paths are refused, and protected bytes
   outside the snapshot never reach the model. `exec_command`/`write_stdin` are
   absent at runtime; `apply_patch` is rejected by the read-only policy and
@@ -64,7 +64,9 @@ transport failures as failures:
   repository tools, because Codex defers MCP tools in code mode.
 - Negative controls: malformed and truncated streams, a terminal provider
   failure, a missing code-mode host, an unavailable tool server, and a
-  credential in the tool server's environment all yield unusable outcomes.
+  credential in the tool server's environment all yield unusable outcomes. A
+  model outside the pinned CLI's catalog fails with the error that names that
+  cause, so a reworded fallback-metadata warning fails this case.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that
