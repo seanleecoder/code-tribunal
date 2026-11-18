@@ -24,7 +24,7 @@ from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import OutputCodec
+from .reviewers import CODEX_REPO_SERVER, OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -328,6 +328,8 @@ _CODEX_HOST_FAILURE = re.compile(
 # The CLI also contains "Reconnecting... waiting for network"; no capture shows
 # it as a stream error on this route, so it stays fatal, as a deliberate choice.
 _CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
+# Do not include raw model/tool diagnostics: they can contain secrets.
+_CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
 
 
 def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
@@ -368,12 +370,11 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
             if turn_completed or not (
                 isinstance(message, str) and _CODEX_RECONNECT.match(message)
             ):
-                # Do not include raw model/tool diagnostics: they can contain secrets.
-                raise AdapterModelError("Codex stream reported a terminal model failure")
+                raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
             reconnected = True
             continue
         if kind == "turn.failed":
-            raise AdapterModelError("Codex stream reported a terminal model failure")
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
         if (
             kind == "item.completed"
             and isinstance(event.get("item"), dict)
@@ -384,7 +385,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
             raise AdapterModelError("Codex emitted an execution error item")
         if turn_completed:
             raise SchemaValidationError("Codex stream continued after turn.completed")
-        if kind == "thread.started" and not thread_started and not turn_started:
+        if kind == "thread.started" and not thread_started:
             thread_started = True
         elif kind == "turn.started" and thread_started and not turn_started:
             turn_started = True
@@ -407,7 +408,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
                     raise SchemaValidationError("Codex agent_message must contain text")
                 answer = item["text"]
             elif item_type == "mcp_tool_call":
-                if item.get("server") != "repo":
+                if item.get("server") != CODEX_REPO_SERVER:
                     raise SchemaValidationError("Codex called an unregistered MCP server")
                 if item.get("status") not in {"completed", "failed"}:
                     raise SchemaValidationError("Codex MCP call has no terminal result")
@@ -421,7 +422,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     if not turn_completed or active or answer is None:
         if reconnected and not turn_completed:
             # A reconnect that never led to completion is the provider failing.
-            raise AdapterModelError("Codex stream reported a terminal model failure")
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
         raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
     if attempts and attempts == operational_failures:
         raise AdapterModelError("Codex repository-tool attempts all failed operationally")

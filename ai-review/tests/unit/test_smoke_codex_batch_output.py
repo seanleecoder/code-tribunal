@@ -106,25 +106,31 @@ def test_request_proof_accepts_real_tool_result_only() -> None:
     )
 
 
+def post_twice(stub) -> list[list[dict]]:
+    """POST the same request twice; return each response's SSE data events."""
+    streams = []
+    for _ in range(2):
+        req = Request(
+            stub.url + "/responses",
+            data=json.dumps(request()).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=5) as response:
+            streams.append(
+                [
+                    json.loads(line[6:])
+                    for line in response.read().decode().splitlines()
+                    if line.startswith("data: ")
+                ]
+            )
+    return streams
+
+
 def test_stub_drives_responses_tool_call_then_exact_answer_over_loopback() -> None:
     batch = smoke.probe_batch("review")
     read = smoke.mcp_call("read_file", {"path": "sentinel.txt"})
     with smoke.StubProvider(batch, [read]) as stub:
-        responses = []
-        for _ in range(2):
-            req = Request(
-                stub.url + "/responses",
-                data=json.dumps(request()).encode(),
-                headers={"Content-Type": "application/json"},
-            )
-            with urlopen(req, timeout=5) as response:
-                responses.append(
-                    [
-                        json.loads(line[6:])
-                        for line in response.read().decode().splitlines()
-                        if line.startswith("data: ")
-                    ]
-                )
+        responses = post_twice(stub)
     item = responses[0][1]["item"]
     assert item["type"] == "custom_tool_call" and item["name"] == "exec"
     assert "tools.mcp__repo__read_file" in item["input"]
@@ -135,25 +141,11 @@ def test_stub_drives_responses_tool_call_then_exact_answer_over_loopback() -> No
 def test_stub_can_drop_the_first_stream_before_completion() -> None:
     batch = smoke.probe_batch("review")
     with smoke.StubProvider(batch, [], drop_first=True) as stub:
-        streams = []
-        for _ in range(2):
-            req = Request(
-                stub.url + "/responses",
-                data=json.dumps(request()).encode(),
-                headers={"Content-Type": "application/json"},
-            )
-            with urlopen(req, timeout=5) as response:
-                streams.append(
-                    [
-                        json.loads(line[6:])["type"]
-                        for line in response.read().decode().splitlines()
-                        if line.startswith("data: ")
-                    ]
-                )
+        streams = [[event["type"] for event in events] for events in post_twice(stub)]
     assert "response.completed" not in streams[0]
     assert streams[1][-1] == "response.completed"
     # The retried request takes the dropped one's place in the sequence.
-    assert stub.dropped == 1 and len(stub.requests) == 1 and not stub.errors
+    assert stub.dropped and len(stub.requests) == 1 and not stub.errors
 
 
 def test_terminal_provider_failure_can_follow_a_valid_answer() -> None:

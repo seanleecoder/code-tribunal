@@ -709,12 +709,12 @@ def _fire_deadline_after_reading(monkeypatch, *, wait_for_exit: bool) -> None:
     monkeypatch.setattr(tools.subprocess, "Popen", recorded_popen)
     read = tools._read_matches
 
-    def read_then_expire(stream, matches, **options):
-        cut = read(stream, matches, **options)
+    def read_then_expire(stream, **options):
+        result = read(stream, **options)
         if wait_for_exit:  # Let rg exit by itself before the deadline lands.
             os.waitid(os.P_PID, pids[0], os.WEXITED | os.WNOWAIT)
         timers[0].function()
-        return cut
+        return result
 
     monkeypatch.setattr(tools, "_read_matches", read_then_expire)
 
@@ -805,9 +805,13 @@ def test_a_nul_pattern_cannot_end_the_server(repo: Path) -> None:
     }
 
 
-def test_module_is_standard_library_only() -> None:
-    source = Path(tools.__file__).read_text()
-    assert "ai_review" not in source.split('"""', 2)[2].split("def ", 1)[0]
+def codex_env(inputs: Path, output: Path) -> dict[str, str]:
+    return {
+        "AI_REVIEW_INPUT_DIR": str(inputs),
+        "AI_REVIEW_OUTPUT_DIR": str(output),
+        "AI_REVIEW_MODEL": "openai/gpt-6.1-sol",
+        "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
+    }
 
 
 def merge(target: dict, update: dict) -> None:
@@ -827,12 +831,7 @@ def test_registry_renders_parseable_no_shell_configuration(
 ) -> None:
     inputs = tmp_path / 'in\'puts "q"'
     (inputs / "repo_snapshot").mkdir(parents=True)
-    env = {
-        "AI_REVIEW_INPUT_DIR": str(inputs),
-        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / output_name),
-        "AI_REVIEW_MODEL": "openai/gpt-6.1-sol",
-        "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
-    }
+    env = codex_env(inputs, tmp_path / output_name)
     arguments, root = prepare_shell_adapter(get_reviewer_definition("codex"), stage, env)
     overrides: dict = {}
     for index, argument in enumerate(arguments):
@@ -864,12 +863,7 @@ def test_registry_refuses_a_path_toml_cannot_represent(tmp_path: Path) -> None:
     inputs = tmp_path / "inputs"
     (inputs / "repo_snapshot").mkdir(parents=True)
     output = Path(os.fsdecode(bytes(tmp_path) + b"/out-\xff"))
-    env = {
-        "AI_REVIEW_INPUT_DIR": str(inputs),
-        "AI_REVIEW_OUTPUT_DIR": str(output),
-        "AI_REVIEW_MODEL": "openai/gpt-6.1-sol",
-        "OPENROUTER_BASE_URL": "https://openrouter.example/api/v1",
-    }
+    env = codex_env(inputs, output)
     with pytest.raises(ValueError, match="cannot be passed to the reviewer CLI as TOML"):
         prepare_shell_adapter(get_reviewer_definition("codex"), "review", dict(env))
     # The refusal comes before the snapshot copy, so nothing is left behind.

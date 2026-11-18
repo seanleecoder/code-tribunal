@@ -79,6 +79,10 @@ def _definition(
     )
 
 
+# The MCP server name the Codex codec admits tool calls from.
+CODEX_REPO_SERVER = "repo"
+_CODEX_REPO_CONFIG = f"--config=mcp_servers.{CODEX_REPO_SERVER}"
+
 # Stable (or deprecated, still default-on) Codex 0.169.0 feature flags. The
 # image gate pins the tool set that remains.
 _CODEX_DISABLED_FEATURES = (
@@ -129,10 +133,10 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             # Review reads the snapshot only through the trusted read-only MCP
             # server; critique has no repository tools. Paths are TOML strings.
             review_arguments=(
-                "--config=mcp_servers.repo.command={python_toml}",
-                '--config=mcp_servers.repo.args=["-I", {repo_tools_toml}, "--root", {root_toml}]',
-                "--config=mcp_servers.repo.required=true",
-                '--config=mcp_servers.repo.default_tools_approval_mode="approve"',
+                _CODEX_REPO_CONFIG + ".command={python_toml}",
+                _CODEX_REPO_CONFIG + '.args=["-I", {repo_tools_toml}, "--root", {root_toml}]',
+                _CODEX_REPO_CONFIG + ".required=true",
+                _CODEX_REPO_CONFIG + '.default_tools_approval_mode="approve"',
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),

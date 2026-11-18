@@ -94,7 +94,7 @@ class StubProvider:
         self.steps, self.answer, self.terminal = steps, json.dumps(batch), terminal
         self.requests: list[dict] = []
         # A first stream closed before response.completed; Codex retries it.
-        self.drop_first, self.dropped = drop_first, 0
+        self.drop_first, self.dropped = drop_first, False
         self.errors: list[str] = []
         stub = self
 
@@ -105,12 +105,13 @@ class StubProvider:
             def do_POST(self) -> None:  # noqa: N802
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    # The retry takes the dropped request's place in the sequence.
+                    index = len(stub.requests) + 1
                     dropping = stub.drop_first and not stub.dropped
                     if dropping:
-                        stub.dropped += 1
+                        stub.dropped = True
                     else:
                         stub.requests.append(request)
-                    index = len(stub.requests) + dropping
                     code = stub.steps[index - 1] if index <= len(stub.steps) else None
                     if index > len(stub.steps) + 1:
                         raise ValueError("unexpected extra provider request")
@@ -384,6 +385,7 @@ def run_case(
     overrides: list[str] | None = None,
     protected_runtime: Path | None = None,
     drop_first_stream: bool = False,
+    expect_text: str | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -510,13 +512,14 @@ def run_case(
             raise AssertionError(f"{label}: CLI accepted an unusable repository tool server")
         return capture
     from ai_review.reviewer_setup import stage_schema_path  # noqa: PLC0415
+    from ai_review.schema import load_json_file  # noqa: PLC0415
 
     assert_requests(
         stub,
         model,
         steps=len(steps),
         sentinel=sentinel,
-        schema=json.loads(stage_schema_path(stage).read_text()),
+        schema=load_json_file(stage_schema_path(stage)),
         stage=stage,
     )
     if protected_runtime is not None:
@@ -528,23 +531,19 @@ def run_case(
             raise AssertionError("repository tools changed copied snapshot bytes")
         assert_unchanged(protected)
         assert_tool_surface(stub, protected)
-    if label == "missing-host" and not any(
-        "failed to spawn code-mode host" in text
+    if expect_text is not None and not any(
+        expect_text in text
         for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
     ):
-        raise AssertionError("missing-host control did not exercise the absent host")
+        raise AssertionError(f"{label}: control did not show {expect_text!r}")
     if drop_first_stream and (
-        stub.dropped != 1
+        not stub.dropped
         or not any(
             event.get("type") == "error" and "Reconnecting" in event.get("message", "")
             for event in map(json.loads, filter(None, capture["stdout"].split("\n")))
         )
     ):
         raise AssertionError(f"{label}: control did not exercise a recovered stream retry")
-    if label in {"tool-error", "recovery"} and "not a file: missing.txt" not in tool_outputs(
-        stub.requests[1]
-    ):
-        raise AssertionError(f"{label}: control did not report the missing file")
     if expected_status == "success" and stage == "review":
         expected_findings = batch["findings"]
         if (
@@ -615,6 +614,7 @@ def missing_host_case(install: Path, scratch: Path) -> None:
             steps=[mcp_call("read_file", {"path": "sentinel.txt"})],
             expected_status="model_error",
             cli_path=str(isolated) + os.pathsep + os.environ["PATH"],
+            expect_text="failed to spawn code-mode host",
         )
 
 
@@ -671,9 +671,16 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     no_match = [mcp_call("grep", {"pattern": "no-such-match"})]
     add(directory, "no-match", REQUIRED_MODEL, steps=no_match, empty=True)
     # A tool-reported error is a usable result, not an unusable runtime.
-    add(directory, "tool-error", REQUIRED_MODEL, steps=[missing])
-    recovery = [missing, read]
-    add(directory, "recovery", REQUIRED_MODEL, steps=recovery, sentinel=secrets.token_hex(24))
+    reported = "not a file: missing.txt"
+    add(directory, "tool-error", REQUIRED_MODEL, steps=[missing], expect_text=reported)
+    add(
+        directory,
+        "recovery",
+        REQUIRED_MODEL,
+        steps=[missing, read],
+        sentinel=secrets.token_hex(24),
+        expect_text=reported,
+    )
     # Codex reports the reconnect as a top-level error event, then completes.
     add(
         directory,

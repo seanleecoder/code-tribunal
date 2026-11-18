@@ -195,7 +195,7 @@ def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
     command = [sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r})"]
     # Other codecs keep only the diagnostic tail; no full capture is redacted.
     default = _run_adapter_process(command, os.environ.copy(), 5)
-    assert default.stderr_complete == default.stderr
+    assert default.stderr_complete == ""
     result = _run_adapter_process(command, os.environ.copy(), 5, full_stderr=True)
     assert "failed to spawn" not in result.stderr
     data = capture("empty")
@@ -227,7 +227,9 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     data = capture(label)
     with mock.patch(
         "ai_review.adapter_runner._run_adapter_process",
-        return_value=_AdapterResult(data["returncode"], data["stdout"], data["stderr"]),
+        return_value=_AdapterResult(
+            data["returncode"], data["stdout"], data["stderr"], stderr_complete=data["stderr"]
+        ),
     ) as process:
         assert run_adapter("codex", "review") == (0 if status == "success" else 1)
     # Only the Codex codec asks for the full redacted stderr capture.

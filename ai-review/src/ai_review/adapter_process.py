@@ -149,7 +149,8 @@ class _AdapterResult:
         self.stderr = stderr
         # Private execution diagnostics, never printed or persisted wholesale.
         # A startup failure may precede more than a diagnostic tail of progress.
-        self.stderr_complete = stderr_complete or stderr
+        # Empty unless the caller asked for the full capture.
+        self.stderr_complete = stderr_complete
 
 
 # Polling bounds temporary disk use in practice; reads are capped independently
