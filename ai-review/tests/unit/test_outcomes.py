@@ -165,8 +165,21 @@ def test_cli_integrity_diagnostics_cannot_inject_workflow_commands(tmp_path: Pat
     outcome = _outcome("review") | {"reviewer": hostile}
     write_canonical_json(tmp_path / "findings" / f"{hostile}.json", outcome)
     output = tmp_path / "consensus.json"
-    assert cli(["--inputs", str(tmp_path), "--findings-dir", str(tmp_path / "findings"),
-                "--critiques-dir", str(tmp_path / "absent"), "--out", str(output)]) == 3
+    assert (
+        cli(
+            [
+                "--inputs",
+                str(tmp_path),
+                "--findings-dir",
+                str(tmp_path / "findings"),
+                "--critiques-dir",
+                str(tmp_path / "absent"),
+                "--out",
+                str(output),
+            ]
+        )
+        == 3
+    )
     diagnostic = capsys.readouterr().err
     assert "unknown reviewer" in diagnostic
     assert "example_secret" not in diagnostic

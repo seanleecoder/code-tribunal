@@ -210,10 +210,9 @@ def _run_adapter_process(
         try:
             # Observe exit without reaping: cleanup must signal the group
             # while its leader's PID is still reserved, even with no children.
-            while (
-                os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
-                and not _oversized_stream(stdout, stderr)
-            ):
+            while os.waitid(
+                os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+            ) is None and not _oversized_stream(stdout, stderr):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
@@ -247,9 +246,7 @@ def _run_adapter_process(
         )
 
 
-def _effective_adapter_timeout_seconds(
-    reviewer_config: ReviewerConfig, stage: str
-) -> int:
+def _effective_adapter_timeout_seconds(reviewer_config: ReviewerConfig, stage: str) -> int:
     """Return the stage budget after the runner's five-second reserve."""
     configured_timeout = reviewer_config.timeout_for(stage)
     return max(1, configured_timeout - 5)

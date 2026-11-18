@@ -56,7 +56,11 @@ class LocalDemonstrationTests(unittest.TestCase):
 
             result = subprocess.run(
                 ["make", "-f", str(REPO_ROOT / "Makefile"), "review-local"],
-                cwd=root, env=environment, capture_output=True, text=True, check=False,
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
             )
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

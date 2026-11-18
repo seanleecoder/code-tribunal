@@ -221,8 +221,12 @@ def test_read_past_the_end_says_where_the_file_ends(repo: Path, monkeypatch) -> 
 def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     os.mkdir(os.fsencode(repo / "pkg") + b"/bad\xff")
     reply = tools.respond(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-         "params": {"name": "list_dir", "arguments": {"path": "pkg"}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "list_dir", "arguments": {"path": "pkg"}},
+        },
         repo,
     )
     wire = json.dumps(reply)
@@ -252,8 +256,9 @@ def test_every_quoted_name_is_described_and_opens_decoded(repo: Path) -> None:
         if tool["name"] != "read_file":
             assert "A name shown in double quotes is a JSON string" in tool["description"]
             # The rule itself excepts a marked name: its quoted text is no path.
-            assert f"unless the quoted text is followed by '{tools._UNADDRESSABLE.strip()}'" in (
-                tool["description"]
+            assert (
+                f"unless the quoted text is followed by '{tools._UNADDRESSABLE.strip()}'"
+                in (tool["description"])
             )
     assert "when its name can be passed as a path" in tools.TOOLS[2]["description"]
 
@@ -285,14 +290,16 @@ def test_no_crafted_name_is_shown_like_another(repo: Path) -> None:
     assert '"x\\npkg/"' in listing
     text, is_error = call(repo, "grep", pattern="hit")
     assert not is_error
-    assert sorted(text.splitlines()) == sorted([
-        f"{MARKED}:1:hit = 'raw'",
-        '"ev\\\\xff.py":1:hit = \'backslash\'',
-        f'"ev\\\\xff.py{tools._UNADDRESSABLE}":1:hit = \'marker\'',
-        f"{json.dumps(MARKED)}:1:hit = 'quoted marker'",
-        '"x\\npkg/module.py":1:hit = \'newline\'',
-        '"pkg/module.py:9:x = \'colon\'":1:hit',
-    ])
+    assert sorted(text.splitlines()) == sorted(
+        [
+            f"{MARKED}:1:hit = 'raw'",
+            "\"ev\\\\xff.py\":1:hit = 'backslash'",
+            f"\"ev\\\\xff.py{tools._UNADDRESSABLE}\":1:hit = 'marker'",
+            f"{json.dumps(MARKED)}:1:hit = 'quoted marker'",
+            "\"x\\npkg/module.py\":1:hit = 'newline'",
+            "\"pkg/module.py:9:x = 'colon'\":1:hit",
+        ]
+    )
     # A quoted name decodes back to a path the tools open.
     assert call(repo, "read_file", path="x\npkg/module.py") == ("1\thit = 'newline'", False)
 
@@ -348,9 +355,7 @@ def test_listing_stops_between_whole_entries_at_the_byte_limit(repo: Path) -> No
 
 @needs_rg
 def test_match_text_cannot_pose_as_another_match(repo: Path) -> None:
-    (repo / "notes.txt").write_text(
-        "hit\rpkg/auth.py:12:a\x0bb\x0cc\x85d e f\tg\n", newline=""
-    )
+    (repo / "notes.txt").write_text("hit\rpkg/auth.py:12:a\x0bb\x0cc\x85d e f\tg\n", newline="")
     assert call(repo, "grep", pattern="hit", path="notes.txt") == (
         "notes.txt:1!:hit\\rpkg/auth.py:12:a\\u000bb\\fc\\u0085d\\u2028e\\u2029f\\tg\n",
         False,
@@ -394,8 +399,9 @@ def test_no_two_lines_are_shown_alike(repo: Path) -> None:
     for shown, line in zip(read, lines, strict=True):
         number, _, text = shown.partition("\t")
         assert (json.loads(f'"{text}"') if number.endswith("!") else text) == line
-    for shown, line in zip(sorted(found, key=lambda m: int(m.split(":")[1].rstrip("!"))),
-                           lines, strict=True):
+    for shown, line in zip(
+        sorted(found, key=lambda m: int(m.split(":")[1].rstrip("!"))), lines, strict=True
+    ):
         _, number, text = shown.split(":", 2)
         assert (json.loads(f'"{text}"') if number.endswith("!") else text) == line
 
@@ -589,7 +595,7 @@ def test_an_escaped_line_that_fits_is_encoded_once(monkeypatch) -> None:
 def test_cut_and_capped_matches_stay_decodable(repo: Path, monkeypatch) -> None:
     # A marked, cut match decodes to exactly its first MAX_MATCH_CHARS
     # characters; no note shares the text field.
-    raw = "hit\r" + "y\"\\" * 300
+    raw = "hit\r" + 'y"\\' * 300
     (repo / "long.py").write_text(raw + "\n")
     text, is_error = call(repo, "grep", pattern="hit", path="long.py")
     assert not is_error
@@ -691,7 +697,6 @@ def test_a_running_timeout_cannot_signal_after_grep_returns(repo: Path, monkeypa
     returned = len(signals)
     timers[0].join(5)
     assert signals[returned:] == []
-
 
 
 class _DeadlineAtReturn:

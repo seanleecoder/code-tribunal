@@ -53,9 +53,7 @@ class GoldenConsensusContractTests(unittest.TestCase):
                 self.assertEqual(rendered, fixture["expected_body"])
                 self.assertEqual(body_hash, fixture["expected_body_hash"])
                 # SPEC-26/44 platform limits are Unicode character counts.
-                self.assertLessEqual(
-                    len(rendered), platform_comment_limit(posting_mode)
-                )
+                self.assertLessEqual(len(rendered), platform_comment_limit(posting_mode))
                 self.assertEqual(rendered.count("<!--"), 1)
                 self.assertEqual(rendered.count("-->"), 1)
 

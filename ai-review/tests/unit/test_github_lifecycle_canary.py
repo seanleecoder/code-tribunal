@@ -19,12 +19,8 @@ from ai_review.schema import finalize_finding_batch
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
-lifecycle = load_repository_script(
-    "canary_github", ROOT / "scripts/canary_github.py"
-)
-canary = load_repository_script(
-    "canary_github", ROOT / "scripts/canary_github.py"
-)
+lifecycle = load_repository_script("canary_github", ROOT / "scripts/canary_github.py")
+canary = load_repository_script("canary_github", ROOT / "scripts/canary_github.py")
 BASE = "ghcr.io/example/ai-review-base:2.0-" + "a" * 40 + "@sha256:" + "b" * 64
 REVIEWER = "ghcr.io/example/ai-review-reviewer:2.0-" + "a" * 40 + "@sha256:" + "c" * 64
 

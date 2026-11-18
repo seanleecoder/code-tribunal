@@ -24,9 +24,9 @@ from release_common import canonical_json_bytes
 DEFAULT_TIMEOUT_SECONDS = 7200
 DEMO_REPOSITORY = "seanleecoder/code-tribunal-demo"
 DEMO_PROJECT = "84667714"
-REVIEWER_CREDENTIALS = tuple(sorted(
-    {name for definition in REVIEWERS.values() for name in definition.credential_variables}
-))
+REVIEWER_CREDENTIALS = tuple(
+    sorted({name for definition in REVIEWERS.values() for name in definition.credential_variables})
+)
 GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
 GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
@@ -132,7 +132,8 @@ def canary_stage_environment(*, mock: bool = False) -> str:
     roster = ",".join(reviewer_ids())
     mock_switches = (
         "AI_REVIEW_LOCAL_MOCK=1 AI_REVIEW_ALLOW_LOCAL_MOCK=true"
-        if mock else "AI_REVIEW_LOCAL_MOCK=0"
+        if mock
+        else "AI_REVIEW_LOCAL_MOCK=0"
     )
     return f"env {unsets} AI_REVIEW_REVIEWERS={roster} {mock_switches}"
 

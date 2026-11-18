@@ -356,8 +356,6 @@ def context_hash_from_unified_diff(
     raise ValueError("anchor does not map to the unified diff")
 
 
-
-
 def first_evidence_or_body(finding: dict[str, Any]) -> str:
     evidence = finding.get("evidence") or []
     if evidence:
@@ -373,9 +371,7 @@ class DiffLocationResolver:
     """Index prepared coordinates once for all schema-validated locations in a batch."""
 
     def __init__(self, files: Iterable[DiffFile]) -> None:
-        self._matches: dict[
-            tuple[str, str, int], list[tuple[DiffFile, list[DiffLine], int]]
-        ] = {}
+        self._matches: dict[tuple[str, str, int], list[tuple[DiffFile, list[DiffLine], int]]] = {}
         for file in files:
             for side in ("old", "new", "unchanged"):
                 side_path = file.old_path if side == "old" else file.new_path

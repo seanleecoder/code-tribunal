@@ -192,9 +192,7 @@ class ConsensusGroupsTests(unittest.TestCase):
         self.assertEqual(consensus["panel_status"], "degraded")
         self.assertEqual(consensus["groups"][0]["support_count"], 2)
         self.assertEqual(consensus["groups"][0]["decision"], "surface")
-        self.assertEqual(
-            consensus["summary"], {"surface_count": 1, "fyi_count": 0}
-        )
+        self.assertEqual(consensus["summary"], {"surface_count": 1, "fyi_count": 0})
         validate_instance(consensus, "consensus.schema.json")
 
     def test_schema_rejects_null_issue_id(self) -> None:

@@ -161,9 +161,7 @@ class DecisionTableTests(unittest.TestCase):
             [_batch("claude", _finding("claude", _SOURCE_IDS["claude"], "major")), failed_review],
             _critique_config(),
             critique_batches=[
-                _critique_batch(
-                    "codex", [_critique("codex", _SOURCE_IDS["claude"], "agree")]
-                )
+                _critique_batch("codex", [_critique("codex", _SOURCE_IDS["claude"], "agree")])
             ],
         )
         group = consensus["groups"][0]
@@ -300,9 +298,7 @@ class DecisionTableTests(unittest.TestCase):
         consensus = _run(
             contributors=["claude", "codex"],
             critique_batches=[
-                _critique_batch(
-                    "claude", [_critique("claude", _SOURCE_IDS["codex"], "agree")]
-                )
+                _critique_batch("claude", [_critique("claude", _SOURCE_IDS["codex"], "agree")])
             ],
         )
         group = consensus["groups"][0]
@@ -375,9 +371,7 @@ class EffectiveVerdictTests(unittest.TestCase):
 
     def test_unknown_critique_targets_fail_at_the_policy_boundary(self) -> None:
         batch = _batch("claude", _finding("claude", _SOURCE_IDS["claude"], "major"))
-        unknown = _critique_batch(
-            "codex", [_critique("codex", "f" * 64, "dispute")]
-        )
+        unknown = _critique_batch("codex", [_critique("codex", "f" * 64, "dispute")])
         with self.assertRaises(ConsensusIntegrityError):
             build_consensus(
                 _manifest(),
@@ -462,9 +456,7 @@ class EffectiveVerdictTests(unittest.TestCase):
         )
 
         forward = self._grouped_pair_run([first, second])
-        reversed_order = self._grouped_pair_run(
-            [second, first]
-        )
+        reversed_order = self._grouped_pair_run([second, first])
 
         self.assertEqual(forward["critique_disputes"], reversed_order["critique_disputes"])
         self.assertEqual(
@@ -505,9 +497,7 @@ class MajorityNoiseTests(unittest.TestCase):
         # Majority noise demotes a corroborated group; it is never dropped.
         self.assertEqual(one_of_one["groups"][0]["support_count"], 2)
         self.assertEqual(one_of_one["groups"][0]["decision"], "fyi")
-        self.assertEqual(
-            one_of_one["summary"], {"surface_count": 0, "fyi_count": 1}
-        )
+        self.assertEqual(one_of_one["summary"], {"surface_count": 0, "fyi_count": 1})
 
 
 class PureDecisionTests(unittest.TestCase):
@@ -712,9 +702,7 @@ class RunHealthTests(unittest.TestCase):
             with self.subTest(label):
                 batches = self._ok(self._REVIEWERS)
                 batches[0].update(raw_finding_count=raw, dropped_finding_count=dropped)
-                consensus = self._health(
-                    batches, self._all_agree()
-                )
+                consensus = self._health(batches, self._all_agree())
                 job = self._job(consensus, "review", "claude")
                 self.assertEqual(job["outcome"], "success")
                 self.assertEqual(job["cap_omitted_finding_count"], raw - 1 - dropped)

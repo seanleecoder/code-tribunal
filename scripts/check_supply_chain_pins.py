@@ -170,9 +170,7 @@ def _github_container_pins(workflow: str) -> tuple[dict[str, set[str]], list[str
 def gitlab_image_pins(gitlab: str) -> tuple[dict[str, str], list[str]]:
     """The GitLab template's image pins, keyed by IMAGE_PIN_KEYS, and its parse issues."""
     values = {
-        key: re.findall(
-            rf"^\s*{key}\s*:\s*(['\"]?)([^'\"#\s<>]+)\1\s*(?:#.*)?$", gitlab, re.M
-        )
+        key: re.findall(rf"^\s*{key}\s*:\s*(['\"]?)([^'\"#\s<>]+)\1\s*(?:#.*)?$", gitlab, re.M)
         for key in IMAGE_PIN_KEYS
     }
     issues = [
@@ -217,9 +215,7 @@ def _exact_requirement_issues(name: str, text: str, *, markers: bool = False) ->
     return [
         f"{name} must use exact == pins only, got {requirement!r}"
         for requirement in requirement_lines(text)
-        if not EXACT_REQUIREMENT.fullmatch(
-            without_marker(requirement) if markers else requirement
-        )
+        if not EXACT_REQUIREMENT.fullmatch(without_marker(requirement) if markers else requirement)
     ]
 
 

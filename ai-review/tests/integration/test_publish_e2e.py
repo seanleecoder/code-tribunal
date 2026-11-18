@@ -62,7 +62,8 @@ class PublishEndToEndTests(unittest.TestCase):
                 if mode == "github_reviews":
                     manifest = dict(manifest, project_id="octo/repo")
                     client = FakeGitHubClient(
-                        head_sha=manifest["head_sha"], diff_text=diff_text,
+                        head_sha=manifest["head_sha"],
+                        diff_text=diff_text,
                         user_permissions={7: 40},
                     )
                 else:
@@ -101,7 +102,8 @@ class PublishEndToEndTests(unittest.TestCase):
                     self.assertEqual(ledger["records"][0]["discussion_id"], str(thread["id"]))
                 expected_body, _ = render_body(group, manifest["run_id"], posting_mode=mode)
                 roots = [
-                    t for t in client.list_threads(project, change)
+                    t
+                    for t in client.list_threads(project, change)
                     if str(t["id"]) == str(thread["id"])
                 ]
                 self.assertEqual(roots[0]["notes"][0]["body"], expected_body)
@@ -111,10 +113,13 @@ class PublishEndToEndTests(unittest.TestCase):
                     )
                 else:
                     self.assertEqual(roots[0]["notes"][0]["position"], original_position)
-                    client.discussions[0]["notes"].append({
-                        "id": 500, "body": "/ai-review wontfix",
-                        "author": {"id": 7, "username": "writer"},
-                    })
+                    client.discussions[0]["notes"].append(
+                        {
+                            "id": 500,
+                            "body": "/ai-review wontfix",
+                            "author": {"id": 7, "username": "writer"},
+                        }
+                    )
                 result = post_consensus(client, config, manifest, consensus)
                 self.assertEqual(result["created_discussions"], 0)
                 ledger = decode_state_note_body(client.state_notes[0]["body"])

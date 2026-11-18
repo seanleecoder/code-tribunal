@@ -259,8 +259,7 @@ for event in [
             "done\n"
             'if [ -n "$trace_dir" ]; then\n'
             '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$trace_dir/cli.tree"\n'  # noqa: E501
-            "fi\n"
-            + f"{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} \"$payload\"\n",
+            "fi\n" + f'{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} "$payload"\n',
             encoding="utf-8",
         )
         cli.chmod(cli.stat().st_mode | stat.S_IXUSR)

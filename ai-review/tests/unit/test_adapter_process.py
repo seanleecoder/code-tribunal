@@ -62,8 +62,7 @@ def test_capture_cleans_up_children_holding_output_open(tmp_path: Path, timeout:
         f"lock_path = Path({str(lock_path)!r})\n"
         "while not lock_path.exists() or not lock_path.stat().st_size:\n"
         "    time.sleep(0.01)\n"
-        "print('partial output', flush=True)\n"
-        + ("time.sleep(30)\n" if timeout else "")
+        "print('partial output', flush=True)\n" + ("time.sleep(30)\n" if timeout else "")
     )
     started = time.monotonic()
     if timeout:
@@ -114,7 +113,8 @@ def test_output_limit_fails_instead_of_truncating(
 
 @pytest.mark.parametrize("unicode_prefix", [False, True])
 def test_output_limit_diagnostics_redact_secrets_starting_before_the_read_window(
-    monkeypatch: pytest.MonkeyPatch, unicode_prefix: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    unicode_prefix: bool,
 ) -> None:
     monkeypatch.setattr("ai_review.adapter_process._ADAPTER_OUTPUT_LIMIT_BYTES", 1024)
     stdout = (
@@ -126,11 +126,7 @@ def test_output_limit_diagnostics_redact_secrets_starting_before_the_read_window
     if unicode_prefix:
         stdout = "Bearer\u2003" + "never-publish-this" * 2000 + "\nstdout failure detail\n"
         stderr = "toKen=\u2003" + "never-publish-this" * 2000 + "\nstderr failure detail\n"
-    script = (
-        "import os\n"
-        f"os.write(1, {stdout.encode()!r})\n"
-        f"os.write(2, {stderr.encode()!r})\n"
-    )
+    script = f"import os\nos.write(1, {stdout.encode()!r})\nos.write(2, {stderr.encode()!r})\n"
     with pytest.raises(AdapterOutputLimitError) as caught:
         _run_adapter_process([sys.executable, "-c", script], os.environ.copy(), 5)
     assert caught.value.stdout == "...[truncated]...\n[REDACTED]\nstdout failure detail\n"
@@ -150,9 +146,7 @@ def test_stderr_is_redacted_before_trimming_and_never_streamed(
         + "token=never-publish-this\nlast progress\n"
     )
     script = (
-        "import os\n"
-        "os.write(1, b'{\"findings\":[]}\\n')\n"
-        f"os.write(2, {diagnostic.encode()!r})\n"
+        f"import os\nos.write(1, b'{{\"findings\":[]}}\\n')\nos.write(2, {diagnostic.encode()!r})\n"
     )
     result = _run_adapter_process([sys.executable, "-c", script], os.environ.copy(), 5)
     assert result.stdout == '{"findings":[]}\n'
@@ -173,19 +167,16 @@ _TRUNCATED = "...[truncated]...\n"
         ("b'-----BEGIN PRIVATE KEY-----\\n' * 10000", _TRUNCATED + "[REDACTED]"),
         (
             "b'eyJ' * 200000",
-            _TRUNCATED + ("eyJ" * 200000)[-(_ADAPTER_DIAGNOSTIC_TAIL_CHARS - len(_TRUNCATED)):],
+            _TRUNCATED + ("eyJ" * 200000)[-(_ADAPTER_DIAGNOSTIC_TAIL_CHARS - len(_TRUNCATED)) :],
         ),
     ],
     ids=["incomplete-pem", "repeated-jwt-prefix"],
 )
 def test_timeout_diagnostics_finish_with_malformed_secret_prefixes(
-    diagnostic: str, expected: str,
+    diagnostic: str,
+    expected: str,
 ) -> None:
-    child = (
-        "import os, time\n"
-        f"os.write(2, {diagnostic})\n"
-        "time.sleep(30)\n"
-    )
+    child = f"import os, time\nos.write(2, {diagnostic})\ntime.sleep(30)\n"
     # The outer deadline also bounds a regression that hangs inside redaction
     # after the inner adapter has already been killed at its one-second budget.
     worker = (

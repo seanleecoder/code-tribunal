@@ -234,7 +234,8 @@ def test_unrelated_prepare_failures_do_not_suggest_another_source_ref(
         expected = "current_user lookup"
     else:
         client.fetch_version.side_effect = [
-            fake.fetch_version("1", "2"), ReviewPlatformError("version API unavailable")
+            fake.fetch_version("1", "2"),
+            ReviewPlatformError("version API unavailable"),
         ]
         expected = "version API unavailable"
     with pytest.raises(bundle.BundleError, match=expected) as error:

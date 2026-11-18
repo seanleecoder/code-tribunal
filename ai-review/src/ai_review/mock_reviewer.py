@@ -98,9 +98,7 @@ def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
             "The added code indexes the first record before checking whether "
             "the collection is empty."
         ),
-        "evidence": [
-            "records[0] is accessed before the existing empty-records guard can run."
-        ],
+        "evidence": ["records[0] is accessed before the existing empty-records guard can run."],
         "suggestion": None,
     }
 

@@ -300,9 +300,7 @@ class GitLabClientTests(unittest.TestCase):
             "collapsed": False,
             "too_large": False,
         }
-        session = DiffFallbackSession(
-            primary, {"overflow": False, "changes": [recovered]}
-        )
+        session = DiffFallbackSession(primary, {"overflow": False, "changes": [recovered]})
         client = GitLabReviewPlatform("https://gitlab.example.com/api/v4", "token", session=session)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
@@ -335,9 +333,7 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
-            session=DiffFallbackSession(
-                primary, {"overflow": False, "changes": [recovered]}
-            ),
+            session=DiffFallbackSession(primary, {"overflow": False, "changes": [recovered]}),
         )
         with contextlib.redirect_stderr(io.StringIO()):
             diff = client.fetch_diff("group/project", 1)
@@ -363,9 +359,7 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
-            session=DiffFallbackSession(
-                primary, {"overflow": False, "changes": [recovered]}
-            ),
+            session=DiffFallbackSession(primary, {"overflow": False, "changes": [recovered]}),
         )
         with contextlib.redirect_stderr(io.StringIO()):
             diff = client.fetch_diff("group/project", 1)
@@ -422,9 +416,7 @@ class GitLabClientTests(unittest.TestCase):
                 client = GitLabReviewPlatform(
                     "https://gitlab.example.com/api/v4",
                     "token",
-                    session=DiffFallbackSession(
-                        primary, {"overflow": False, "changes": changes}
-                    ),
+                    session=DiffFallbackSession(primary, {"overflow": False, "changes": changes}),
                 )
                 with self.assertRaisesRegex(GitLabApiError, "malformed changes"):
                     client.fetch_diff("group/project", 1)
@@ -472,9 +464,7 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
-            session=DiffFallbackSession(
-                primary, {"overflow": False, "changes": [malformed]}
-            ),
+            session=DiffFallbackSession(primary, {"overflow": False, "changes": [malformed]}),
         )
 
         with self.assertRaisesRegex(GitLabApiError, "raw-diff fallback returned malformed") as cm:
@@ -533,9 +523,7 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
-            session=DiffFallbackSession(
-                [change], {"overflow": False, "changes": [change]}
-            ),
+            session=DiffFallbackSession([change], {"overflow": False, "changes": [change]}),
         )
         with self.assertRaisesRegex(GitLabApiError, "remained incomplete"):
             client.fetch_diff("group/project", 1)
@@ -557,9 +545,7 @@ class GitLabClientTests(unittest.TestCase):
         client = GitLabReviewPlatform(
             "https://gitlab.example.com/api/v4",
             "token",
-            session=DiffFallbackSession(
-                primary, {"overflow": False, "changes": [recovered]}
-            ),
+            session=DiffFallbackSession(primary, {"overflow": False, "changes": [recovered]}),
         )
         with self.assertRaisesRegex(GitLabApiError, "did not return text diff content"):
             client.fetch_diff("group/project", 1)

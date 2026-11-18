@@ -134,9 +134,7 @@ class MockScenarioTests(unittest.TestCase):
         )
         for scenario in ("blocking", "blocking_alt", "advisory"):
             finding = self._review(diff, scenario)[0]
-            self.assertEqual(
-                finding["location"]["start_line"], 3, f"scenario={scenario}"
-            )
+            self.assertEqual(finding["location"]["start_line"], 3, f"scenario={scenario}")
 
     def test_scenarios_survive_finalization_on_an_added_file_diff(self) -> None:
         # A newly added file's diff carries `--- /dev/null`. Anchoring on that

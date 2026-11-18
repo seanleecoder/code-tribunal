@@ -58,7 +58,10 @@ GREP_TIMEOUT_SECONDS = 20
 # file content pose as another line or match.
 _LINE_SEPARATORS = "\u2028\u2029"
 _CONTROL_POINTS = (
-    *range(0x00, 0x09), *range(0x0A, 0x20), *range(0x7F, 0xA0), *map(ord, _LINE_SEPARATORS)
+    *range(0x00, 0x09),
+    *range(0x0A, 0x20),
+    *range(0x7F, 0xA0),
+    *map(ord, _LINE_SEPARATORS),
 )
 _CONTROL = re.compile("[" + re.escape("".join(map(chr, _CONTROL_POINTS))) + "]")
 # A line holding any of them is shown as a JSON string body (so its quotes and
@@ -294,8 +297,7 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     notes = []
     if resume is not None:
         notes.append(
-            f"[output limit reached; continue with start_line={resume[0]} "
-            f"start_column={resume[1]}]"
+            f"[output limit reached; continue with start_line={resume[0]} start_column={resume[1]}]"
         )
     elif end < total:
         notes.append(f"[{total - end} more lines; continue with start_line]")

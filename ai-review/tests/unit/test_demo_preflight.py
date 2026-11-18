@@ -20,12 +20,19 @@ ROSTER = "claude,codex,opencode,cursor"
 
 
 def _gitlab_variable(
-    key: str, *, scope: str = "*", protected: bool = True, masked: bool = True,
+    key: str,
+    *,
+    scope: str = "*",
+    protected: bool = True,
+    masked: bool = True,
     value: str = "configured",
 ) -> dict[str, object]:
     return {
-        "key": key, "environment_scope": scope, "protected": protected,
-        "masked": masked, "value": value,
+        "key": key,
+        "environment_scope": scope,
+        "protected": protected,
+        "masked": masked,
+        "value": value,
     }
 
 
@@ -38,9 +45,7 @@ def _state(**overrides: object) -> dict[str, object]:
             "AI_REVIEW_REVIEWERS": ROSTER,
         },
         "github_secrets": {name: RECENT for name in preflight.GITHUB_SECRETS},
-        "gitlab_variables": [
-            _gitlab_variable(name) for name in preflight.GITLAB_SECRETS
-        ],
+        "gitlab_variables": [_gitlab_variable(name) for name in preflight.GITLAB_SECRETS],
     }
     state.update(overrides)
     return state
@@ -51,7 +56,7 @@ def _runner(state: dict[str, object]):
         path = command[2]
 
         def github_pages(items, key=None):
-            pages = [items[start:start + 30] for start in range(0, len(items), 30)] or [[]]
+            pages = [items[start : start + 30] for start in range(0, len(items), 30)] or [[]]
             if key:
                 pages = [{key: page} for page in pages]
             # --slurp is asserted separately; --paginate decides whether later pages exist.
@@ -188,16 +193,20 @@ class DemoPreflightTests(unittest.TestCase):
             rulesets=[{"enforcement": "disabled"} for _ in range(30)],
         )
         self.assertEqual(_failures(state), [])
-        state["github_variables"].update({
-            "AI_REVIEW_MANUAL": "true",
-            "AI_REVIEW_LOCAL_MOCK": "1",
-            "AI_REVIEW_MERGE_GATE_ENABLED": "true",
-        })
+        state["github_variables"].update(
+            {
+                "AI_REVIEW_MANUAL": "true",
+                "AI_REVIEW_LOCAL_MOCK": "1",
+                "AI_REVIEW_MERGE_GATE_ENABLED": "true",
+            }
+        )
         state["rulesets"].append({"enforcement": "active", "name": "later-page"})
         checks = preflight.run(_runner(state), NOW)
         for expected in (
-            "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
-            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED", "active ruleset 'later-page'",
+            "AI_REVIEW_MANUAL=true",
+            "mock variable AI_REVIEW_LOCAL_MOCK",
+            "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED",
+            "active ruleset 'later-page'",
         ):
             with self.subTest(expected=expected):
                 self.assertTrue(any(expected in c.message for c in checks), checks)
@@ -210,15 +219,18 @@ class DemoPreflightTests(unittest.TestCase):
             *[_gitlab_variable(name) for name in preflight.GITLAB_SECRETS],
         ]
         self.assertEqual(_failures(_state(gitlab_variables=variables)), [])
-        variables.extend([
-            _gitlab_variable("AI_REVIEW_MANUAL", value="true"),
-            _gitlab_variable("AI_REVIEW_LOCAL_MOCK", scope="production"),
-            _gitlab_variable("AI_REVIEW_MERGE_GATE_ENABLED", scope="production"),
-        ])
+        variables.extend(
+            [
+                _gitlab_variable("AI_REVIEW_MANUAL", value="true"),
+                _gitlab_variable("AI_REVIEW_LOCAL_MOCK", scope="production"),
+                _gitlab_variable("AI_REVIEW_MERGE_GATE_ENABLED", scope="production"),
+            ]
+        )
         checks = preflight.run(_runner(_state(gitlab_variables=variables)), NOW)
         self.assertEqual([c.level for c in checks], ["FAIL"] * 3)
         for expected in (
-            "AI_REVIEW_MANUAL=true", "mock variable AI_REVIEW_LOCAL_MOCK",
+            "AI_REVIEW_MANUAL=true",
+            "mock variable AI_REVIEW_LOCAL_MOCK",
             "unsupported variable AI_REVIEW_MERGE_GATE_ENABLED",
         ):
             self.assertTrue(any(expected in c.message for c in checks), checks)
@@ -231,18 +243,27 @@ class DemoPreflightTests(unittest.TestCase):
                     [_gitlab_variable(name, scope="production")],
                     "is missing for environment_scope='*'",
                 ),
-                ([
-                    _gitlab_variable(name, protected=False),
-                    _gitlab_variable(name, scope="production"),
-                ], "must be protected and masked"),
-                ([
-                    _gitlab_variable(name, masked=False),
-                    _gitlab_variable(name, scope="production"),
-                ], "must be protected and masked"),
-                ([
-                    _gitlab_variable(name),
-                    _gitlab_variable(name, scope="production", protected=False, masked=False),
-                ], None),
+                (
+                    [
+                        _gitlab_variable(name, protected=False),
+                        _gitlab_variable(name, scope="production"),
+                    ],
+                    "must be protected and masked",
+                ),
+                (
+                    [
+                        _gitlab_variable(name, masked=False),
+                        _gitlab_variable(name, scope="production"),
+                    ],
+                    "must be protected and masked",
+                ),
+                (
+                    [
+                        _gitlab_variable(name),
+                        _gitlab_variable(name, scope="production", protected=False, masked=False),
+                    ],
+                    None,
+                ),
             )
             for entries, expected in cases:
                 for ordered in (entries, list(reversed(entries))):
@@ -255,9 +276,13 @@ class DemoPreflightTests(unittest.TestCase):
 
     def test_github_manual_mode_is_case_insensitive(self) -> None:
         for value, fails in (
-            ("true", True), ("True", True),
-            (None, False), ("", False), ("false", False),
-            ("1", False), (" true", False),
+            ("true", True),
+            ("True", True),
+            (None, False),
+            ("", False),
+            ("false", False),
+            ("1", False),
+            (" true", False),
         ):
             with self.subTest(value=value):
                 variables = {"AI_REVIEW_REVIEWERS": ROSTER}
@@ -270,16 +295,23 @@ class DemoPreflightTests(unittest.TestCase):
 
     def test_gitlab_manual_mode_uses_wildcard_value(self) -> None:
         for value, scope, fails in (
-            (None, "*", False), ("false", "*", False), ("true", "*", True),
-            ("TRUE", "*", False), ("true", "production", False),
+            (None, "*", False),
+            ("false", "*", False),
+            ("true", "*", True),
+            ("TRUE", "*", False),
+            ("true", "production", False),
         ):
-            entries = [] if value is None else [
-                _gitlab_variable("AI_REVIEW_MANUAL", value=value, scope=scope)
-            ]
+            entries = (
+                []
+                if value is None
+                else [_gitlab_variable("AI_REVIEW_MANUAL", value=value, scope=scope)]
+            )
             if scope == "*":
-                entries.append(_gitlab_variable(
-                    "AI_REVIEW_MANUAL", value="false" if fails else "true", scope="production"
-                ))
+                entries.append(
+                    _gitlab_variable(
+                        "AI_REVIEW_MANUAL", value="false" if fails else "true", scope="production"
+                    )
+                )
             for ordered in (entries, list(reversed(entries))):
                 with self.subTest(value=value, entries=ordered):
                     state = _state()
@@ -290,9 +322,16 @@ class DemoPreflightTests(unittest.TestCase):
                         self.assertIn("gitlab: AI_REVIEW_MANUAL=true", checks[0].message)
 
     def test_empty_inventories_report_missing_configuration(self) -> None:
-        checks = preflight.run(_runner(_state(
-            github_variables={}, github_secrets={}, gitlab_variables=[],
-        )), NOW)
+        checks = preflight.run(
+            _runner(
+                _state(
+                    github_variables={},
+                    github_secrets={},
+                    gitlab_variables=[],
+                )
+            ),
+            NOW,
+        )
         self.assertEqual([c.level for c in checks], ["FAIL"] * 7)
         for name in preflight.GITHUB_SECRETS:
             self.assertIn(f"github: secret {name} is missing", [c.message for c in checks])
@@ -304,7 +343,9 @@ class DemoPreflightTests(unittest.TestCase):
 
     def test_cli_failure_never_reports_readiness(self) -> None:
         endpoints = (
-            "/branches/main/protection", "/actions/variables", "/variables?per_page=100",
+            "/branches/main/protection",
+            "/actions/variables",
+            "/variables?per_page=100",
         )
         for endpoint in endpoints:
             runner = _runner(_state())

@@ -60,9 +60,7 @@ RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 
 
 class GitLabCanaryError(RuntimeError):
-    def __init__(
-        self, message: str, *, status: int | None = None, transient: bool = False
-    ) -> None:
+    def __init__(self, message: str, *, status: int | None = None, transient: bool = False) -> None:
         super().__init__(message)
         self.status = status
         self.transient = transient
@@ -131,7 +129,10 @@ def _request(
                 transient=attempts > 1 and exc.code in RETRYABLE_STATUSES,
             ) from exc
         except (
-            TimeoutError, ConnectionError, urllib.error.URLError, http.client.HTTPException,
+            TimeoutError,
+            ConnectionError,
+            urllib.error.URLError,
+            http.client.HTTPException,
             ssl.SSLError,
         ) as exc:
             if attempt + 1 == attempts:
@@ -259,7 +260,8 @@ def push_candidate_change(
         message,
         [
             {
-                "action": "update", "file_path": ".gitlab-ci.yml",
+                "action": "update",
+                "file_path": ".gitlab-ci.yml",
                 "content": yaml.safe_dump(consumer_config(template_sha), sort_keys=False),
             },
             *fixture,
@@ -545,14 +547,16 @@ class GitLabLifecycle(Lifecycle):
         for discussion in discussions:
             root = discussion["notes"][0]
             if root.get("position"):
-                threads.append({
-                    "id": int(root["id"]),
-                    "path": root["position"].get("new_path"),
-                    "body": root.get("body", ""),
-                    "resolved": bool(root.get("resolved")),
-                    "discussion_id": str(discussion["id"]),
-                    "author_id": int(root["author"]["id"]),
-                })
+                threads.append(
+                    {
+                        "id": int(root["id"]),
+                        "path": root["position"].get("new_path"),
+                        "body": root.get("body", ""),
+                        "resolved": bool(root.get("resolved")),
+                        "discussion_id": str(discussion["id"]),
+                        "author_id": int(root["author"]["id"]),
+                    }
+                )
         return threads
 
     def resolved(self) -> bool:
@@ -575,7 +579,10 @@ class GitLabLifecycle(Lifecycle):
             if note.get("author", {}).get("id") == self.root["author_id"]
         ]
         return saved_disposition(
-            notes, project_id=DEMO_PROJECT, change_id=self.mr, root_note_id=self.root["id"],
+            notes,
+            project_id=DEMO_PROJECT,
+            change_id=self.mr,
+            root_note_id=self.root["id"],
             disposition=disposition,
         )
 

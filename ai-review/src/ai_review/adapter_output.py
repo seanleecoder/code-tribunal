@@ -377,9 +377,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
         kind = event["type"]
         if kind == "error":
             message = event.get("message")
-            if turn_completed or not (
-                isinstance(message, str) and _CODEX_RECONNECT.match(message)
-            ):
+            if turn_completed or not (isinstance(message, str) and _CODEX_RECONNECT.match(message)):
                 raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
             reconnected = True
             continue
@@ -494,5 +492,5 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
         return subtype
     try:
         return json.dumps(event, sort_keys=True)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(event)

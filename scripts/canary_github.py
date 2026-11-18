@@ -531,13 +531,22 @@ class GitHubLifecycle(Lifecycle):
             if note.get("user", {}).get("login") == BOT_LOGIN
         ]
         return saved_disposition(
-            notes, project_id=DEMO_REPOSITORY, change_id=self.pr, root_note_id=self.root["id"],
+            notes,
+            project_id=DEMO_REPOSITORY,
+            change_id=self.pr,
+            root_note_id=self.root["id"],
             disposition=disposition,
         )
 
     def merge_state(self) -> tuple[dict[str, str], bool | None]:
         pr = _json(
-            "gh", "pr", "view", self.pr, "--repo", DEMO_REPOSITORY, "--json",
+            "gh",
+            "pr",
+            "view",
+            self.pr,
+            "--repo",
+            DEMO_REPOSITORY,
+            "--json",
             "mergeable,mergeStateStatus",
         )
         observed = {

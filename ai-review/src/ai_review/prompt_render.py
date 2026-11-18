@@ -130,9 +130,7 @@ def build_pooled_findings(
     config: ReviewConfig,
     critic: str,
 ) -> dict[str, Any]:
-    successful_batches = [
-        batch for batch in finding_batches if batch_usable(batch)
-    ]
+    successful_batches = [batch for batch in finding_batches if batch_usable(batch)]
     aliases = _reviewer_aliases([str(batch["reviewer"]) for batch in successful_batches])
     ordered = sorted(
         [

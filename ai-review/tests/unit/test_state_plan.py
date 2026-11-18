@@ -33,9 +33,7 @@ def _manifest() -> dict[str, str]:
     }
 
 
-def _config(
-    *, min_resolution: int = 1, retention: dict[str, Any] | None = None
-) -> ReviewConfig:
+def _config(*, min_resolution: int = 1, retention: dict[str, Any] | None = None) -> ReviewConfig:
     """Frozen runtime settings, with no platform client."""
 
     def mutate(config: dict[str, Any]) -> None:
@@ -244,9 +242,7 @@ class PlanStateWithoutClientTests(unittest.TestCase):
     def test_prior_wontfix_survives_a_regrouped_finding(self) -> None:
         issue_id = "a" * 64
         plan = _plan(
-            persisted=[
-                _matching_record(issue_id, status="wontfix", human_disposition="wontfix")
-            ],
+            persisted=[_matching_record(issue_id, status="wontfix", human_disposition="wontfix")],
             inline=[_group("9" * 64)],
         )
 

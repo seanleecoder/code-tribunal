@@ -67,9 +67,7 @@ _KNOWN_ENV_VARIABLES = frozenset(CONFIG_ENV_OVERRIDES | RUNTIME_ENV_VARIABLES)
 
 def unknown_environment_overrides(names: Iterable[str]) -> list[str]:
     return sorted(
-        name
-        for name in names
-        if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
+        name for name in names if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
     )
 
 

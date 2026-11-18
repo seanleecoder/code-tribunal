@@ -41,8 +41,7 @@ from support.fake_gitlab import FakeGitLabClient
 
 ISSUE_ID = "1" * 64
 MARKER = (
-    f"<!-- ai-review:v1 issue_id={ISSUE_ID} run_id=1 "
-    f"body_hash={'a' * 64} source={'b' * 64} -->"
+    f"<!-- ai-review:v1 issue_id={ISSUE_ID} run_id=1 body_hash={'a' * 64} source={'b' * 64} -->"
 )
 DIFF_TEXT = "diff --git a/a.py b/a.py\n"
 
@@ -92,16 +91,24 @@ class _Platform(NamedTuple):
 # below are derived from it, so a platform cannot be wired into one and missed in
 # the other -- which is what the module docstring above promises.
 _PLATFORMS = (
-    _Platform("gitlab", _gitlab_fake, "project", lambda session: GitLabReviewPlatform(
-        "https://gitlab.example.com/api/v4", "token", session=session
-    )),
-    _Platform("github", _github_fake, "octo/repo", lambda session: GitHubReviewPlatform(
-        "https://api.github.com", "token", bot_login="bot", session=session
-    )),
+    _Platform(
+        "gitlab",
+        _gitlab_fake,
+        "project",
+        lambda session: GitLabReviewPlatform(
+            "https://gitlab.example.com/api/v4", "token", session=session
+        ),
+    ),
+    _Platform(
+        "github",
+        _github_fake,
+        "octo/repo",
+        lambda session: GitHubReviewPlatform(
+            "https://api.github.com", "token", bot_login="bot", session=session
+        ),
+    ),
 )
-_FAKES = tuple(
-    pytest.param(entry.fake, entry.project, id=entry.label) for entry in _PLATFORMS
-)
+_FAKES = tuple(pytest.param(entry.fake, entry.project, id=entry.label) for entry in _PLATFORMS)
 _ADAPTERS = tuple(pytest.param(entry.adapter, id=entry.label) for entry in _PLATFORMS)
 
 _ANCHOR = {
@@ -132,9 +139,7 @@ def _open_thread(platform: ReviewPlatform, project: str, body: str = "body") -> 
 
 
 @pytest.mark.parametrize(("factory", "project"), _FAKES)
-def test_fake_satisfies_the_review_platform_protocol(
-    factory: Any, project: str
-) -> None:
+def test_fake_satisfies_the_review_platform_protocol(factory: Any, project: str) -> None:
     assert isinstance(factory(), ReviewPlatform)
 
 
@@ -144,9 +149,7 @@ def test_adapter_exposes_the_review_platform_protocol(adapter_factory: Any) -> N
 
 
 @pytest.mark.parametrize(("factory", "project"), _FAKES)
-def test_platform_fetches_version_diff_and_current_head(
-    factory: Any, project: str
-) -> None:
+def test_platform_fetches_version_diff_and_current_head(factory: Any, project: str) -> None:
     fake = factory()
     platform = _platform(fake)
 
@@ -166,7 +169,8 @@ def test_platform_builds_single_line_positions_from_ranges(
     version = platform.fetch_version(project, 1)
     for source in (_ANCHOR, _SPANNING_ANCHOR):
         anchor = {
-            **source, "side": side,
+            **source,
+            "side": side,
             "start": {"old_line": 10, "new_line": source["start"]["new_line"]},
             "end": {"old_line": 12, "new_line": source["end"]["new_line"]},
         }
@@ -225,9 +229,7 @@ def test_platform_resolves_and_reopens_a_thread(factory: Any, project: str) -> N
 
 
 @pytest.mark.parametrize(("factory", "project"), _FAKES)
-def test_platform_creates_and_updates_the_owned_state_note(
-    factory: Any, project: str
-) -> None:
+def test_platform_creates_and_updates_the_owned_state_note(factory: Any, project: str) -> None:
     """One machine-owned note per change, updated in place rather than appended.
 
     A second state note is not a cosmetic duplicate: state recovery has to pick
@@ -250,9 +252,7 @@ def test_platform_creates_and_updates_the_owned_state_note(
 
 
 @pytest.mark.parametrize("adapter_factory", _ADAPTERS)
-def test_adapter_maps_platform_failures_to_review_platform_error(
-    adapter_factory: Any
-) -> None:
+def test_adapter_maps_platform_failures_to_review_platform_error(adapter_factory: Any) -> None:
     """Posting handles one error type, so neither adapter may leak its own.
 
     `ReviewPlatformError` is what `post` catches to report a mutation failure
