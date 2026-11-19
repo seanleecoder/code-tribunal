@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import _AdapterResult, _run_adapter_process
 from ai_review.adapter_runner import run_adapter
 from ai_review.config import load_config
@@ -18,23 +17,9 @@ from ai_review.consensus import build_consensus
 from ai_review.schema import AdapterModelError, SchemaValidationError, batch_quality_fields
 
 from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
+from tests.support.codex_captures import capture, load
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
 CONFIG = Path(__file__).resolve().parents[2] / "config/review.yaml"
-
-
-def capture(label: str) -> dict:
-    return json.loads((FIXTURES / f"{label}.json").read_text())
-
-
-def load(data: dict, stage: str = "review") -> dict:
-    return _load_adapter_json(
-        data["stdout"],
-        stderr=data["stderr"],
-        returncode=data["returncode"],
-        codec="codex_stream_json",
-        stage=stage,
-    )
 
 
 @pytest.mark.parametrize(

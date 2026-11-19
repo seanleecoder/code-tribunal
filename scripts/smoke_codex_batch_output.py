@@ -583,18 +583,20 @@ def run_case(
         )
     ):
         raise AssertionError(f"{label}: control did not exercise a recovered stream retry")
-    if expected_status == "success" and stage == "review":
-        expected_findings = batch["findings"]
-        if (
-            outcome["raw_finding_count"] != len(expected_findings)
-            or outcome["dropped_finding_count"] != 0
-            or len(outcome["findings"]) != len(expected_findings)
-        ):
-            raise AssertionError(f"{label}: runner dropped or invented findings")
-        for authored, finalized in zip(expected_findings, outcome["findings"], strict=True):
-            if any(finalized[key] != value for key, value in authored.items() if key != "location"):
-                raise AssertionError(f"{label}: runner changed authored finding content")
     if expected_status == "success":
+        if stage == "review":
+            expected_findings = batch["findings"]
+            if (
+                outcome["raw_finding_count"] != len(expected_findings)
+                or outcome["dropped_finding_count"] != 0
+                or len(outcome["findings"]) != len(expected_findings)
+            ):
+                raise AssertionError(f"{label}: runner dropped or invented findings")
+            for authored, finalized in zip(expected_findings, outcome["findings"], strict=True):
+                if any(
+                    finalized[key] != value for key, value in authored.items() if key != "location"
+                ):
+                    raise AssertionError(f"{label}: runner changed authored finding content")
         # Compare authored content before runtime enrichment too: no dropped or
         # invented item may make a transport regression appear to pass.
         from ai_review.adapter_output import _load_adapter_json  # noqa: PLC0415

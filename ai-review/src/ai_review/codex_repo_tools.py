@@ -440,12 +440,12 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     # missing path or an unreadable file; an error can accompany partial results.
     # Its --json summary record makes stdout nonempty either way, so decide from
     # the matches rather than from the presence of output.
-    if cut is None and process.returncode not in (0, 1):
+    if cut is not None:
+        matches.append(cut)
+    elif process.returncode not in (0, 1):
         if not matches:
             raise ToolError("search failed; check the pattern and path")
         matches.append("[search incomplete: some files could not be searched]")
-    if cut is not None:
-        matches.append(cut)
     return _bounded("".join(f"{line}\n" for line in matches))
 
 

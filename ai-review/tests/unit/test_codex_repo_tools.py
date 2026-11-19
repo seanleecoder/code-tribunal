@@ -20,6 +20,9 @@ from ai_review.reviewers import get_reviewer_definition
 
 RG = shutil.which("rg")
 needs_rg = pytest.mark.skipif(RG is None, reason="ripgrep is not installed")
+needs_non_utf8_names = pytest.mark.skipif(
+    sys.platform == "darwin", reason="APFS refuses non-UTF-8 names"
+)
 
 
 @pytest.fixture
@@ -100,7 +103,7 @@ def test_grep_caps_dense_files_in_a_directory_search_and_says_so(repo: Path) -> 
     assert "for all of them" not in description and "total output limit" in description
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_non_utf8_names
 @needs_rg
 def test_grep_cap_note_for_a_name_that_cannot_be_a_path(repo: Path) -> None:
     cap = tools.MAX_MATCHES_PER_FILE
@@ -217,7 +220,7 @@ def test_read_past_the_end_says_where_the_file_ends(repo: Path, monkeypatch) -> 
     )
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_non_utf8_names
 def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     os.mkdir(os.fsencode(repo / "pkg") + b"/bad\xff")
     reply = tools.respond(
@@ -272,7 +275,7 @@ def test_grep_shows_quoted_names_as_list_dir_does(repo: Path) -> None:
     assert sorted(lines) == sorted(f"{json.dumps(name)}:1:quoted-hit" for name in QUOTED_NAMES)
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_non_utf8_names
 @needs_rg
 def test_no_crafted_name_is_shown_like_another(repo: Path) -> None:
     # Each decoy imitates the raw-byte file, the marker, another file, or a
@@ -316,7 +319,7 @@ def test_grep_shows_matches_only_and_bounds_long_lines(repo: Path) -> None:
     assert len(lines) == 2
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_non_utf8_names
 def test_non_utf8_names_with_backslashes_stay_distinct(repo: Path) -> None:
     # Without doubling literal backslashes, both would show as ev\xff\xfe.py.
     for raw in (b"ev\xff\\xfe.py", b"ev\\xff\xfe.py"):
@@ -883,7 +886,7 @@ def test_registry_renders_parseable_no_shell_configuration(
     assert "env" not in server
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 names")
+@needs_non_utf8_names
 def test_registry_refuses_a_path_toml_cannot_represent(tmp_path: Path) -> None:
     inputs = tmp_path / "inputs"
     (inputs / "repo_snapshot").mkdir(parents=True)

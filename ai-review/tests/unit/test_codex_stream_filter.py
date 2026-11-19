@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 from ai_review import codex_stream_filter
-from ai_review.adapter_output import _load_adapter_json
 from ai_review.codex_stream_filter import (
     MAX_RECORD_BYTES,
     _drain,
@@ -27,21 +26,7 @@ from ai_review.codex_stream_filter import (
     strip_payloads,
 )
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
-
-
-def capture(label: str) -> dict:
-    return json.loads((FIXTURES / f"{label}.json").read_text())
-
-
-def admit(stdout: str, data: dict) -> dict:
-    return _load_adapter_json(
-        stdout,
-        codec="codex_stream_json",
-        stage="review",
-        stderr=data["stderr"],
-        returncode=data["returncode"],
-    )
+from tests.support.codex_captures import capture, load
 
 
 def filtered(stdout: str) -> str:
@@ -60,13 +45,13 @@ def test_admission_is_unchanged_without_payloads(label: str) -> None:
         if item.get("type") == "mcp_tool_call":
             assert item["result"] is None and item["arguments"] is None
     try:
-        expected = admit(data["stdout"], data)
+        expected = load(data)
     except Exception as exc:  # noqa: BLE001 - the same failure must survive
         # Compare literally: messages can hold repr() of untrusted values.
         with pytest.raises(type(exc), match=re.escape(str(exc))):
-            admit(stripped, data)
+            load({**data, "stdout": stripped})
     else:
-        assert admit(stripped, data) == expected
+        assert load({**data, "stdout": stripped}) == expected
 
 
 def test_only_tool_call_payloads_change() -> None:

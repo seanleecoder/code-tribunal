@@ -108,7 +108,8 @@ class _Forwarder:
 
     def close(self) -> None:
         if self.pending:
-            self.out.write(self.pending if self.passing else strip_payloads(bytes(self.pending)))
+            # feed() leaves nothing pending while passing an oversized record.
+            self.out.write(strip_payloads(bytes(self.pending)))
             self.pending.clear()
         self.out.flush()
 
