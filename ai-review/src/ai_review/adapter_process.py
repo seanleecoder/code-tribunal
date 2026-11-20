@@ -139,12 +139,18 @@ def _model_id_validation_error(model: str) -> str | None:
 
 
 class _AdapterResult:
-    __slots__ = ("returncode", "stdout", "stderr")
+    __slots__ = ("returncode", "stdout", "stderr", "stderr_complete")
 
-    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+    def __init__(
+        self, returncode: int, stdout: str, stderr: str, *, stderr_complete: str = ""
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        # Private execution diagnostics, never printed or persisted wholesale.
+        # A startup failure may precede more than a diagnostic tail of progress.
+        # Empty unless the caller asked for the full capture.
+        self.stderr_complete = stderr_complete
 
 
 # Polling bounds temporary disk use in practice; reads are capped independently
@@ -186,6 +192,7 @@ def _run_adapter_process(
     timeout_seconds: int,
     *,
     cwd: Path | None = None,
+    full_stderr: bool = False,
 ) -> _AdapterResult:
     # Anonymous, private files never enter the output/artifact directory. Unlike
     # pipes, reading them cannot wait on EOF from a surviving CLI descendant.
@@ -203,10 +210,9 @@ def _run_adapter_process(
         try:
             # Observe exit without reaping: cleanup must signal the group
             # while its leader's PID is still reserved, even with no children.
-            while (
-                os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
-                and not _oversized_stream(stdout, stderr)
-            ):
+            while os.waitid(
+                os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+            ) is None and not _oversized_stream(stdout, stderr):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
@@ -231,12 +237,16 @@ def _run_adapter_process(
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
             )
-        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr)
+        # Only a codec that reads startup diagnostics pays for the full capture.
+        complete = (
+            redact_file_tail(stderr, limit=_ADAPTER_OUTPUT_LIMIT_BYTES + 1) if full_stderr else ""
+        )
+        return _AdapterResult(
+            proc.returncode, captured_stdout, captured_stderr, stderr_complete=complete
+        )
 
 
-def _effective_adapter_timeout_seconds(
-    reviewer_config: ReviewerConfig, stage: str
-) -> int:
+def _effective_adapter_timeout_seconds(reviewer_config: ReviewerConfig, stage: str) -> int:
     """Return the stage budget after the runner's five-second reserve."""
     configured_timeout = reviewer_config.timeout_for(stage)
     return max(1, configured_timeout - 5)

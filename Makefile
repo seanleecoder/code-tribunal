@@ -35,6 +35,7 @@ packaged-smoke:
 lint:
 	"$(PYTHON)" scripts/check_dev_tools.py ruff
 	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ruff check $(RUFF_PATHS)
+	PYTHONPATH=$(PYTHONPATH) "$(PYTHON)" -m ruff format --check $(RUFF_PATHS)
 
 typecheck:
 	"$(PYTHON)" scripts/check_dev_tools.py mypy

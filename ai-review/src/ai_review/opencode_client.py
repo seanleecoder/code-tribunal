@@ -566,9 +566,7 @@ def run() -> int:
         _assert_no_ripgrep_fetch(logs)
     except Exception as exc:
         _assert_no_ripgrep_fetch(logs)
-        raise OpenCodeClientError(
-            _clean(str(exc), password) + _server_log_detail(logs)
-        ) from exc
+        raise OpenCodeClientError(_clean(str(exc), password) + _server_log_detail(logs)) from exc
     sys.stderr.write(f"ai-review: {stage} adapter parsed final answer text\n")
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0

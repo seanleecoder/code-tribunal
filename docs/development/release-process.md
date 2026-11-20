@@ -44,6 +44,12 @@ row whose target has arrived, and remove completed spec files from the active
 
    `ai-review/src` is copied into the base image, and the reviewer is built `FROM`
    that base, so any change to `ai-review/src` needs both images rebuilt from `R`.
+   Image preflight must pass the unconditional Linux/amd64 Codex gate,
+   `scripts/smoke_codex_batch_output.sh <reviewer-image>`, as well as the OpenCode
+   probes. A local Termux CLI run does not replace image acceptance. The Codex
+   probe needs no credentials or external network; it proves no-shell repository
+   reads through code mode, containment and the pinned tool set, and rejects
+   operational failures hidden by valid final JSON.
 
 2. **Run the canary.** Run the read-only `make demo-preflight`, which catches demo
    drift before tokens are spent. Then dispatch the protected
@@ -154,6 +160,9 @@ applied, and the review checks the evidence it cites.
   [compatibility register](temporary-compatibility.md), record here why it
   remains or that it reached its removal condition and was deleted before
   freezing `R`.
+- [ ] **Image tool gates:** cite the green image preflight, including real Codex
+  code-mode sentinel retrieval, negative execution controls, and both OpenCode
+  probes. CLI upgrades must pass the same gates before the runtime is frozen.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`

@@ -7,8 +7,35 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex reviews could not read repository files in v3.1.0. The image pruned
+  Codex's native code-mode host, which models such as `openai/gpt-6.1-sol`
+  require, and on Linux runners Codex's shell sandbox cannot start under default
+  container security policies. Affected reviews saw only the inline diff and
+  could report success with zero findings. The host is restored, and Codex now
+  runs without a shell: review reads the snapshot through a trusted read-only
+  repository tool server (`read_file`, `list_dir`, `grep`), and other optional
+  Codex tools are disabled. No runner security options are needed. Codex
+  execution events reject missing-host, terminal, unavailable-tool-server,
+  unrecognized top-level error and wholly failed operational tool runs as `model_error`, excluding the seat from
+  review success and resolution eligibility and exposing it in run health; a
+  shell command event is rejected as a schema error. A model outside the pinned
+  Codex CLI's catalog also fails as `model_error`, with that cause named:
+  Codex would run it on fallback metadata with an unverified tool surface.
+  Tool arguments and results are dropped from the captured stream, so ordinary
+  heavy tool use cannot reach the output limit, while an oversized record still
+  counts toward it. Directory listings stop between whole entries.
+  Empty reviews, tool-free critiques, no-match searches, tool-reported errors,
+  recovery and a recovered stream reconnect remain valid. An unconditional network-disabled real-CLI image gate
+  guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
+  exact-pair canary; existing v3.1.0 tags and digests remain immutable.
+
 ### Changed
 
+- `make quality` now also runs `ruff format --check`. The Python sources were
+  reformatted once with the pinned Ruff, with no behavior change, so formatting
+  stays consistent from here on.
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
   using locally available Git objects, and rechecks its identity and the API
   revision before publishing inputs. Stale detached runs and unavailable source

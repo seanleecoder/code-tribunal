@@ -11,7 +11,7 @@ from typing import Literal
 
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
-OutputCodec = Literal["batch_json", "claude_stream_json"]
+OutputCodec = Literal["batch_json", "claude_stream_json", "codex_stream_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -79,6 +79,23 @@ def _definition(
     )
 
 
+# The MCP server name the Codex codec admits tool calls from.
+CODEX_REPO_SERVER = "repo"
+_CODEX_REPO_CONFIG = f"--config=mcp_servers.{CODEX_REPO_SERVER}"
+
+# Stable (or deprecated, still default-on) Codex 0.169.0 feature flags. The
+# image gate pins the tool set that remains.
+_CODEX_DISABLED_FEATURES = (
+    "shell_tool",
+    "view_image",
+    "sleep_tool",
+    "goals",
+    "image_generation",
+    "multi_agent",
+    "apps",
+    "plugins",
+)
+
 REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
     {
         "claude": _definition(
@@ -86,8 +103,16 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "anthropic_openrouter",
             output_codec="claude_stream_json",
             cli_arguments=(
-                "-p", "--safe-mode", "--model", "{model}", "--no-session-persistence",
-                "--output-format", "stream-json", "--verbose", "--json-schema", "{schema_json}",
+                "-p",
+                "--safe-mode",
+                "--model",
+                "{model}",
+                "--no-session-persistence",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--json-schema",
+                "{schema_json}",
             ),
             review_arguments=("--add-dir", "{root}", "--tools", "Read,Grep,Glob"),
             critique_arguments=("--tools", ""),
@@ -102,15 +127,45 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
         "codex": _definition(
             "codex",
             "openrouter",
-            output_codec="batch_json",
+            output_codec="codex_stream_json",
             cli_arguments=(
-                "exec", "--cd", "{root}", "--ephemeral", "--skip-git-repo-check",
-                "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
-                "--model", "{model}", "--config", 'model_provider="openrouter"',
-                "--config", 'model_providers.openrouter.name="OpenRouter"',
-                "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
-                "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
-                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}", "-",
+                "exec",
+                "--json",
+                "--cd",
+                "{root}",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--sandbox",
+                "read-only",
+                "--model",
+                "{model}",
+                "--config",
+                'model_provider="openrouter"',
+                "--config",
+                'model_providers.openrouter.name="OpenRouter"',
+                "--config",
+                'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
+                "--config",
+                'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
+                "--output-schema",
+                "{schema_path}",
+                # No shell: Linux runners' default container policies block the
+                # nested bwrap sandbox it needs. Drop tools a reviewer never uses.
+                *(f"--config=features.{feature}=false" for feature in _CODEX_DISABLED_FEATURES),
+                # Model metadata selects multi-agent V2; its documented config
+                # hides the native sub-agent tools. Braces are format_map escapes.
+                "--config=features.multi_agent_v2={{enabled=false, disable_native_tools=true}}",
+                "-",
+            ),
+            # Review reads the snapshot only through the trusted read-only MCP
+            # server; critique has no repository tools. Paths are TOML strings.
+            review_arguments=(
+                _CODEX_REPO_CONFIG + ".command={python_toml}",
+                _CODEX_REPO_CONFIG + '.args=["-I", {repo_tools_toml}, "--root", {root_toml}]',
+                _CODEX_REPO_CONFIG + ".required=true",
+                _CODEX_REPO_CONFIG + '.default_tools_approval_mode="approve"',
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),
@@ -152,14 +207,24 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
             cli_arguments=(
-                "-p", "--output-format", "text", "--trust", "--sandbox", "disabled",
-                "--mode", "ask", "--model", "{model}",
+                "-p",
+                "--output-format",
+                "text",
+                "--trust",
+                "--sandbox",
+                "disabled",
+                "--mode",
+                "ask",
+                "--model",
+                "{model}",
             ),
-            home_files=((
-                ".cursor/cli-config.json",
-                '{"permissions":{"allow":["Read(**)"],'
-                '"deny":["Write(**)","Write(/**)","Shell(*)"]}}',
-            ),),
+            home_files=(
+                (
+                    ".cursor/cli-config.json",
+                    '{"permissions":{"allow":["Read(**)"],'
+                    '"deny":["Write(**)","Write(/**)","Shell(*)"]}}',
+                ),
+            ),
         ),
     }
 )
@@ -184,9 +249,7 @@ def resolve_adapter_path(
 ) -> Path:
     """Resolve a registry shell adapter beneath the installed trusted runtime root."""
     if definition.adapter_path is None:
-        raise ReviewerRegistryError(
-            f"reviewer {definition.reviewer_id} has no shell adapter"
-        )
+        raise ReviewerRegistryError(f"reviewer {definition.reviewer_id} has no shell adapter")
     relative_path = Path(definition.adapter_path)
     if relative_path.is_absolute():
         raise ReviewerRegistryError(
@@ -221,9 +284,12 @@ def mock_adapter_command(reviewer_id: str, stage: str) -> list[str]:
     emits that seat's transport, so the runner parses it like the real seat.
     """
     return [
-        sys.executable, "-P", "-c",
+        sys.executable,
+        "-P",
+        "-c",
         "from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))",
-        reviewer_id, stage,
+        reviewer_id,
+        stage,
     ]
 
 

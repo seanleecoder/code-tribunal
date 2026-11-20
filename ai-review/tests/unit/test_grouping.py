@@ -69,9 +69,7 @@ class GroupingTests(unittest.TestCase):
             for index in range(1, 4)
         ]
         links = {("1" * 64, "2" * 64), ("2" * 64, "3" * 64)}
-        self.assertEqual(
-            group_findings([third, second, first], links), [[first, second], [third]]
-        )
+        self.assertEqual(group_findings([third, second, first], links), [[first, second], [third]])
 
     def test_duplicate_links_preserve_normalized_path_and_category_boundaries(self) -> None:
         first = _finding("1" * 64, "src/foo.py", "a" * 64)
@@ -182,8 +180,7 @@ class GroupingTests(unittest.TestCase):
         ]
         original = copy.deepcopy(findings)
         first = [
-            [item["source_finding_id"] for item in group]
-            for group in group_findings(findings)
+            [item["source_finding_id"] for item in group] for group in group_findings(findings)
         ]
         second = [
             [item["source_finding_id"] for item in group]

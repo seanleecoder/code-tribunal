@@ -132,7 +132,10 @@ def default_transitive_split_consensus() -> dict:
         _config(),
         critique_batches=[
             empty_critique_batch(
-                critic, "success", run_id="run", started_at="2026-06-29T00:00:00Z",
+                critic,
+                "success",
+                run_id="run",
+                started_at="2026-06-29T00:00:00Z",
                 effective_config_sha256="0" * 64,
             )
             for critic in ("claude", "codex", "opencode")

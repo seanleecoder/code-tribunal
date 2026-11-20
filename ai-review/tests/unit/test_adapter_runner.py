@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -21,7 +22,7 @@ from ai_review.adapter_process import (
 from ai_review.adapter_runner import _EXIT_ERROR, run_adapter
 from ai_review.canonical import stable_json_hash
 from ai_review.config import DEFAULT_CRITIQUE_TIMEOUT_SECONDS, ReviewerConfig
-from ai_review.reviewers import ReviewerRegistryError
+from ai_review.reviewers import ReviewerRegistryError, get_reviewer_definition
 from ai_review.schema import (
     AdapterModelError,
     SchemaValidationError,
@@ -481,9 +482,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                         self.assertEqual(loaded[field], [item])
 
     def test_envelopes_are_unchanged(self) -> None:
-        payloads = (
-            ({"type": "result", "structured_output": {"findings": []}}, "review"),
-        )
+        payloads = (({"type": "result", "structured_output": {"findings": []}}, "review"),)
         for payload, stage in payloads:
             with self.subTest(stage=stage):
                 self.assertIs(_coerce_adapter_root(payload, stage=stage), payload)
@@ -589,8 +588,16 @@ class EffortEnvTests(unittest.TestCase):
             else:
                 os.environ["AI_REVIEW_CODEX_EFFORT"] = env_effort
             try:
-                with mock.patch(
-                    "ai_review.adapter_runner.adapter_command", return_value=[str(adapter)]
+                with (
+                    mock.patch(
+                        "ai_review.adapter_runner.adapter_command", return_value=[str(adapter)]
+                    ),
+                    mock.patch(
+                        "ai_review.adapter_runner.get_reviewer_definition",
+                        return_value=replace(
+                            get_reviewer_definition("codex"), output_codec="batch_json"
+                        ),
+                    ),
                 ):
                     self.assertEqual(run_prepared_adapter("codex", "review"), 0)
                 seen = (output_dir / "effort_seen.txt").read_text(encoding="utf-8")
@@ -733,6 +740,17 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             ],
         )
         self._adapter_command_patch.start()
+        # These tests exercise generic batch finalization and runner outcomes.
+        # Codex transport admission has its own captured-stream end-to-end suite.
+        registry_lookup = get_reviewer_definition
+        self._codec_patch = mock.patch(
+            "ai_review.adapter_runner.get_reviewer_definition",
+            side_effect=lambda reviewer: replace(
+                registry_lookup(reviewer), output_codec="batch_json"
+            ),
+        )
+        self._codec_patch.start()
+        self.addCleanup(self._codec_patch.stop)
 
     def test_status_model_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -929,7 +947,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "opencode")
             _write_adapter(
-                paths["adapter_dir"], "opencode",
+                paths["adapter_dir"],
+                "opencode",
                 '#!/bin/sh\necho "opencode provider/API error: rate_limit_exceeded" >&2\nexit 1\n',
             )
             self._set_env(paths, config_path)
@@ -1255,9 +1274,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Preserve this finding")
             _write_adapter(
                 paths["adapter_dir"],
@@ -1282,9 +1299,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_pool_audit_copy_cannot_change_trusted_short_id_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Original pool")
             _write_adapter(
                 paths["adapter_dir"],
@@ -1306,9 +1321,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         # Unknown short IDs invalidate the batch before it reaches consensus.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Pooled")
             critiques = [
                 {
@@ -1333,9 +1346,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_malformed_critique_with_unknown_id_emits_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Pooled")
             payload = json.dumps(
                 {

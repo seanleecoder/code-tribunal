@@ -90,12 +90,35 @@ These rules are worth stating because breaking them is silent:
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
-  another reviewer's transport from stdout.
+  another reviewer's transport from stdout. Codex uses its `exec --json` events;
+  terminal failures, unavailable code-mode host, a model the pinned CLI has no
+  catalog metadata for (its fallback runs a different, unverified tool surface)
+  and wholly failed operational tool attempts invalidate even a well-formed final
+  answer, and a shell command item
+  is a schema error because Codex runs without a shell. A repository MCP call that
+  reports a tool error (missing file, refused path) is a usable result, like a
+  grep with no match; a call whose `error` is set is operational. No-tool reviews
+  and critiques and recovery after a failed tool remain usable. Full bounded
+  stderr is retained privately for execution admission before the shorter
+  redacted diagnostic tail is printed; it is never a public artifact.
+- Codex runs without a shell. Review reads the snapshot through the trusted
+  [`codex_repo_tools`](../../ai-review/src/ai_review/codex_repo_tools.py) MCP
+  server that the registry configures; it is standard-library only and imports
+  nothing from the runner. See the
+  [ADR-0003 amendment](../decisions/0003-product-invariants-and-complexity-envelope.md#amendment-2026-11-17-no-shell-codex)
+  and the [image gate](testing.md#codex-image-gate).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and
   critique an empty working root. The shell adapters only check prerequisites
-  and invoke the CLI. Claude's image-build acceptance probe uses the runtime
+  and invoke the CLI; Codex's runs through the standard-library
+  [`codex_stream_filter`](../../ai-review/src/ai_review/codex_stream_filter.py),
+  which drops repository-tool arguments and results its codec never reads from
+  the captured stream. It parses with the codec's own strict loader, forwards a
+  record above its size bound unchanged so the runner's output limit still
+  applies, and stops once Codex exits, forwarding only the bytes already queued
+  in the pipe (at most 1 MiB if the pipe cannot report that) rather than reading
+  for as long as a descendant holds it or keeps writing to it. Claude's image-build acceptance probe uses the runtime
   argument builder, so it cannot drift to a different flag or schema combination.
 - `_coerce_adapter_root` in `adapter_output.py` is the **single** normalization
   point every reviewer seat funnels through. Do not add a second one.

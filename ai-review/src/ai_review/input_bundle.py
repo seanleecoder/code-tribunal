@@ -374,8 +374,7 @@ def _validate_platform_output_path(out_path: Path) -> None:
         # Resolve the link's parent, not the link: a checkout-owned link can
         # point outside, while trusted host aliases can lead into the checkout.
         if component.is_symlink() and (
-            component == absolute_out
-            or component.parent.resolve().is_relative_to(checkout_root)
+            component == absolute_out or component.parent.resolve().is_relative_to(checkout_root)
         ):
             raise BundleError(f"platform bundle output path rejects symlink: {component}")
 
@@ -429,9 +428,7 @@ def _prepare_bound_bundle(
             source_root = bound.snapshot_source.resolve()
             # The isolated GitLab checkout has no bundle output inside it.
             # An unrelated tracked directory named `inputs` is source content.
-            ignored_output = (
-                {out_path.name} if out_path.parent.resolve() == source_root else set()
-            )
+            ignored_output = {out_path.name} if out_path.parent.resolve() == source_root else set()
             copy_repo_snapshot(
                 bound.snapshot_source,
                 snapshot_dir,
@@ -570,9 +567,16 @@ def _git_command(repo_path: Path, *args: str) -> str:
     # invocation; do not mutate global config or weaken Git with safe.directory=*.
     completed = subprocess.run(
         [
-            "git", "-c", f"safe.directory={resolved_repo_path}",
-            "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
-            "-c", "submodule.recurse=false", *args,
+            "git",
+            "-c",
+            f"safe.directory={resolved_repo_path}",
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "submodule.recurse=false",
+            *args,
         ],
         cwd=resolved_repo_path,
         # Git needs no platform/provider credentials or caller Git settings.
@@ -601,9 +605,7 @@ def _git_command(repo_path: Path, *args: str) -> str:
 def _checkout_head(repo_path: Path, out_path: Path, *, expected_head_sha: str) -> str:
     """Resolve and validate the exact, clean commit used for the repository snapshot."""
     if not _GIT_OBJECT_SHA_RE.fullmatch(expected_head_sha):
-        raise BundleError(
-            "prepare requires the selected head to be a full object SHA"
-        )
+        raise BundleError("prepare requires the selected head to be a full object SHA")
     checkout_head = _git_command(repo_path, "rev-parse", "--verify", "HEAD^{commit}")
     if not _GIT_OBJECT_SHA_RE.fullmatch(checkout_head):
         raise BundleError(
@@ -734,9 +736,7 @@ def prepare_github_bundle(
     # PR head for manual runs. Both must match the current API revision.
     selected_head_sha = os.environ.get("AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA", "")
     checkout_root = Path.cwd()
-    checkout_head_sha = _checkout_head(
-        checkout_root, out_path, expected_head_sha=selected_head_sha
-    )
+    checkout_head_sha = _checkout_head(checkout_root, out_path, expected_head_sha=selected_head_sha)
     if version.head_sha != checkout_head_sha:
         raise BundleError("stale GitHub input before diff collection: pull-request head changed")
     try:
@@ -868,8 +868,7 @@ def prepare_gitlab_bundle(
             start_sha=version.start_sha,
             head_sha=version.head_sha,
             run_id=(
-                f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-"
-                f"{os.environ.get('CI_JOB_ID', '0')}"
+                f"gl-{os.environ.get('CI_PIPELINE_ID', '0')}-{os.environ.get('CI_JOB_ID', '0')}"
             ),
             state_pipeline_id=os.environ.get("CI_PIPELINE_ID", ""),
             diff_text=diff_text,

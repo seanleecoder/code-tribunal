@@ -29,9 +29,11 @@ class RequiredVersionTests(unittest.TestCase):
 
     def test_versions_come_from_existing_exact_pins(self) -> None:
         self.assertEqual(
-            self.required_versions('ruff==0.17.1; sys_platform != "android"\n'
-                                   "mypy==2.4.0\npytest==9.1.1\n"),
-            {"ruff": "0.17.1", "mypy": "2.4.0"})
+            self.required_versions(
+                'ruff==0.17.1; sys_platform != "android"\nmypy==2.4.0\npytest==9.1.1\n'
+            ),
+            {"ruff": "0.17.1", "mypy": "2.4.0"},
+        )
 
     def test_duplicate_pin_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "duplicate"):
@@ -47,40 +49,55 @@ class ExecutedToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tools = load_repository_script("check_dev_tools", SCRIPT)
         self.metadata = self.tools._PROVENANCE_PREFIX + json.dumps(
-            {"module": "/fixture/mypy/__init__.py", "executable": ""})
+            {"module": "/fixture/mypy/__init__.py", "executable": ""}
+        )
 
     def test_executed_version_controls_gate(self) -> None:
-        for actual, exit_code, accepted in [("2.4.0", 0, True), ("2.3.0", 0, False),
-                                            ("2.4.0", 1, False)]:
+        for actual, exit_code, accepted in [
+            ("2.4.0", 0, True),
+            ("2.3.0", 0, False),
+            ("2.4.0", 1, False),
+        ]:
             with self.subTest(actual=actual, exit_code=exit_code):
-                result = subprocess.CompletedProcess([], exit_code, f"mypy {actual}\n",
-                                                     self.metadata + "\n")
-                with patch.object(self.tools.subprocess, "run", return_value=result) as execute, \
-                        contextlib.redirect_stdout(io.StringIO()), \
-                        contextlib.redirect_stderr(io.StringIO()):
+                result = subprocess.CompletedProcess(
+                    [], exit_code, f"mypy {actual}\n", self.metadata + "\n"
+                )
+                with (
+                    patch.object(self.tools.subprocess, "run", return_value=result) as execute,
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
                     self.assertEqual(self.tools.check_tool("mypy", "2.4.0"), accepted)
                 self.assertEqual(execute.call_args.args[0][:2], [sys.executable, "-B"])
 
     def test_failed_tool_preserves_startup_and_tool_diagnostics(self) -> None:
         result = subprocess.CompletedProcess(
-            [], 1, "mypy 2.4.0\n", f"startup warning\n{self.metadata}\ntool failed\n")
+            [], 1, "mypy 2.4.0\n", f"startup warning\n{self.metadata}\ntool failed\n"
+        )
         errors = io.StringIO()
-        with patch.object(self.tools.subprocess, "run", return_value=result), \
-                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+        with (
+            patch.object(self.tools.subprocess, "run", return_value=result),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(errors),
+        ):
             self.assertFalse(self.tools.check_tool("mypy", "2.4.0"))
         self.assertIn("startup warning", errors.getvalue())
         self.assertIn("tool failed", errors.getvalue())
 
     def test_missing_provenance_is_not_accepted(self) -> None:
         result = subprocess.CompletedProcess([], 0, "mypy 2.4.0\n", "")
-        with patch.object(self.tools.subprocess, "run", return_value=result), \
-                contextlib.redirect_stderr(io.StringIO()):
+        with (
+            patch.object(self.tools.subprocess, "run", return_value=result),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             self.assertFalse(self.tools.check_tool("mypy", "2.4.0"))
 
     def test_hung_tool_is_not_accepted(self) -> None:
         timeout = subprocess.TimeoutExpired(["ruff"], 20)
-        with patch.object(self.tools.subprocess, "run", side_effect=timeout), \
-                contextlib.redirect_stderr(io.StringIO()):
+        with (
+            patch.object(self.tools.subprocess, "run", side_effect=timeout),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             self.assertFalse(self.tools.check_tool("ruff", "0.17.1"))
 
 
@@ -117,13 +134,15 @@ class ExecutedProvenanceTests(unittest.TestCase):
         binary.chmod(0o755)
         (self.root / "ruff").mkdir()
         (self.root / "ruff/_find_ruff.py").write_text(
-            f"def find_ruff_bin():\n    return {str(binary)!r}\n")
+            f"def find_ruff_bin():\n    return {str(binary)!r}\n"
+        )
         output = self.check_from_cwd(
             "ruff",
             "import os, sys\n"
             "from ruff._find_ruff import find_ruff_bin\n"
             "binary = find_ruff_bin()\n"
-            "os.execv(binary, [binary, *sys.argv[1:]])\n")
+            "os.execv(binary, [binary, *sys.argv[1:]])\n",
+        )
         self.assertIn(f"executable={binary}", output)
 
 

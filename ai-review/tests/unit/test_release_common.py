@@ -25,8 +25,9 @@ class ReleaseCommonTests(unittest.TestCase):
         workflow = (REPO_ROOT / IMAGE_WORKFLOW).read_text(encoding="utf-8")
         self.assertIn(f'  IMAGE_VERSION: "{series}"\n', workflow)
         self.assertEqual(
-            image_ref({"name": "ghcr.io/o/r/ai-review-base", "digest": "sha256:" + "0" * 64},
-                      "a" * 40),
+            image_ref(
+                {"name": "ghcr.io/o/r/ai-review-base", "digest": "sha256:" + "0" * 64}, "a" * 40
+            ),
             f"ghcr.io/o/r/ai-review-base:{series}-{'a' * 40}@sha256:{'0' * 64}",
         )
 

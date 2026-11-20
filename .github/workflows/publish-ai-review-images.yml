@@ -189,6 +189,14 @@ jobs:
         shell: bash
         run: scripts/smoke_opencode_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
 
+      - name: Verify Codex code-mode tools and execution outcomes
+        # Unconditional on PRs, including CLI pin bumps. Real no-shell CLI with its
+        # read-only repository tool server, a scripted loopback Responses provider,
+        # no secrets, --network none and default container security options.
+        # Requires the real Sol model id so code_mode_only metadata is exercised.
+        shell: bash
+        run: scripts/smoke_codex_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
+
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
         shell: bash

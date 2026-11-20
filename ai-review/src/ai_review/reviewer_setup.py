@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import string
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -45,11 +47,18 @@ def state_environment(
     }
 
 
+def workspace_paths(
+    definition: ReviewerDefinition, stage: str, output_dir: Path
+) -> tuple[Path, Path]:
+    """Return the seat's state directory and working root, without creating them."""
+    tmp_dir = (output_dir / ".tmp").resolve()
+    return tmp_dir, tmp_dir / f"{definition.reviewer_id}-{stage}-root.{os.getpid()}"
+
+
 def prepare_workspace(
     definition: ReviewerDefinition, stage: str, input_dir: Path, output_dir: Path
 ) -> tuple[Path, Path]:
-    tmp_dir = (output_dir / ".tmp").resolve()
-    root = tmp_dir / f"{definition.reviewer_id}-{stage}-root.{os.getpid()}"
+    tmp_dir, root = workspace_paths(definition, stage, output_dir)
     for directory in (root, *(tmp_dir / name for _, name in definition.state_directories)):
         directory.mkdir(parents=True, exist_ok=True)
     home = tmp_dir / dict(definition.state_directories)["HOME"]
@@ -69,14 +78,52 @@ def prepare_workspace(
     return tmp_dir, root
 
 
+# TOML basic strings must escape these; every other Unicode scalar value may
+# appear as itself. JSON escapes would encode a non-BMP character as a
+# surrogate pair, which TOML rejects.
+_TOML_ESCAPES = {
+    **{code: f"\\u{code:04x}" for code in (*range(0x00, 0x20), 0x7F)},
+    ord('"'): '\\"',
+    ord("\\"): "\\\\",
+}
+
+
+def toml_string(value: str) -> str:
+    """Encode ``value`` as a TOML basic string, or refuse it."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # A surrogate-escaped filesystem byte is not a Unicode scalar value.
+        raise ValueError(
+            f"path cannot be passed to the reviewer CLI as TOML: {ascii(value)}"
+        ) from exc
+    return '"' + value.translate(_TOML_ESCAPES) + '"'
+
+
 def prepare_shell_adapter(
     definition: ReviewerDefinition, stage: str, env: dict[str, str]
 ) -> tuple[list[str], Path]:
     """Complete ``env`` for a shell seat; return its CLI arguments and working root."""
-    tmp_dir, root = prepare_workspace(
-        definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
+    output_dir = Path(env["AI_REVIEW_OUTPUT_DIR"])
+    arguments = definition.cli_arguments + (
+        definition.review_arguments if stage == "review" else definition.critique_arguments
     )
-    env["AI_REVIEW_RAW_OUTPUT"] = str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json")
+    if effort := env.get("AI_REVIEW_EFFORT"):
+        arguments += definition.effort_arguments
+    tmp_dir, root = workspace_paths(definition, stage, output_dir)
+    # TOML basic strings for CLI --config values. Encode only the values this
+    # invocation's templates use, and before the snapshot is copied: a path
+    # toml_string refuses must neither block a seat that never passes it nor
+    # leave a copied snapshot behind.
+    templates = (*arguments, *(value for _, value in definition.environment))
+    used = {field for text in templates for _, field, _, _ in string.Formatter().parse(text)}
+    toml_paths = {
+        "root_toml": str(root),
+        "python_toml": sys.executable,
+        "repo_tools_toml": str(Path(__file__).with_name("codex_repo_tools.py")),
+    }
+    toml = {name: toml_string(value) for name, value in toml_paths.items() if name in used}
+    prepare_workspace(definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), output_dir)
     values = {
         **env,
         # The adapter itself reports a missing credential; templates must not.
@@ -85,14 +132,11 @@ def prepare_shell_adapter(
         "root": str(root),
         "schema_path": str(stage_schema_path(stage)),
         "schema_json": json.dumps(transport_schema(stage)),
+        **toml,
     }
-    env.update(state_environment(definition, tmp_dir, values))
-    arguments = definition.cli_arguments + (
-        definition.review_arguments if stage == "review" else definition.critique_arguments
-    )
-    if effort := env.get("AI_REVIEW_EFFORT"):
+    if effort:
         values["effort"] = effort
-        arguments += definition.effort_arguments
+    env.update(state_environment(definition, tmp_dir, values))
     return [argument.format_map(values) for argument in arguments], root
 
 
@@ -115,8 +159,11 @@ def main() -> int:
         )
         for stage in ("review", "critique"):
             env = _build_adapter_env(
-                reviewer="claude", stage=stage, model=model,
-                input_dir=work / "inputs", output_dir=work / stage,
+                reviewer="claude",
+                stage=stage,
+                model=model,
+                input_dir=work / "inputs",
+                output_dir=work / stage,
                 reviewer_config=reviewer_config,
                 prompt_tmp=prompt,
                 reviewer_definition=definition,
@@ -127,8 +174,14 @@ def main() -> int:
                 env.pop(name, None)
             arguments, root = prepare_shell_adapter(definition, stage, env)
             result = subprocess.run(
-                ["claude", *arguments], input="probe\n", capture_output=True,
-                text=True, cwd=root, env=env, check=False, timeout=30,
+                ["claude", *arguments],
+                input="probe\n",
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=env,
+                check=False,
+                timeout=30,
             )
             for line in result.stdout.splitlines():
                 try:

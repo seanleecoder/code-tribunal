@@ -98,9 +98,7 @@ def _default_finding(candidate: dict[str, Any]) -> dict[str, Any]:
             "The added code indexes the first record before checking whether "
             "the collection is empty."
         ),
-        "evidence": [
-            "records[0] is accessed before the existing empty-records guard can run."
-        ],
+        "evidence": ["records[0] is accessed before the existing empty-records guard can run."],
         "suggestion": None,
     }
 
@@ -188,6 +186,22 @@ def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
         codec = get_reviewer_definition(args.reviewer).output_codec
         if codec == "claude_stream_json":
             batch = {"type": "result", "is_error": False, "structured_output": batch}
+        elif codec == "codex_stream_json":
+            for event in (
+                {"type": "thread.started", "thread_id": "mock"},
+                {"type": "turn.started"},
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "answer",
+                        "type": "agent_message",
+                        "text": json.dumps(batch),
+                    },
+                },
+                {"type": "turn.completed", "usage": {}},
+            ):
+                print(json.dumps(event))
+            return 0
     json.dump(batch, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0

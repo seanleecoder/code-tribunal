@@ -1,4 +1,5 @@
 """Integrity and archive boundaries for the explicit Android tool installer."""
+
 from __future__ import annotations
 
 import hashlib
@@ -33,16 +34,16 @@ def archive(extra: str | None = None, *, binary: bytes = EXECUTABLE) -> bytes:
 
 class InstallArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.install_archive = load_repository_script(
-            "install_termux_ruff", SCRIPT).install_archive
+        self.install_archive = load_repository_script("install_termux_ruff", SCRIPT).install_archive
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.scripts, self.site = self.root / "bin", self.root / "site"
 
     def install(self, data: bytes, digest: str | None = None) -> Path:
-        return self.install_archive(data, digest or hashlib.sha256(data).hexdigest(),
-                                    "0.17.1", self.scripts, self.site)
+        return self.install_archive(
+            data, digest or hashlib.sha256(data).hexdigest(), "0.17.1", self.scripts, self.site
+        )
 
     def test_install_verified_archive(self) -> None:
         binary = self.install(archive())

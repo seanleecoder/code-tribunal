@@ -18,12 +18,13 @@ Deliberately free of filesystem I/O: status and debug artifact writing lives in
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import OutputCodec
+from .reviewers import CODEX_REPO_SERVER, OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -315,12 +316,140 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
-def _load_adapter_json(stdout: str, *, codec: OutputCodec, stage: str) -> dict[str, Any]:
+_CODEX_HOST_FAILURE = re.compile(
+    r"failed to spawn code-mode host|code.mode host is disabled|"
+    r"code.mode host.*(?:executable was not found|unavailable)",
+    re.IGNORECASE,
+)
+# The only top-level error Codex recovers from: a stream reconnect, reported as
+# "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other
+# top-level error is fatal, so an unrecognized problem cannot be admitted with a
+# tool-free answer. The image gate's dropped-stream case pins this wording.
+# The CLI also contains "Reconnecting... waiting for network"; no capture shows
+# it as a stream error on this route, so it stays fatal, as a deliberate choice.
+_CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
+# Do not include raw model/tool diagnostics: they can contain secrets.
+_CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
+# A model missing from the pinned CLI's catalog runs on fallback metadata,
+# which turns code mode off and offers a different, unverified tool surface
+# (direct MCP tools plus a provider-hosted web search). Codex reports it only as
+# a warning item, so it fails closed like every error item, but with the cause.
+# Matching the wording only names the cause: any other error item still fails.
+_CODEX_FALLBACK_METADATA = re.compile(r"Model metadata for `.*` not found\. ")
+_CODEX_UNCATALOGUED_MODEL = (
+    "Codex has no catalog metadata for the configured model; choose a model the "
+    "pinned Codex CLI lists"
+)
+
+
+def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
+    """Admit the pinned exec --json contract; execution health precedes content.
+
+    Codex runs without a shell, so a command item is outside the contract.
+    A ``failed`` repository MCP call without an ``error`` is a tool-reported
+    result (missing file, refused path, no match); a set ``error`` means the
+    call itself failed. A top-level ``error`` event is fatal unless it is a
+    stream reconnect notice before ``turn.completed``, which Codex reports that
+    way and recovers from. No-tool reviews and critiques remain valid. See captured
+    0.169.0 fixtures and the real-CLI image gate in
+    scripts/smoke_codex_batch_output.py.
+    """
+    if _CODEX_HOST_FAILURE.search(stderr):
+        raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
+    if returncode:
+        raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
+    thread_started = turn_started = turn_completed = reconnected = False
+    active: set[str] = set()
+    finished: set[str] = set()
+    attempts = operational_failures = 0
+    answer: str | None = None
+    # JSONL ends records only at "\n". str.splitlines() would also split at
+    # U+2028, U+2029 and U+0085, which Codex leaves unescaped inside strings.
+    for line in stdout.split("\n"):
+        if not line.strip():
+            continue
+        try:
+            event = json_loads_no_duplicates(line)
+        except ValueError as exc:
+            raise SchemaValidationError("Codex stream contained a non-JSON event") from exc
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise SchemaValidationError("Codex stream event must be an object with a type")
+        kind = event["type"]
+        if kind == "error":
+            message = event.get("message")
+            if turn_completed or not (isinstance(message, str) and _CODEX_RECONNECT.match(message)):
+                raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+            reconnected = True
+            continue
+        if kind == "turn.failed":
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+        if (
+            kind == "item.completed"
+            and isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "error"
+        ):
+            # Startup error items can precede turn.started, with no tool
+            # events at all. This also covers missing/disabled host warnings.
+            message = event["item"].get("message")
+            if isinstance(message, str) and _CODEX_FALLBACK_METADATA.match(message):
+                raise AdapterModelError(_CODEX_UNCATALOGUED_MODEL)
+            raise AdapterModelError("Codex emitted an execution error item")
+        if turn_completed:
+            raise SchemaValidationError("Codex stream continued after turn.completed")
+        if kind == "thread.started" and not thread_started:
+            thread_started = True
+        elif kind == "turn.started" and thread_started and not turn_started:
+            turn_started = True
+        elif kind == "turn.completed" and turn_started:
+            turn_completed = True
+        elif kind in {"item.started", "item.updated", "item.completed"} and turn_started:
+            item = event.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise SchemaValidationError("Codex item must have an id")
+            item_id, item_type = item["id"], item.get("type")
+            if item_id in finished:
+                raise SchemaValidationError("Codex stream repeated a completed item")
+            if kind != "item.completed":
+                active.add(item_id)
+                continue
+            active.discard(item_id)
+            finished.add(item_id)
+            if item_type == "agent_message":
+                if not isinstance(item.get("text"), str):
+                    raise SchemaValidationError("Codex agent_message must contain text")
+                answer = item["text"]
+            elif item_type == "mcp_tool_call":
+                if item.get("server") != CODEX_REPO_SERVER:
+                    raise SchemaValidationError("Codex called an unregistered MCP server")
+                if item.get("status") not in {"completed", "failed"}:
+                    raise SchemaValidationError("Codex MCP call has no terminal result")
+                attempts += 1
+                if item.get("error") is not None:
+                    operational_failures += 1
+            elif item_type not in {"reasoning", "todo_list"}:
+                raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")
+        else:
+            raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
+    if not turn_completed or active or answer is None:
+        if reconnected and not turn_completed:
+            # A reconnect that never led to completion is the provider failing.
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+        raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
+    if attempts and attempts == operational_failures:
+        raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    return _load_answer_json(answer, stage=stage)
+
+
+def _load_adapter_json(
+    stdout: str, *, codec: OutputCodec, stage: str, stderr: str = "", returncode: int = 0
+) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
         raw = _load_answer_json(stdout, stage=stage)
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
+    elif codec == "codex_stream_json":
+        raw = _load_codex_stream(stdout, stage=stage, stderr=stderr, returncode=returncode)
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)
@@ -363,5 +492,5 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
         return subtype
     try:
         return json.dumps(event, sort_keys=True)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(event)

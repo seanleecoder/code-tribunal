@@ -9,5 +9,10 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   exit 2
 fi
 
-codex "$@" < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
-cat "$AI_REVIEW_RAW_OUTPUT"
+# The registry selects --json. Preserve execution events as well as the answer;
+# a valid final batch cannot hide an unusable repository-tool runtime. The
+# runner's PYTHONPATH supplies the trusted filter, which drops repository-tool
+# arguments and results the codec never reads, so ordinary tool traffic cannot
+# reach the output limit, and which stops once Codex exits.
+exec "${PYTHON:-python3}" -P -m ai_review.codex_stream_filter codex "$@" \
+  < "$AI_REVIEW_RENDERED_PROMPT"

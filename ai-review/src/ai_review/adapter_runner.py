@@ -173,7 +173,14 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         try:
-            result = _run_adapter_process(command, env, timeout_seconds, cwd=workspace)
+            result = _run_adapter_process(
+                command,
+                env,
+                timeout_seconds,
+                cwd=workspace,
+                # The Codex codec checks startup diagnostics beyond the tail.
+                full_stderr=reviewer_definition.output_codec == "codex_stream_json",
+            )
         finally:
             # The runner created the workspace, so it removes it, even after a
             # timeout kill that no shell trap would survive.
@@ -193,7 +200,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         try:
             raw = _load_adapter_json(
-                result.stdout, codec=reviewer_definition.output_codec, stage=stage
+                result.stdout,
+                codec=reviewer_definition.output_codec,
+                stage=stage,
+                stderr=result.stderr_complete,
+                returncode=result.returncode,
             )
             if stage == "review":
                 finalized = finalize_finding_batch(

@@ -149,6 +149,35 @@ opened, a symlinked `CLAUDE.md` is left out instead of rejecting the snapshot.
 The hostile-symlink and no-follow behavior is exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).
 
+Codex runs with its shell tool disabled, because its shell sandbox cannot start
+under default Linux container policies. Its review reads the copied snapshot only
+through the trusted
+[`codex_repo_tools`](../ai-review/src/ai_review/codex_repo_tools.py) MCP server,
+which Codex starts outside any sandbox. That server therefore enforces the
+boundary itself: it resolves every requested path, symlinks included, inside the
+snapshot, rejects absolute paths, bounds file, listing and search output, runs
+grep through the image's pinned `rg` with fixed arguments and a timeout, and has
+no write operation. Repository file names are untrusted too: grep reads `rg`'s
+JSON events rather than its text output, and a name that could pass for another
+entry, a tool note or a `path:line` prefix is shown as a JSON string (non-UTF-8
+names are also marked as unopenable), so no file can be shown under another
+file's name. A read or matched line holding a control or line-separator
+character is shown as the body of a JSON string, and its line number is marked
+in the tool-written prefix; other lines are shown exactly. A grep match cut at
+its length limit is marked in that prefix too, never by a note beside the text.
+File content therefore cannot pose as another line or match, and no two
+different lines are shown alike. It runs in isolated Python
+mode and refuses to start if its environment carries anything beyond plain
+process variables, so a provider credential cannot reach model-driven tool
+calls; Codex then fails the review
+instead of continuing without tools. Codex's remaining `apply_patch` tool is
+rejected by its read-only policy and writes only to the disposable copy. The
+[image gate](development/testing.md#codex-image-gate) checks containment,
+credential refusal, the pinned tool set and unchanged bytes. That tool set is
+pinned for models in the CLI's catalog; with any other model Codex falls back to
+a different surface, including a provider-hosted web search, and the review
+fails closed.
+
 Residual risk: intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary
 Git checkouts cannot create them.

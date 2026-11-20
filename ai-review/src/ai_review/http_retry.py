@@ -89,11 +89,7 @@ def send_with_retries[T](
         status = get_status(response)
         if status < 400:
             return response
-        if (
-            not retryable
-            or not is_retryable_status(status)
-            or attempt_index >= attempts - 1
-        ):
+        if not retryable or not is_retryable_status(status) or attempt_index >= attempts - 1:
             raise make_http_error(status)
         sleep(backoff_seconds[min(attempt_index, len(backoff_seconds) - 1)])
 

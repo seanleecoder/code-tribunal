@@ -180,7 +180,16 @@ def test_shipped_gitlab_installation_example_respects_trust_boundaries() -> None
 def test_auditor_cli_accepts_a_trusted_include(tmp_path, capsys) -> None:
     path = tmp_path / ".gitlab-ci.yml"
     path.write_text(yaml.safe_dump(_direct_config()), encoding="utf-8")
-    assert _pipeline_trust.main([
-        str(path), "--template-project", TRUSTED_PROJECT, "--template-sha", TRUSTED_SHA,
-    ]) == 0
+    assert (
+        _pipeline_trust.main(
+            [
+                str(path),
+                "--template-project",
+                TRUSTED_PROJECT,
+                "--template-sha",
+                TRUSTED_SHA,
+            ]
+        )
+        == 0
+    )
     assert "OK: trusted Code Tribunal integration" in capsys.readouterr().out

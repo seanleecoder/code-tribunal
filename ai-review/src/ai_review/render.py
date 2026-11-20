@@ -249,9 +249,7 @@ def _prose_fragment(
     if isinstance(sources, str):
         return _text_fragment(f"{label}\n{indent}{sources}")
     prefix = f"{label}\n"
-    content = _join_prose_lines(
-        [_encode_span(line) if line else "" for line in sources], indent
-    )
+    content = _join_prose_lines([_encode_span(line) if line else "" for line in sources], indent)
     return RenderFragment(text=f"{prefix}{content}")
 
 
@@ -259,14 +257,10 @@ def _compose_fragments(fragments: Sequence[RenderFragment]) -> str:
     return _FRAGMENT_SEPARATOR.join(fragment.text for fragment in fragments)
 
 
-def _section_fragment(
-    label: str, entries: Sequence[RenderFragment]
-) -> RenderFragment:
+def _section_fragment(label: str, entries: Sequence[RenderFragment]) -> RenderFragment:
     """Keep a section label coupled to all of its renderer-owned entries."""
 
-    return _text_fragment(
-        _compose_fragments([_text_fragment(label), *entries])
-    )
+    return _text_fragment(_compose_fragments([_text_fragment(label), *entries]))
 
 
 def _fit_fragments(fragments: Sequence[RenderFragment], budget: int) -> list[str]:
@@ -293,15 +287,11 @@ def _limit_fragments(fragments: Sequence[RenderFragment], max_length: int) -> st
     if len(full) <= max_length:
         return full
 
-    surviving = _fit_fragments(
-        fragments, max_length - notice_length - len(_FRAGMENT_SEPARATOR)
-    )
+    surviving = _fit_fragments(fragments, max_length - notice_length - len(_FRAGMENT_SEPARATOR))
 
     if surviving:
         return (
-            _FRAGMENT_SEPARATOR.join(surviving)
-            + _FRAGMENT_SEPARATOR
-            + PLATFORM_TRUNCATION_NOTICE
+            _FRAGMENT_SEPARATOR.join(surviving) + _FRAGMENT_SEPARATOR + PLATFORM_TRUNCATION_NOTICE
         )
     return PLATFORM_TRUNCATION_NOTICE
 
@@ -361,9 +351,7 @@ def render_body(
     title = str(group["title"])
     summary = str(group.get("body", ""))
     variable_fragments: list[RenderFragment] = [
-        _text_fragment(
-            f"**AI review: {str(group['final_severity']).upper()} {group['category']}**"
-        )
+        _text_fragment(f"**AI review: {str(group['final_severity']).upper()} {group['category']}**")
     ]
 
     title_fragment = _span_fragment("Title: ", title, max_length=240, required=True)
@@ -418,9 +406,7 @@ def render_body(
                 continue
             critic_span = literal_span(str(dispute.get("critic", "")), required=True)
             adjusted = dispute.get("adjusted_severity")
-            adjusted_span = (
-                literal_span(adjusted) if isinstance(adjusted, str) else None
-            )
+            adjusted_span = literal_span(adjusted) if isinstance(adjusted, str) else None
             if critic_span is None:
                 continue
             label = f"- {critic_span} disputes:"
@@ -460,9 +446,7 @@ def render_body(
     reviewer_span = literal_span(", ".join(reviewers), required=True)
     agreeing_critics = sorted(str(critic) for critic in group["agreeing_critics"])
     critics_span = (
-        literal_span(", ".join(agreeing_critics), required=True)
-        if agreeing_critics
-        else "none"
+        literal_span(", ".join(agreeing_critics), required=True) if agreeing_critics else "none"
     )
     # The header may read BLOCKER. The footer is what disambiguates it: a thread
     # says two reviewer identities supported this independently and nothing more.

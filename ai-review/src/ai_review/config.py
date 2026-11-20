@@ -49,7 +49,6 @@ RUNTIME_ENV_VARIABLES = {
     "AI_REVIEW_MODEL",
     "AI_REVIEW_OUTPUT_DIR",
     "AI_REVIEW_PACKAGED_RUNTIME",
-    "AI_REVIEW_RAW_OUTPUT",
     "AI_REVIEW_RENDERED_PROMPT",
     "AI_REVIEW_REVIEWER",
     "AI_REVIEW_REVIEWER_IMAGE",
@@ -68,9 +67,7 @@ _KNOWN_ENV_VARIABLES = frozenset(CONFIG_ENV_OVERRIDES | RUNTIME_ENV_VARIABLES)
 
 def unknown_environment_overrides(names: Iterable[str]) -> list[str]:
     return sorted(
-        name
-        for name in names
-        if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
+        name for name in names if name.startswith("AI_REVIEW_") and name not in _KNOWN_ENV_VARIABLES
     )
 
 

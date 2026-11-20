@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check executed quality tools against requirements-dev.txt, not wheel metadata."""
+
 from __future__ import annotations
 
 import argparse
@@ -59,7 +60,10 @@ def check_tool(name: str, expected: str) -> bool:
     try:
         result = subprocess.run(
             [sys.executable, "-B", "-c", _TOOL_PROBE, name, _PROVENANCE_PREFIX],
-            text=True, capture_output=True, timeout=20, check=False,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"BLOCKED: {name} unavailable: {error}", file=sys.stderr)
@@ -76,11 +80,16 @@ def check_tool(name: str, expected: str) -> bool:
         return False
     words = result.stdout.split()
     actual = words[1] if len(words) >= 2 and words[0] == name else "unavailable"
-    print(f"{name}: expected={expected} executed={actual} python={sys.executable} "
-          f"module={origin}{binary}")
+    print(
+        f"{name}: expected={expected} executed={actual} python={sys.executable} "
+        f"module={origin}{binary}"
+    )
     if result.returncode or actual != expected:
-        print(f"BLOCKED: {name} must execute pinned version {expected}; "
-              "repair the selected development environment", file=sys.stderr)
+        print(
+            f"BLOCKED: {name} must execute pinned version {expected}; "
+            "repair the selected development environment",
+            file=sys.stderr,
+        )
         if result.returncode:
             print((startup_text + tool_text).strip(), file=sys.stderr)
         return False

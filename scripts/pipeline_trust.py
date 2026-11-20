@@ -147,10 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {issue}", file=sys.stderr)
     if issues:
         return 1
-    print(
-        "OK: trusted Code Tribunal integration uses "
-        f"{args.template_project}@{args.template_sha}"
-    )
+    print(f"OK: trusted Code Tribunal integration uses {args.template_project}@{args.template_sha}")
     return 0
 
 

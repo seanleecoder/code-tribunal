@@ -1,0 +1,5 @@
+{
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"captured-thread\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"{\\\"findings\\\": [{\\\"location\\\": {\\\"path\\\": \\\"example.py\\\", \\\"side\\\": \\\"new\\\", \\\"start_line\\\": 1, \\\"end_line\\\": 1, \\\"symbol\\\": null}, \\\"severity\\\": \\\"minor\\\", \\\"category\\\": \\\"correctness\\\", \\\"title\\\": \\\"Probe finding\\\", \\\"body\\\": \\\"Scripted probe.\\\", \\\"evidence\\\": [\\\"example = 1\\\"], \\\"suggestion\\\": null}]}\"}}\n{\"type\":\"error\",\"message\":\"stream disconnected before completion: scripted terminal failure\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"stream disconnected before completion: scripted terminal failure\"}}\n",
+  "stderr": "",
+  "returncode": 1
+}

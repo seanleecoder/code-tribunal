@@ -11,18 +11,15 @@ COPY ai-review/images/package.json ai-review/images/package-lock.json ./
 # materialise the postinstall hardlinks (claude.exe, opencode.exe) as second copies.
 # After postinstall both are self-contained native binaries, so the platform packages
 # they were linked from, and OpenCode's second x64 variant, are redundant. Codex's
-# code-mode host and voice runtime back features `codex exec` leaves off; the feature
-# check keeps the host removal fail-closed if a pin turns code mode on. The final
-# stage's native-bin check and --version probes prove the pruned CLIs still run.
+# voice runtime is unused. Keep its code-mode host: model metadata can require
+# code mode even when `features list` reports code_mode=false. The image's real
+# tool-call probe, rather than a feature flag or --version, verifies this path.
 RUN set -eu; \
     npm ci --omit=dev; \
     npm cache clean --force; \
     nm=node_modules; \
     cx="$nm/$CODEX_VENDOR"; \
     rm -r "$nm"/@anthropic-ai/claude-code-linux-* "$nm"/@opencode/cli-linux-*; \
-    CODEX_HOME="$(mktemp -d)" "$cx/bin/codex" features list \
-      | grep -Eq '^code_mode[[:space:]].*[[:space:]]false$'; \
-    rm "$cx/bin/codex-code-mode-host"; \
     rm -r "$cx/codex-resources/voice"
 
 # Deliberately parallel to the ripgrep-bin stage below (same pin contract: presence
@@ -126,6 +123,10 @@ RUN set -eu; \
     cx="$nm/$CODEX_VENDOR"; \
     entry="$cx/$(json_get "$cx/codex-package.json" entrypoint)"; \
     require_elf "$entry"; \
+    # Both binaries come from the same npm-integrity-verified platform package.
+    test -x "$cx/bin/codex-code-mode-host"; \
+    require_elf "$cx/bin/codex-code-mode-host"; \
+    wc -c "$cx/bin/codex-code-mode-host"; \
     printf '%s\n' '#!/bin/sh' \
       'unset CODEX_MANAGED_BY_BUN CODEX_MANAGED_BY_PNPM CODEX_MANAGED_BY_VITE_PLUS' \
       "CODEX_MANAGED_BY_NPM=1 CODEX_MANAGED_PACKAGE_ROOT=$nm/$CODEX_NPM_PACKAGE" \
