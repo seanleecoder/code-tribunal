@@ -6,6 +6,6 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.329",
     "@openai/codex": "0.171.0",
-    "@opencode/cli": "2.3.2"
+    "@opencode/cli": "2.4.0"
   }
 }
