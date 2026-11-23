@@ -86,8 +86,16 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "anthropic_openrouter",
             output_codec="claude_stream_json",
             cli_arguments=(
-                "-p", "--safe-mode", "--model", "{model}", "--no-session-persistence",
-                "--output-format", "stream-json", "--verbose", "--json-schema", "{schema_json}",
+                "-p",
+                "--safe-mode",
+                "--model",
+                "{model}",
+                "--no-session-persistence",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--json-schema",
+                "{schema_json}",
             ),
             review_arguments=("--add-dir", "{root}", "--tools", "Read,Grep,Glob"),
             critique_arguments=("--tools", ""),
@@ -104,13 +112,30 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             "openrouter",
             output_codec="batch_json",
             cli_arguments=(
-                "exec", "--cd", "{root}", "--ephemeral", "--skip-git-repo-check",
-                "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
-                "--model", "{model}", "--config", 'model_provider="openrouter"',
-                "--config", 'model_providers.openrouter.name="OpenRouter"',
-                "--config", 'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
-                "--config", 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
-                "--output-schema", "{schema_path}", "-o", "{AI_REVIEW_RAW_OUTPUT}", "-",
+                "exec",
+                "--cd",
+                "{root}",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--sandbox",
+                "read-only",
+                "--model",
+                "{model}",
+                "--config",
+                'model_provider="openrouter"',
+                "--config",
+                'model_providers.openrouter.name="OpenRouter"',
+                "--config",
+                'model_providers.openrouter.base_url="{OPENROUTER_BASE_URL}"',
+                "--config",
+                'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
+                "--output-schema",
+                "{schema_path}",
+                "-o",
+                "{AI_REVIEW_RAW_OUTPUT}",
+                "-",
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),
@@ -152,14 +177,24 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
             credential_variables=frozenset({"CURSOR_API_KEY"}),
             supports_effort=False,
             cli_arguments=(
-                "-p", "--output-format", "text", "--trust", "--sandbox", "disabled",
-                "--mode", "ask", "--model", "{model}",
+                "-p",
+                "--output-format",
+                "text",
+                "--trust",
+                "--sandbox",
+                "disabled",
+                "--mode",
+                "ask",
+                "--model",
+                "{model}",
             ),
-            home_files=((
-                ".cursor/cli-config.json",
-                '{"permissions":{"allow":["Read(**)"],'
-                '"deny":["Write(**)","Write(/**)","Shell(*)"]}}',
-            ),),
+            home_files=(
+                (
+                    ".cursor/cli-config.json",
+                    '{"permissions":{"allow":["Read(**)"],'
+                    '"deny":["Write(**)","Write(/**)","Shell(*)"]}}',
+                ),
+            ),
         ),
     }
 )
@@ -184,9 +219,7 @@ def resolve_adapter_path(
 ) -> Path:
     """Resolve a registry shell adapter beneath the installed trusted runtime root."""
     if definition.adapter_path is None:
-        raise ReviewerRegistryError(
-            f"reviewer {definition.reviewer_id} has no shell adapter"
-        )
+        raise ReviewerRegistryError(f"reviewer {definition.reviewer_id} has no shell adapter")
     relative_path = Path(definition.adapter_path)
     if relative_path.is_absolute():
         raise ReviewerRegistryError(
@@ -221,9 +254,12 @@ def mock_adapter_command(reviewer_id: str, stage: str) -> list[str]:
     emits that seat's transport, so the runner parses it like the real seat.
     """
     return [
-        sys.executable, "-P", "-c",
+        sys.executable,
+        "-P",
+        "-c",
         "from ai_review.mock_reviewer import cli; raise SystemExit(cli(adapter_output=True))",
-        reviewer_id, stage,
+        reviewer_id,
+        stage,
     ]
 
 

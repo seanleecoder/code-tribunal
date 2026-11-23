@@ -139,16 +139,21 @@ class MarkdownLinkCheckerTests(unittest.TestCase):
             (root / "guide.md").write_text("# Guide\n")
             document = root / "current.md"
             inventory = ("current.md",)
-            for target, succeeds in (("guide.md#guide", True), ("missing.md", False),
-                                     ("guide.md#missing", False)):
+            for target, succeeds in (
+                ("guide.md#guide", True),
+                ("missing.md", False),
+                ("guide.md#missing", False),
+            ):
                 with self.subTest(target=target):
                     document.write_text(
                         "# Freely renamed heading\n`AI_REVIEW_UNDOCUMENTED` `test_deleted`\n"
                         "| `retired.option` | Ordinary prose |\n"
                         f"[guide]({target})\n"
                     )
-                    with (mock.patch.object(self.checker, "ROOT", root),
-                          mock.patch.object(self.checker, "_inventory", return_value=inventory)):
+                    with (
+                        mock.patch.object(self.checker, "ROOT", root),
+                        mock.patch.object(self.checker, "_inventory", return_value=inventory),
+                    ):
                         if succeeds:
                             self.checker.check_links(lychee=executable)
                         else:

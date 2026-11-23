@@ -199,9 +199,7 @@ class FakeGitHubClient:
             return 40
         return None
 
-    def build_position(
-        self, anchor: dict[str, Any], version: PullRequestVersion
-    ) -> dict[str, Any]:
+    def build_position(self, anchor: dict[str, Any], version: PullRequestVersion) -> dict[str, Any]:
         # Use the production single-line construction for every supported side.
         return build_position(anchor, version)
 

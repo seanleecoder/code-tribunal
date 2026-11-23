@@ -223,9 +223,12 @@ def test_successful_continuation_can_follow_an_errored_assistant(stage: str) -> 
             ),
         ],
     ):
-        assert client._session_answer(
-            "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage=stage
-        ) == batch
+        assert (
+            client._session_answer(
+                "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage=stage
+            )
+            == batch
+        )
 
 
 @pytest.mark.parametrize(

@@ -68,8 +68,8 @@ def _looks_like_pem_payload(value: str) -> bool:
         return True
     payload = _PEM_NON_BASE64.sub("", value)
     for start in _PEM_PAYLOAD_START.finditer(payload):
-        prefix = payload[start.start():start.start() + 24].split("=", 1)[0]
-        decoded = base64.b64decode(prefix[:len(prefix) // 4 * 4])
+        prefix = payload[start.start() : start.start() + 24].split("=", 1)[0]
+        decoded = base64.b64decode(prefix[: len(prefix) // 4 * 4])
         if not decoded:
             continue
         if start["der"] is None:
@@ -86,7 +86,7 @@ def _looks_like_pem_payload(value: str) -> bool:
         offset = 2 + length_octets
         if len(decoded) <= offset or decoded[offset] == 0x30:
             return True
-        version = decoded[offset:offset + 3]
+        version = decoded[offset : offset + 3]
         if any(marker.startswith(version) for marker in (b"\x02\x01\x00", b"\x02\x01\x01")):
             return True
     return False
@@ -104,7 +104,7 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
     if opening == start:
         return "[REDACTED]"
     value = match[0].rstrip()
-    suffix = value[len(match["pem_header"]):]
+    suffix = value[len(match["pem_header"]) :]
     closing_ticks = len(suffix) - len(suffix.lstrip("`"))
     if (
         start - opening == closing_ticks
@@ -117,7 +117,7 @@ def _redact_pem_prose(match: re.Match[str]) -> str:
 
 
 def _mask_value(match: re.Match[str]) -> str:
-    return match.string[match.start():match.start("value")] + "[REDACTED]"
+    return match.string[match.start() : match.start("value")] + "[REDACTED]"
 
 
 def redact_text(text: str, *, preserve_pem_header_prose: bool = False) -> str:
@@ -143,9 +143,7 @@ def _byte_pattern(pattern: re.Pattern[str]) -> re.Pattern[bytes]:
         # Bytes ignore-case matching lacks the extra Unicode folds of ASCII
         # i/k/s. Keep those spellings covered before clipping.
         folds = {"i": "(?:i|\u0130|\u0131)", "k": "(?:k|\u212a)", "s": "(?:s|\u017f)"}
-        source = re.sub(
-            r"(?<!\\)[iks]", lambda match: folds[match[0]], source.replace("(?i)", "")
-        )
+        source = re.sub(r"(?<!\\)[iks]", lambda match: folds[match[0]], source.replace("(?i)", ""))
         # Unicode ignore-case also expands ASCII letter ranges. A conservative
         # byte superset keeps a Bearer value containing those characters from
         # ending before the clipped window.
@@ -189,13 +187,13 @@ def redact_file_tail(stream: BinaryIO, *, limit: int) -> str:
         for start, end in sorted(spans):
             if end <= position:
                 continue
-            parts.append(capture[position:max(position, start)])
+            parts.append(capture[position : max(position, start)])
             parts.append(b"[REDACTED]")
             position = end
         parts.append(capture[position:])
     redacted = redact_text(b"".join(parts).decode("utf-8", errors="replace"))
     if offset or len(redacted) > limit:
-        return _TRUNCATED_PREFIX + redacted[-(limit - len(_TRUNCATED_PREFIX)):]
+        return _TRUNCATED_PREFIX + redacted[-(limit - len(_TRUNCATED_PREFIX)) :]
     return redacted
 
 

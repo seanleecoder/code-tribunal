@@ -65,8 +65,12 @@ class ConsensusCliTests(unittest.TestCase):
                 write_canonical_json(findings / f"{reviewer}.json", batch)
             out = root / "consensus.json"
             argv = [
-                 "--inputs", str(inputs),
-                "--findings-dir", str(findings), "--out", str(out),
+                "--inputs",
+                str(inputs),
+                "--findings-dir",
+                str(findings),
+                "--out",
+                str(out),
             ]
             self.assertEqual(cli(argv), 0)
             before = out.read_bytes()

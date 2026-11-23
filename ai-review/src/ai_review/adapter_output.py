@@ -363,5 +363,5 @@ def _terminal_error_detail(event: dict[str, Any]) -> str:
         return subtype
     try:
         return json.dumps(event, sort_keys=True)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(event)

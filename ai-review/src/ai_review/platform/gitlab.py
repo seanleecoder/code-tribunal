@@ -199,8 +199,8 @@ class GitLabReviewPlatform:
                 break
             if not isinstance(batch, list):
                 raise GitLabReviewPlatformError(
-                f"GitLab paginated GET {path} returned a non-list page"
-            )
+                    f"GitLab paginated GET {path} returned a non-list page"
+                )
             for item in batch:
                 if not isinstance(item, dict):
                     raise GitLabReviewPlatformError(
@@ -258,9 +258,7 @@ class GitLabReviewPlatform:
             for change in change_list:
                 identity = _diff_identity(change)
                 if identity is not None:
-                    primary_identity_counts[identity] = (
-                        primary_identity_counts.get(identity, 0) + 1
-                    )
+                    primary_identity_counts[identity] = primary_identity_counts.get(identity, 0) + 1
             incomplete_identities: dict[int, tuple[str, str]] = {}
             for index in incomplete_indexes:
                 incomplete = change_list[index]
@@ -282,9 +280,7 @@ class GitLabReviewPlatform:
                 f"/projects/{self._project(project_id_or_path)}"
                 f"/merge_requests/{merge_request_iid}/changes"
             )
-            raw_response = self._request(
-                "GET", changes_path, params={"access_raw_diffs": "true"}
-            )
+            raw_response = self._request("GET", changes_path, params={"access_raw_diffs": "true"})
             first_incomplete = change_list[incomplete_indexes[0]]
             first_path = _diff_path(first_incomplete)
             if not isinstance(raw_response, dict):

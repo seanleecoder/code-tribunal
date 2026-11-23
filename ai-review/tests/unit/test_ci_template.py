@@ -366,7 +366,11 @@ class GitLabCiTemplateTests(unittest.TestCase):
                     self.assertTrue(safe_path)
             control = subprocess.run(
                 [sys.executable, "-m", "ai_review.adapter_runner"],
-                cwd=checkout, env=env, capture_output=True, text=True, check=True,
+                cwd=checkout,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
             )
             self.assertEqual(json.loads(control.stdout)[0], "checkout")
 
@@ -894,8 +898,11 @@ class GitHubActionsTemplateTests(unittest.TestCase):
         }
 
         workflow = yaml.safe_load(text)
-        step = next(step for step in workflow["jobs"]["prepare"]["steps"]
-                    if step.get("name") == "Prepare input bundle")
+        step = next(
+            step
+            for step in workflow["jobs"]["prepare"]["steps"]
+            if step.get("name") == "Prepare input bundle"
+        )
         for name, expression in expected_mappings.items():
             with self.subTest(name=name):
                 self.assertEqual(step["env"][name], expression)
@@ -939,7 +946,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
     def test_github_prepare_isolates_imports_and_passes_a_selected_head(self) -> None:
         workflow = yaml.safe_load(_GITHUB_WORKFLOW.read_text(encoding="utf-8"))
         prepare = next(
-            step for step in workflow["jobs"]["prepare"]["steps"]
+            step
+            for step in workflow["jobs"]["prepare"]["steps"]
             if step.get("name") == "Prepare input bundle"
         )
         with tempfile.TemporaryDirectory(prefix="github checkout ") as tmpdir:
@@ -969,8 +977,11 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             ):
                 subprocess.run(command, cwd=checkout, check=True, capture_output=True)
             head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=checkout, check=True,
-                capture_output=True, text=True,
+                ["git", "rev-parse", "HEAD"],
+                cwd=checkout,
+                check=True,
+                capture_output=True,
+                text=True,
             ).stdout.strip()
 
             # Stand in for the image's entry point, observing the shell/Python
@@ -979,7 +990,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
             package = trusted / "ai_review"
             package.mkdir(parents=True)
             (package / "__init__.py").touch()
-            (package / "input_bundle.py").write_text(textwrap.dedent("""\
+            (package / "input_bundle.py").write_text(
+                textwrap.dedent("""\
                 import json
                 import os
                 import sys
@@ -989,7 +1001,9 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                     "safe_path": sys.flags.safe_path,
                     "args": sys.argv[1:],
                 }))
-                """), encoding="utf-8")
+                """),
+                encoding="utf-8",
+            )
             bin_dir = root / "bin"
             bin_dir.mkdir()
             (bin_dir / "python").symlink_to(sys.executable)
@@ -1008,7 +1022,8 @@ class GitHubActionsTemplateTests(unittest.TestCase):
                         ["sh", "-e", "-c", prepare["run"]],
                         cwd=checkout,
                         env={**env, "AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA": event_head},
-                        capture_output=True, text=True,
+                        capture_output=True,
+                        text=True,
                     )
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     payload = json.loads(completed.stdout)

@@ -52,8 +52,7 @@ def image_ref(image: dict[str, Any], runtime_source: str) -> str:
 
 def diff_paths(root: Path, *revisions: str) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB",
-         *revisions],
+        ["git", "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACDMRTUXB", *revisions],
         cwd=root,
         check=False,
         text=True,
@@ -87,8 +86,9 @@ def validate_release_version(value: object) -> str:
             "is not supported"
         )
     prerelease = value.partition("-")[2]
-    if any(part.isdigit() and len(part) > 1 and part.startswith("0")
-           for part in prerelease.split(".")):
+    if any(
+        part.isdigit() and len(part) > 1 and part.startswith("0") for part in prerelease.split(".")
+    ):
         raise ReleaseValidationError(
             "numeric prerelease identifiers must not contain leading zeros"
         )

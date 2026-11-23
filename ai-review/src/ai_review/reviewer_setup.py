@@ -115,8 +115,11 @@ def main() -> int:
         )
         for stage in ("review", "critique"):
             env = _build_adapter_env(
-                reviewer="claude", stage=stage, model=model,
-                input_dir=work / "inputs", output_dir=work / stage,
+                reviewer="claude",
+                stage=stage,
+                model=model,
+                input_dir=work / "inputs",
+                output_dir=work / stage,
                 reviewer_config=reviewer_config,
                 prompt_tmp=prompt,
                 reviewer_definition=definition,
@@ -127,8 +130,14 @@ def main() -> int:
                 env.pop(name, None)
             arguments, root = prepare_shell_adapter(definition, stage, env)
             result = subprocess.run(
-                ["claude", *arguments], input="probe\n", capture_output=True,
-                text=True, cwd=root, env=env, check=False, timeout=30,
+                ["claude", *arguments],
+                input="probe\n",
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=env,
+                check=False,
+                timeout=30,
             )
             for line in result.stdout.splitlines():
                 try:

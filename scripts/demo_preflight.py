@@ -30,11 +30,13 @@ from candidate_canary_common import (
     GITLAB_SECRETS,
 )
 
-MOCK_VARIABLES = frozenset({
-    "AI_REVIEW_LOCAL_MOCK",
-    "AI_REVIEW_ALLOW_LOCAL_MOCK",
-    "AI_REVIEW_MOCK_SCENARIO",
-})
+MOCK_VARIABLES = frozenset(
+    {
+        "AI_REVIEW_LOCAL_MOCK",
+        "AI_REVIEW_ALLOW_LOCAL_MOCK",
+        "AI_REVIEW_MOCK_SCENARIO",
+    }
+)
 # The resolve token is a fine-grained GitHub token, which expires, and an expired
 # one prevents thread mutations, so its age is surfaced before a run.
 EXPIRING_SECRET = "AI_REVIEW_GITHUB_RESOLVE_TOKEN"
@@ -65,12 +67,10 @@ def _json(runner: Runner, *args: str) -> Any:
     return json.loads(runner(*args) or "null")
 
 
-def _github_inventory(
-    runner: Runner, path: str, key: str | None = None
-) -> list[dict[str, Any]]:
-    pages = _json(
-        runner, "gh", "api", path, "--hostname", "github.com", "--paginate", "--slurp"
-    ) or []
+def _github_inventory(runner: Runner, path: str, key: str | None = None) -> list[dict[str, Any]]:
+    pages = (
+        _json(runner, "gh", "api", path, "--hostname", "github.com", "--paginate", "--slurp") or []
+    )
     return [item for page in pages for item in (page[key] if key else page)]
 
 
@@ -117,8 +117,11 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
     for ruleset in rulesets:
         if ruleset.get("enforcement") == "active":
             checks.append(
-                Check("WARN", f"github: active ruleset {ruleset.get('name')!r}; confirm it "
-                      "requires no status check")
+                Check(
+                    "WARN",
+                    f"github: active ruleset {ruleset.get('name')!r}; confirm it "
+                    "requires no status check",
+                )
             )
 
     variables = {
@@ -129,14 +132,20 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
     # GitHub Actions compares strings case-insensitively in workflow conditions.
     if variables.get("AI_REVIEW_MANUAL", "").lower() == "true":
         checks.append(
-            Check("FAIL", "github: AI_REVIEW_MANUAL=true skips the automatic pull-request "
-                  "runs the Chain B procedure re-runs")
+            Check(
+                "FAIL",
+                "github: AI_REVIEW_MANUAL=true skips the automatic pull-request "
+                "runs the Chain B procedure re-runs",
+            )
         )
     roster = {name.strip() for name in variables.get("AI_REVIEW_REVIEWERS", "").split(",")}
     if "cursor" not in roster:
         checks.append(
-            Check("FAIL", "github: AI_REVIEW_REVIEWERS must name cursor, or the canary's "
-                  "Cursor seat never receives CURSOR_API_KEY")
+            Check(
+                "FAIL",
+                "github: AI_REVIEW_REVIEWERS must name cursor, or the canary's "
+                "Cursor seat never receives CURSOR_API_KEY",
+            )
         )
 
     secrets = {
@@ -148,28 +157,45 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
         for name in GITHUB_SECRETS
         if name not in secrets
     )
-    if EXPIRING_SECRET in secrets and (
-        age := _age_days(secrets[EXPIRING_SECRET], now)
-    ) > SECRET_AGE_WARNING_DAYS:
+    if (
+        EXPIRING_SECRET in secrets
+        and (age := _age_days(secrets[EXPIRING_SECRET], now)) > SECRET_AGE_WARNING_DAYS
+    ):
         checks.append(
-            Check("WARN", f"github: secret {EXPIRING_SECRET} last set {age} days ago; "
-                  "confirm the token has not expired")
+            Check(
+                "WARN",
+                f"github: secret {EXPIRING_SECRET} last set {age} days ago; "
+                "confirm the token has not expired",
+            )
         )
     return checks
 
 
 def gitlab_checks(runner: Runner) -> list[Check]:
-    variables = _json(
-        runner, "glab", "api", f"projects/{DEMO_PROJECT}/variables?per_page=100",
-        "--hostname", "gitlab.com", "--paginate", "--output", "json",
-    ) or []
+    variables = (
+        _json(
+            runner,
+            "glab",
+            "api",
+            f"projects/{DEMO_PROJECT}/variables?per_page=100",
+            "--hostname",
+            "gitlab.com",
+            "--paginate",
+            "--output",
+            "json",
+        )
+        or []
+    )
     # Review jobs declare no environment, so only wildcard entries are available.
     by_name = {item["key"]: item for item in variables if item.get("environment_scope") == "*"}
     checks = _variable_checks("gitlab", {item["key"] for item in variables})
     if by_name.get("AI_REVIEW_MANUAL", {}).get("value") == "true":
         checks.append(
-            Check("FAIL", "gitlab: AI_REVIEW_MANUAL=true makes prepare_ai_review manual; "
-                  "automatic campaigns require it to start without manual intervention")
+            Check(
+                "FAIL",
+                "gitlab: AI_REVIEW_MANUAL=true makes prepare_ai_review manual; "
+                "automatic campaigns require it to start without manual intervention",
+            )
         )
     for name in GITLAB_SECRETS:
         item = by_name.get(name)

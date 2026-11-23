@@ -69,9 +69,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
     def test_container_copies_only_the_internal_package_from_src(self) -> None:
         dockerfile = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "COPY ai-review/src/ai_review /opt/ai-review/src/ai_review", dockerfile
-        )
+        self.assertIn("COPY ai-review/src/ai_review /opt/ai-review/src/ai_review", dockerfile)
         self.assertNotIn("COPY ai-review/src /opt/ai-review/src", dockerfile)
 
     def test_container_copies_only_the_runtime_tree(self) -> None:
@@ -117,9 +115,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
         """
         dockerfile = _BASE_DOCKERFILE.read_text(encoding="utf-8")
 
-        self.assertIn(
-            "COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures", dockerfile
-        )
+        self.assertIn("COPY ai-review/tests/fixtures /opt/ai-review/tests/fixtures", dockerfile)
         self.assertIn(
             "COPY ai-review/src/ai_review_smoke /opt/ai-review/src/ai_review_smoke",
             dockerfile,
@@ -255,9 +251,7 @@ class RepositoryDistributionContractTests(unittest.TestCase):
 
         for schema in sorted(schemas_root.glob("*.json")):
             with self.subTest(schema=schema.name):
-                self.assertNotIn(
-                    "block_merge", schema.read_text(encoding="utf-8")
-                )
+                self.assertNotIn("block_merge", schema.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
