@@ -65,8 +65,10 @@ transport failures as failures:
 - Negative controls: malformed and truncated streams, a terminal provider
   failure, a missing code-mode host, an unavailable tool server, and a
   credential in the tool server's environment all yield unusable outcomes. A
-  model outside the pinned CLI's catalog fails with the error that names that
-  cause, so a reworded fallback-metadata warning fails this case.
+  model outside the pinned CLI's catalog, and a catalogued model that does not
+  run in code mode (chosen from the pinned catalog; the case fails if none
+  remains), are refused with the error that names the cause, and the provider
+  never receives their prompt.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that

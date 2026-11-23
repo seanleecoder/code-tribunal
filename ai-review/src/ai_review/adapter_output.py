@@ -316,10 +316,15 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
+# Codex's own host failure, as its tool router logs it: a whole stderr line
+# whose error field starts with the pinned CLI's message. The router logs other
+# failed tool calls the same way, and those can quote model-written text (an
+# invalid apply_patch hunk header, for one), so only the start of the field is
+# matched: such text sits later on the line and cannot pose as the failure.
 _CODEX_HOST_FAILURE = re.compile(
-    r"failed to spawn code-mode host|code.mode host is disabled|"
-    r"code.mode host.*(?:executable was not found|unavailable)",
-    re.IGNORECASE,
+    r"^\S+ +ERROR codex_core::tools::router: "
+    r"error=(?:failed to spawn code-mode host |code-mode host is disabled)",
+    re.MULTILINE,
 )
 # The only top-level error Codex recovers from: a stream reconnect, reported as
 # "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other

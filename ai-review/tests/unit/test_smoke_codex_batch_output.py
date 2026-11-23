@@ -221,9 +221,15 @@ def test_independent_byte_check_rejects_mutations(tmp_path: Path, damage: str) -
         smoke.assert_unchanged(protected)
 
 
+_CATALOG = {"models": [{"slug": "gpt-6.1-sol", "tool_mode": "code_mode_only"}, {"slug": "gpt-5.5"}]}
+
+
 def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, monkeypatch) -> None:
     import sys
 
+    from ai_review import codex_catalog
+
+    monkeypatch.setattr(codex_catalog, "list_catalog", lambda _cli: _CATALOG)
     visited = []
     monkeypatch.setattr(
         sys,
@@ -260,8 +266,18 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "failures/tool-server-unavailable",
         "failures/credential-in-tool-env",
         "failures/uncatalogued-model",
+        "failures/non-code-mode-model",
         "failures/missing-host",
     ]
+
+
+def test_suite_needs_a_catalogued_non_code_mode_model(tmp_path: Path, monkeypatch) -> None:
+    from ai_review import codex_catalog
+
+    only_code_mode = {"models": _CATALOG["models"][:1]}
+    monkeypatch.setattr(codex_catalog, "list_catalog", lambda _cli: only_code_mode)
+    with pytest.raises(AssertionError, match="no catalogued non-code-mode model"):
+        smoke.suite(ROOT / "ai-review", tmp_path)
 
 
 @pytest.mark.parametrize("damage", ["none", "write", "delete"])

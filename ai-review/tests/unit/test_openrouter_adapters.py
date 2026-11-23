@@ -238,8 +238,19 @@ for event in [
 ]:
     print(json.dumps(event))
 """
+        # The adapter lists the catalog first; the shipped and override models
+        # used below are code-mode entries in it.
+        catalog = json.dumps(
+            {
+                "models": [
+                    {"slug": slug, "tool_mode": "code_mode_only"}
+                    for slug in (_SHIPPED["codex"]["model"].split("/", 1)[1], "custom-model")
+                ]
+            }
+        )
         cli.write_text(
             "#!/bin/sh\n"
+            f'if [ "$*" = "debug models" ]; then printf %s {shlex.quote(catalog)}; exit 0; fi\n'
             'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
             'case "$args" in *critique_batch.schema.json*) payload=\'{"critiques":[]}\' ;; esac\n'
@@ -1071,14 +1082,15 @@ for event in [
 
     def test_openrouter_variant_model_is_accepted(self) -> None:
         # OpenRouter ':variant' suffixes (e.g. ':free') are valid and injection-safe.
+        # Codex refuses them separately: its catalog has no variant entries.
         batch, cli_args, _cli_env, _meta = self._run_with_fake_cli(
-            "codex",
-            "codex",
-            extra_env={"AI_REVIEW_CODEX_MODEL": "openai/gpt-5.6-luna:free"},
+            "claude",
+            "claude",
+            extra_env={"AI_REVIEW_CLAUDE_MODEL": "anthropic/claude-haiku-5.5:free"},
         )
 
         self.assertEqual(batch["adapter_status"], "success")
-        self.assertIn("--model openai/gpt-5.6-luna:free", cli_args)
+        self.assertIn("--model anthropic/claude-haiku-5.5:free", cli_args)
 
     def test_invalid_model_format_is_model_error_without_cli_invocation(self) -> None:
         """A shell/JSON-unsafe model override is refused before anything spawns.

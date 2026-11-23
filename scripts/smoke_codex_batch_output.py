@@ -539,8 +539,11 @@ def run_case(
         raise AssertionError(f"{label}: the no-shell reviewer executed a command")
     if expect_error is not None:
         # A rejection is checked for its stated cause; nothing past it ran usefully.
-        if outcome.get("error_message_redacted") != expect_error:
+        if outcome.get("error_message_redacted") != " ".join(expect_error.split()):
             raise AssertionError(f"{label}: wrong error: {outcome.get('error_message_redacted')}")
+        # Each such case is refused before the review prompt is sent.
+        if stub.requests:
+            raise AssertionError(f"{label}: the provider received a refused model's prompt")
         return capture
     if overrides:
         # Negative controls stop at tool-server startup, before a usable answer.
@@ -766,16 +769,31 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         overrides=["-c", 'mcp_servers.repo.env={OPENROUTER_API_KEY="smoke-credential"}'],
         expected_status="model_error",
     )
-    # The named cause depends on the pinned CLI's fallback-metadata wording.
-    from ai_review.adapter_output import _CODEX_UNCATALOGUED_MODEL  # noqa: PLC0415
+    # Models off the verified code-mode surface are refused from the pinned
+    # CLI's own catalog, before the prompt is sent. The codec's fallback-metadata
+    # check stays as a second signal; its captured fixture covers it.
+    from ai_review.codex_catalog import CODE_MODE, list_catalog, model_error  # noqa: PLC0415
 
+    catalog = list_catalog("codex")
     add(
         directory,
         "uncatalogued-model",
         UNCATALOGUED_MODEL,
         empty=True,
         expected_status="model_error",
-        expect_error=_CODEX_UNCATALOGUED_MODEL,
+        expect_error=model_error(catalog, UNCATALOGUED_MODEL),
+    )
+    # A catalogued model with another tool surface (direct tools, tool_search).
+    other = [e["slug"] for e in catalog["models"] if e.get("tool_mode") != CODE_MODE]
+    if not other:
+        raise AssertionError("no catalogued non-code-mode model remains; revisit this case")
+    add(
+        directory,
+        "non-code-mode-model",
+        f"openai/{other[0]}",
+        empty=True,
+        expected_status="model_error",
+        expect_error=model_error(catalog, f"openai/{other[0]}"),
     )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("failures/missing-host", partial(missing_host_case, install, directory)))

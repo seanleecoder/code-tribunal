@@ -69,6 +69,49 @@ def test_host_failure_is_not_inferred_from_quoted_model_content() -> None:
     assert load(data) == {"findings": []}
 
 
+_ROUTER = "2026-11-17T00:00:00.000000Z ERROR codex_core::tools::router: error="
+
+
+@pytest.mark.parametrize(
+    "message", ["failed to spawn code-mode host /x: not found", "code-mode host is disabled"]
+)
+def test_router_logged_host_failure_rejects_a_valid_answer(message: str) -> None:
+    data = capture("empty")
+    data["stderr"] = f"other output\n{_ROUTER}{message}\n"
+    with pytest.raises(AdapterModelError, match="host unavailable"):
+        load(data)
+
+
+def test_captured_router_host_failure_is_recognised_from_stderr_alone() -> None:
+    data = capture("missing-host")
+    events = [json.loads(line) for line in data["stdout"].split("\n") if line.strip()]
+    kept = [e for e in events if e.get("item", {}).get("type") != "error"]
+    assert len(kept) < len(events)
+    data["stdout"] = "\n".join(map(json.dumps, kept))
+    with pytest.raises(AdapterModelError, match="host unavailable"):
+        load(data)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "code mode host unavailable",
+        "failed to spawn code-mode host /x: host executable was not found",
+        "code-mode host is disabled",
+    ],
+)
+def test_host_failure_is_not_inferred_from_a_quoted_tool_error(text: str) -> None:
+    # The router logs other failed tool calls too, quoting model-written text.
+    # Captured with Codex 0.171.0: an apply_patch hunk header written by the model.
+    data = capture("empty")
+    data["stderr"] = (
+        f"{_ROUTER}apply_patch verification failed: invalid hunk at line 2, "
+        f"'*** {text}' is not a valid hunk header. Valid hunk headers: "
+        "'*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'\n"
+    )
+    assert load(data) == {"findings": []}
+
+
 @pytest.mark.parametrize(
     "damage",
     [
@@ -176,7 +219,7 @@ def test_nonzero_cli_exit_overrides_valid_answer() -> None:
 
 
 def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
-    diagnostic = "failed to spawn code-mode host\n" + "progress\n" * 2000
+    diagnostic = f"{_ROUTER}failed to spawn code-mode host /x: not found\n" + "progress\n" * 2000
     command = [sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r})"]
     # Other codecs keep only the diagnostic tail; no full capture is redacted.
     default = _run_adapter_process(command, os.environ.copy(), 5)

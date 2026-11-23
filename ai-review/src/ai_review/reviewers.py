@@ -157,6 +157,9 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 # Model metadata selects multi-agent V2; its documented config
                 # hides the native sub-agent tools. Braces are format_map escapes.
                 "--config=features.multi_agent_v2={{enabled=false, disable_native_tools=true}}",
+                # A provider-hosted search is no repository tool. Code-mode models
+                # do not offer it; this keeps it off whatever the model metadata.
+                '--config=web_search="disabled"',
                 "-",
             ),
             # Review reads the snapshot only through the trusted read-only MCP

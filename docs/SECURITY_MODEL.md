@@ -174,11 +174,20 @@ instead of continuing without tools. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
 [image gate](development/testing.md#codex-image-gate) checks containment,
 credential refusal, the pinned tool set and unchanged bytes. That tool set is
-pinned for models in the CLI's catalog; with any other model Codex falls back to
-a different surface, including a provider-hosted web search, and the review
-fails closed.
+the code-mode surface. Codex selects it from the pinned CLI's model catalog, so
+before the review prompt is sent the adapter's
+[`codex_catalog`](../ai-review/src/ai_review/codex_catalog.py) check admits only a
+model whose catalog entry is `code_mode_only` and refuses any other as
+`model_error`. That covers a catalogued model with direct tools, a model Codex
+would run on fallback metadata, and an OpenRouter variant suffix such as
+`:online`. The registry also disables Codex's provider-hosted web search
+outright, and a fallback-metadata warning still fails the review. Codex starts
+the server in its own process group, outside the runner's stage teardown, so the
+server ends itself, and kills a running search, once Codex has exited.
 
-Residual risk: intentionally tracked symlinks are unsupported. Hard links to
+Residual risk: code-mode models can differ in the experimental tools their
+catalog entries add; the image gate pins the tool set only for the configured
+default and `openai/gpt-6.1-sol`. Intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary
 Git checkouts cannot create them.
 

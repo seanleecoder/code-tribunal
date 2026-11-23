@@ -91,10 +91,11 @@ These rules are worth stating because breaking them is silent:
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
   another reviewer's transport from stdout. Codex uses its `exec --json` events;
-  terminal failures, unavailable code-mode host, a model the pinned CLI has no
-  catalog metadata for (its fallback runs a different, unverified tool surface)
-  and wholly failed operational tool attempts invalidate even a well-formed final
-  answer, and a shell command item
+  terminal failures, unavailable code-mode host (only Codex's own router log
+  line for it; other logged tool errors can quote model text), a model the pinned
+  CLI has no catalog metadata for (its fallback runs a different, unverified tool
+  surface) and wholly failed operational tool attempts invalidate even a
+  well-formed final answer, and a shell command item
   is a schema error because Codex runs without a shell. A repository MCP call that
   reports a tool error (missing file, refused path) is a usable result, like a
   grep with no match; a call whose `error` is set is operational. No-tool reviews
@@ -104,14 +105,18 @@ These rules are worth stating because breaking them is silent:
 - Codex runs without a shell. Review reads the snapshot through the trusted
   [`codex_repo_tools`](../../ai-review/src/ai_review/codex_repo_tools.py) MCP
   server that the registry configures; it is standard-library only and imports
-  nothing from the runner. See the
+  nothing from the runner. Codex starts it in its own process group, so it ends
+  itself, and kills a running search, once Codex has exited. See the
   [ADR-0003 amendment](../decisions/0003-product-invariants-and-complexity-envelope.md#amendment-2026-11-17-no-shell-codex)
   and the [image gate](testing.md#codex-image-gate).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and
   critique an empty working root. The shell adapters only check prerequisites
-  and invoke the CLI; Codex's runs through the standard-library
+  and invoke the CLI. Codex's adapter also refuses, through the standard-library
+  [`codex_catalog`](../../ai-review/src/ai_review/codex_catalog.py), a model whose
+  pinned catalog entry does not select code mode, before the prompt is sent; it
+  then runs the CLI through the standard-library
   [`codex_stream_filter`](../../ai-review/src/ai_review/codex_stream_filter.py),
   which drops repository-tool arguments and results its codec never reads from
   the captured stream. It parses with the codec's own strict loader, forwards a

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -765,6 +766,73 @@ def test_a_deadline_after_the_output_cap_keeps_the_capped_result(repo: Path, mon
     text, is_error = call(repo, "grep", pattern="hit")
     assert not is_error
     assert text.splitlines()[-1] == "[search output limit reached; narrow the path or pattern]"
+
+
+def _running(pid: int) -> bool:
+    """Whether ``pid`` is alive; a zombie awaiting its reaper has already ended."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+# Stands in for Codex: starts the real server with a slow search, then exits
+# abruptly, as Codex does when the runner kills the adapter's process group.
+_CODEX_STAND_IN = """
+import json, os, subprocess, sys, time
+script, root, slow, timeout = sys.argv[1:]
+server_code = (
+    "import importlib.util, sys;"
+    "spec = importlib.util.spec_from_file_location('tools', sys.argv[1]);"
+    "tools = importlib.util.module_from_spec(spec); spec.loader.exec_module(tools);"
+    "tools.RG = sys.argv[3]; tools.GREP_TIMEOUT_SECONDS = float(sys.argv[4]);"
+    "raise SystemExit(tools.main(['--root', sys.argv[2]]))"
+)
+env = {"PATH": os.environ["PATH"], "HOME": root, "LC_CTYPE": "C.UTF-8"}
+server = subprocess.Popen(
+    [sys.executable, "-I", "-c", server_code, script, root, slow, timeout],
+    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+)
+call = {"name": "grep", "arguments": {"pattern": "x"}}
+request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call}
+server.stdin.write((json.dumps(request) + "\\n").encode())
+server.stdin.flush()
+pidfile = os.path.join(os.path.dirname(slow), "rg.pid")
+deadline = time.monotonic() + 20
+while not os.path.exists(pidfile) and time.monotonic() < deadline:
+    time.sleep(0.05)
+print(server.pid, flush=True)
+os._exit(0)
+"""
+
+
+def test_server_ends_a_running_search_when_codex_exits(repo: Path, tmp_path: Path) -> None:
+    slow = tmp_path / "slow-rg"
+    pidfile = tmp_path / "rg.pid"
+    # Writes its PID only once started; the search timer below is far away.
+    slow.write_text(
+        f"#!/bin/sh\necho $$ > {pidfile}.tmp\nmv {pidfile}.tmp {pidfile}\nexec sleep 60\n"
+    )
+    slow.chmod(0o755)
+    launched = subprocess.run(
+        [sys.executable, "-I", "-c", _CODEX_STAND_IN, tools.__file__, str(repo), str(slow), "30"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    server, search = int(launched.stdout), int(pidfile.read_text())
+    deadline = time.monotonic() + 10
+    while (_running(server) or _running(search)) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    try:
+        # Well within the search's own 30-second timeout.
+        assert not _running(search) and not _running(server)
+    finally:
+        for pid in (search, server):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, 9)
 
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:

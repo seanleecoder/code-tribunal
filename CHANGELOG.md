@@ -20,9 +20,14 @@ versioning.
   execution events reject missing-host, terminal, unavailable-tool-server,
   unrecognized top-level error and wholly failed operational tool runs as `model_error`, excluding the seat from
   review success and resolution eligibility and exposing it in run health; a
-  shell command event is rejected as a schema error. A model outside the pinned
-  Codex CLI's catalog also fails as `model_error`, with that cause named:
-  Codex would run it on fallback metadata with an unverified tool surface.
+  shell command event is rejected as a schema error. Only a model the pinned
+  Codex CLI's catalog runs in code mode reaches the provider: any other,
+  catalogued or not, fails as `model_error` with that cause named, before the
+  review prompt is sent, and Codex's provider-hosted web search is disabled. A
+  code-mode host failure is recognized only from Codex's own log line, so a
+  failed tool call quoting similar model-written text no longer rejects a valid
+  review. When Codex exits during a stage timeout, the repository tool server
+  stops a running search instead of letting it run to its own time limit.
   Tool arguments and results are dropped from the captured stream, so ordinary
   heavy tool use cannot reach the output limit, while an oversized record still
   counts toward it. Directory listings stop between whole entries.

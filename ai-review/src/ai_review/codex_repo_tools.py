@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 from pathlib import Path
 from typing import IO, Any
@@ -53,6 +54,8 @@ MAX_GREP_RECORD_BYTES = MAX_FILE_BYTES
 # match-dense files cannot spend the whole timeout producing little output.
 MAX_GREP_INPUT_BYTES = 8 * MAX_FILE_BYTES
 GREP_TIMEOUT_SECONDS = 20
+# How often the server checks that Codex, which started it, is still running.
+PARENT_POLL_SECONDS = 0.5
 # Control characters (Unicode category Cc) other than tab, and the line and
 # paragraph separators (Zl, Zp): each could end a rendered line early and make
 # file content pose as another line or match.
@@ -166,6 +169,13 @@ TOOLS = [
 
 class ToolError(Exception):
     """A refused or failed call, returned to the model as an isError result."""
+
+
+# The running search, if any. It is started and registered, and later cleared
+# before rg is reaped, under this lock: the parent watcher can neither miss a
+# search that has started nor signal a reaped, reused process group.
+_search_lock = threading.Lock()
+_search: subprocess.Popen[bytes] | None = None
 
 
 def contained(root: Path, requested: Any) -> Path:
@@ -384,15 +394,17 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # rg reads stdin for a bare "-" operand, even after "--". _rg_name drops
         # the "./" again, so the file keeps the name every other result shows.
         argv.append("./-" if operand == "-" else operand)
-    process = subprocess.Popen(
-        argv,
-        cwd=root,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        env={"PATH": "/usr/bin:/bin"},
-        start_new_session=True,
-    )
+    global _search
+    with _search_lock:
+        process = _search = subprocess.Popen(
+            argv,
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin"},
+            start_new_session=True,
+        )
 
     timed_out = threading.Event()
 
@@ -432,6 +444,8 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # cannot signal the group after rg is reaped below and its PID reused.
         timer.join()
         kill()  # Stop a search still running after the output cap.
+        with _search_lock:
+            _search = None
         process.wait()
         process.stdout.close()
     if timed_out.is_set() and not complete:
@@ -680,6 +694,24 @@ def serve(root: Path, stdin: IO[str], stdout: IO[str]) -> None:
             stdout.flush()
 
 
+def watch_parent(parent: int) -> None:
+    """End the server, and its running search, once the Codex process that started it is gone.
+
+    Codex starts MCP servers in their own process group, so the runner's stage
+    teardown, which signals the adapter's group, does not reach this server.
+    serve() sees stdin close only between calls, so a running search would
+    outlive the stage until its own timeout. An orphaned server is reparented,
+    so a changed parent PID means Codex has exited.
+    """
+    while os.getppid() == parent:
+        time.sleep(PARENT_POLL_SECONDS)
+    with _search_lock:
+        if _search is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(_search.pid, signal.SIGKILL)
+        os._exit(0)
+
+
 def unexpected_environment(environ: dict[str, str]) -> list[str]:
     return sorted(
         name for name in environ if name not in ALLOWED_ENVIRONMENT and not name.startswith("LC_")
@@ -698,6 +730,7 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print("repository root is not a directory", file=sys.stderr)
         return 2
+    threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
     serve(root, sys.stdin, sys.stdout)
     return 0
 
