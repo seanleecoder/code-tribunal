@@ -52,7 +52,7 @@ migration, and deletion.
 First-party reviewers read repositories only through fixed, read-only tool
 policies: Claude's `Read,Grep,Glob`, OpenCode's read/glob/grep permissions,
 Cursor's ask mode with shell and writes denied, and Codex with its shell tool
-disabled. Codex 0.169.0 needs an OS sandbox (bwrap with nested user namespaces)
+disabled. Codex needs an OS sandbox (bwrap with nested user namespaces)
 to confine its shell; default Docker seccomp and AppArmor profiles, and Ubuntu's
 unprivileged user-namespace restriction, block that sandbox on standard Linux
 runners. Relaxing runner kernel policy was rejected.

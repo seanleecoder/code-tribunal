@@ -83,8 +83,8 @@ def _definition(
 CODEX_REPO_SERVER = "repo"
 _CODEX_REPO_CONFIG = f"--config=mcp_servers.{CODEX_REPO_SERVER}"
 
-# Stable (or deprecated, still default-on) Codex 0.169.0 feature flags. The
-# image gate pins the tool set that remains.
+# Stable (or deprecated, still default-on) feature flags of the pinned Codex
+# CLI. The image gate pins the tool set that remains.
 _CODEX_DISABLED_FEATURES = (
     "shell_tool",
     "view_image",

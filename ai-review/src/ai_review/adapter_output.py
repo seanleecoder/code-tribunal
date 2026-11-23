@@ -350,8 +350,8 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     result (missing file, refused path, no match); a set ``error`` means the
     call itself failed. A top-level ``error`` event is fatal unless it is a
     stream reconnect notice before ``turn.completed``, which Codex reports that
-    way and recovers from. No-tool reviews and critiques remain valid. See captured
-    0.169.0 fixtures and the real-CLI image gate in
+    way and recovers from. No-tool reviews and critiques remain valid. See the
+    captured fixtures in tests/fixtures/codex and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
     if _CODEX_HOST_FAILURE.search(stderr):
