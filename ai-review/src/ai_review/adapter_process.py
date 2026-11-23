@@ -139,18 +139,12 @@ def _model_id_validation_error(model: str) -> str | None:
 
 
 class _AdapterResult:
-    __slots__ = ("returncode", "stdout", "stderr", "stderr_complete")
+    __slots__ = ("returncode", "stdout", "stderr")
 
-    def __init__(
-        self, returncode: int, stdout: str, stderr: str, *, stderr_complete: str = ""
-    ) -> None:
+    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
-        # Private execution diagnostics, never printed or persisted wholesale.
-        # A startup failure may precede more than a diagnostic tail of progress.
-        # Empty unless the caller asked for the full capture.
-        self.stderr_complete = stderr_complete
 
 
 # Polling bounds temporary disk use in practice; reads are capped independently
@@ -192,7 +186,6 @@ def _run_adapter_process(
     timeout_seconds: int,
     *,
     cwd: Path | None = None,
-    full_stderr: bool = False,
 ) -> _AdapterResult:
     # Anonymous, private files never enter the output/artifact directory. Unlike
     # pipes, reading them cannot wait on EOF from a surviving CLI descendant.
@@ -237,13 +230,7 @@ def _run_adapter_process(
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
             )
-        # Only a codec that reads startup diagnostics pays for the full capture.
-        complete = (
-            redact_file_tail(stderr, limit=_ADAPTER_OUTPUT_LIMIT_BYTES + 1) if full_stderr else ""
-        )
-        return _AdapterResult(
-            proc.returncode, captured_stdout, captured_stderr, stderr_complete=complete
-        )
+        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr)
 
 
 def _effective_adapter_timeout_seconds(reviewer_config: ReviewerConfig, stage: str) -> int:

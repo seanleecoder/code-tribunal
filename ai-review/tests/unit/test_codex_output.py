@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
-import os
-import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
-from ai_review.adapter_process import _AdapterResult, _run_adapter_process
+from ai_review.adapter_process import _AdapterResult
 from ai_review.adapter_runner import run_adapter
 from ai_review.config import load_config
 from ai_review.consensus import build_consensus
@@ -70,26 +68,59 @@ def test_host_failure_is_not_inferred_from_quoted_model_content() -> None:
 
 
 _ROUTER = "2026-11-17T00:00:00.000000Z ERROR codex_core::tools::router: error="
-
-
-@pytest.mark.parametrize(
-    "message", ["failed to spawn code-mode host /x: not found", "code-mode host is disabled"]
+_HOST_LINE = f"{_ROUTER}failed to spawn code-mode host /x: host executable was not found"
+# The pinned CLI's startup item for a host disabled by configuration, as the
+# loopback probe printed it; missing-host.json captures the spawn failure.
+_DISABLED_HOST = (
+    "Code Mode is unavailable because code-mode host is disabled. Code mode will fail "
+    "closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
 )
-def test_router_logged_host_failure_rejects_a_valid_answer(message: str) -> None:
-    data = capture("empty")
-    data["stderr"] = f"other output\n{_ROUTER}{message}\n"
-    with pytest.raises(AdapterModelError, match="host unavailable"):
-        load(data)
 
 
-def test_captured_router_host_failure_is_recognised_from_stderr_alone() -> None:
-    data = capture("missing-host")
+def _with_startup_error(data: dict, message: str) -> dict:
     events = [json.loads(line) for line in data["stdout"].split("\n") if line.strip()]
-    kept = [e for e in events if e.get("item", {}).get("type") != "error"]
-    assert len(kept) < len(events)
-    data["stdout"] = "\n".join(map(json.dumps, kept))
+    item = {
+        "type": "item.completed",
+        "item": {"id": "startup", "type": "error", "message": message},
+    }
+    events.insert(1, item)
+    return {**data, "stdout": "\n".join(map(json.dumps, events)) + "\n"}
+
+
+@pytest.mark.parametrize("source", ["missing-host", "disabled"])
+def test_startup_host_item_rejects_a_valid_answer_without_stderr(source: str) -> None:
+    if source == "missing-host":
+        data = capture("missing-host")
+    else:
+        data = _with_startup_error(capture("empty"), _DISABLED_HOST)
+    data["stderr"] = ""
     with pytest.raises(AdapterModelError, match="host unavailable"):
         load(data)
+
+
+def test_other_startup_error_items_fail_without_a_named_cause() -> None:
+    data = _with_startup_error(capture("empty"), "Something else is unavailable.")
+    with pytest.raises(AdapterModelError, match="execution error item"):
+        load(data)
+
+
+def test_a_router_host_line_in_stderr_alone_is_diagnostic_only() -> None:
+    # Codex reports a real host failure as a startup item; without one, a
+    # stderr line in the router's format may be a model-written copy.
+    data = capture("empty")
+    data["stderr"] = f"other output\n{_HOST_LINE}\n"
+    assert load(data) == {"findings": []}
+
+
+def test_a_multiline_tool_error_quoting_the_host_line_is_recoverable() -> None:
+    # Captured shape from Codex 0.171.0: an apply_patch context mismatch prints
+    # the model's expected lines verbatim, so one starts a stderr line.
+    data = capture("empty")
+    data["stderr"] = (
+        f"{_ROUTER}apply_patch verification failed: Failed to find expected lines in "
+        f"/workspace/example.py:\nnonexistent line\n{_HOST_LINE}\n"
+    )
+    assert load(data) == {"findings": []}
 
 
 @pytest.mark.parametrize(
@@ -218,20 +249,6 @@ def test_nonzero_cli_exit_overrides_valid_answer() -> None:
         load(data)
 
 
-def test_startup_diagnostic_before_tail_is_retained_for_admission() -> None:
-    diagnostic = f"{_ROUTER}failed to spawn code-mode host /x: not found\n" + "progress\n" * 2000
-    command = [sys.executable, "-c", f"import sys; sys.stderr.write({diagnostic!r})"]
-    # Other codecs keep only the diagnostic tail; no full capture is redacted.
-    default = _run_adapter_process(command, os.environ.copy(), 5)
-    assert default.stderr_complete == ""
-    result = _run_adapter_process(command, os.environ.copy(), 5, full_stderr=True)
-    assert "failed to spawn" not in result.stderr
-    data = capture("empty")
-    data["stderr"] = result.stderr_complete
-    with pytest.raises(AdapterModelError, match="host unavailable"):
-        load(data)
-
-
 @pytest.mark.parametrize(
     "label,status",
     [
@@ -255,13 +272,9 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     data = capture(label)
     with mock.patch(
         "ai_review.adapter_runner._run_adapter_process",
-        return_value=_AdapterResult(
-            data["returncode"], data["stdout"], data["stderr"], stderr_complete=data["stderr"]
-        ),
-    ) as process:
+        return_value=_AdapterResult(data["returncode"], data["stdout"], data["stderr"]),
+    ):
         assert run_adapter("codex", "review") == (0 if status == "success" else 1)
-    # Only the Codex codec asks for the full redacted stderr capture.
-    assert process.call_args.kwargs["full_stderr"] is True
     outcome = json.loads((output / "findings/codex.json").read_text())
     assert outcome["adapter_status"] == status
     assert batch_quality_fields(outcome)["usable_for_resolution"] == (status == "success")
@@ -283,13 +296,6 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     if status != "success":
         assert consensus["panel_status"] != "full"
         assert consensus["run_health"]["grade"] != "full"
-
-
-def test_startup_error_item_is_fatal_without_stderr_or_command_events() -> None:
-    data = capture("missing-host")
-    data["stderr"] = ""
-    with pytest.raises(AdapterModelError, match="execution error item"):
-        load(data)
 
 
 def test_uncatalogued_model_fails_closed_and_names_the_cause() -> None:

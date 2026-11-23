@@ -35,7 +35,8 @@ def test_catalogued_code_mode_models_are_admitted(model: str) -> None:
     [
         # Codex gives these direct tools, including tool_search.
         ("openai/gpt-5.5", "does not run in code mode"),
-        # Codex would resolve this to gpt-5.5's entry, its longest catalog prefix.
+        # Its own entry is code mode, but the shorter slug gpt-5.5 is a prefix
+        # that is not: refused without relying on how Codex resolves overlaps.
         ("openai/gpt-5.5-mini", "does not run in code mode"),
         # Codex resolves these to fallback metadata, or to a base slug's entry.
         ("openai/gpt-6.1-sol:online", "not in the pinned Codex CLI's model catalog"),
@@ -62,7 +63,7 @@ def _fake_cli(tmp_path: Path, listing: str, status: int = 0) -> Path:
     marker = tmp_path / "executed"
     cli.write_text(
         "#!/bin/sh\n"
-        f'if [ "$*" = "debug models" ]; then printf %s {shlex.quote(listing)}; '
+        f'if [ "$*" = "debug models --bundled" ]; then printf %s {shlex.quote(listing)}; '
         f"exit {status}; fi\n"
         f"touch {shlex.quote(str(marker))}\n"
     )

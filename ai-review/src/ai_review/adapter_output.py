@@ -316,16 +316,6 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
-# Codex's own host failure, as its tool router logs it: a whole stderr line
-# whose error field starts with the pinned CLI's message. The router logs other
-# failed tool calls the same way, and those can quote model-written text (an
-# invalid apply_patch hunk header, for one), so only the start of the field is
-# matched: such text sits later on the line and cannot pose as the failure.
-_CODEX_HOST_FAILURE = re.compile(
-    r"^\S+ +ERROR codex_core::tools::router: "
-    r"error=(?:failed to spawn code-mode host |code-mode host is disabled)",
-    re.MULTILINE,
-)
 # The only top-level error Codex recovers from: a stream reconnect, reported as
 # "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other
 # top-level error is fatal, so an unrecognized problem cannot be admitted with a
@@ -341,13 +331,20 @@ _CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
 # a warning item, so it fails closed like every error item, but with the cause.
 # Matching the wording only names the cause: any other error item still fails.
 _CODEX_FALLBACK_METADATA = re.compile(r"Model metadata for `.*` not found\. ")
+# A missing, unspawnable or disabled code-mode host is reported by Codex as a
+# startup error item, which fails like every error item; matching it names the
+# cause. Codex's stderr also logs the failure, but stderr is diagnostic only:
+# the tool router logs other failed tool calls there too, and an apply_patch
+# context mismatch quotes the model's lines verbatim, one per stderr line, so
+# no stderr pattern can tell the host's own line from a model-written copy.
+_CODEX_HOST_UNAVAILABLE = re.compile(r"Code Mode is unavailable because ")
 _CODEX_UNCATALOGUED_MODEL = (
     "Codex has no catalog metadata for the configured model; choose a model the "
     "pinned Codex CLI lists"
 )
 
 
-def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int) -> Any:
+def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
     Codex runs without a shell, so a command item is outside the contract.
@@ -359,8 +356,6 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
     captured fixtures in tests/fixtures/codex and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
-    if _CODEX_HOST_FAILURE.search(stderr):
-        raise AdapterModelError("Codex code-mode host unavailable; repository tools could not run")
     if returncode:
         raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
     thread_started = turn_started = turn_completed = reconnected = False
@@ -394,10 +389,14 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
             and event["item"].get("type") == "error"
         ):
             # Startup error items can precede turn.started, with no tool
-            # events at all. This also covers missing/disabled host warnings.
+            # events at all. Only Codex writes these items, never the model.
             message = event["item"].get("message")
             if isinstance(message, str) and _CODEX_FALLBACK_METADATA.match(message):
                 raise AdapterModelError(_CODEX_UNCATALOGUED_MODEL)
+            if isinstance(message, str) and _CODEX_HOST_UNAVAILABLE.match(message):
+                raise AdapterModelError(
+                    "Codex code-mode host unavailable; repository tools could not run"
+                )
             raise AdapterModelError("Codex emitted an execution error item")
         if turn_completed:
             raise SchemaValidationError("Codex stream continued after turn.completed")
@@ -446,7 +445,7 @@ def _load_codex_stream(stdout: str, *, stage: str, stderr: str, returncode: int)
 
 
 def _load_adapter_json(
-    stdout: str, *, codec: OutputCodec, stage: str, stderr: str = "", returncode: int = 0
+    stdout: str, *, codec: OutputCodec, stage: str, returncode: int = 0
 ) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
@@ -454,7 +453,7 @@ def _load_adapter_json(
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
     elif codec == "codex_stream_json":
-        raw = _load_codex_stream(stdout, stage=stage, stderr=stderr, returncode=returncode)
+        raw = _load_codex_stream(stdout, stage=stage, returncode=returncode)
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)

@@ -293,6 +293,24 @@ def mcp_call(tool: str, arguments: dict) -> str:
     )
 
 
+# A model-written line in the router's host-failure format. An apply_patch
+# context mismatch logs the expected lines verbatim, one per stderr line, so
+# this line starts a stderr line; only Codex's startup item reports the host.
+QUOTED_HOST_LINE = (
+    "2026-01-01T00:00:00.000000Z ERROR codex_core::tools::router: "
+    "error=failed to spawn code-mode host /quoted-by-the-model"
+)
+QUOTED_HOST_PATCH = (
+    "let out; try { out = await tools.apply_patch("
+    + json.dumps(
+        "*** Begin Patch\n*** Update File: example.py\n@@\n-nonexistent line\n-"
+        + QUOTED_HOST_LINE
+        + "\n+replacement\n*** End Patch\n"
+    )
+    + "); } catch (e) { out = String(e); } text(String(out));"
+)
+
+
 # Each read fills read_file's 256 KiB output limit; together they exceed the
 # runner's 32 MiB stdout limit by half again.
 LARGE_FILE = ("x" * 199 + "\n").encode() * 2000
@@ -538,9 +556,11 @@ def run_case(
     if '"command_execution"' in capture["stdout"]:
         raise AssertionError(f"{label}: the no-shell reviewer executed a command")
     if expect_error is not None:
-        # A rejection is checked for its stated cause; nothing past it ran usefully.
-        if outcome.get("error_message_redacted") != " ".join(expect_error.split()):
-            raise AssertionError(f"{label}: wrong error: {outcome.get('error_message_redacted')}")
+        # A rejection must state its cause and the model, independently of the
+        # function that produced it; nothing past it ran usefully.
+        error = outcome.get("error_message_redacted") or ""
+        if expect_error not in error or model not in error:
+            raise AssertionError(f"{label}: wrong error: {error}")
         # Each such case is refused before the review prompt is sent.
         if stub.requests:
             raise AssertionError(f"{label}: the provider received a refused model's prompt")
@@ -660,6 +680,10 @@ def missing_host_case(install: Path, scratch: Path) -> None:
             cli_path=str(isolated) + os.pathsep + os.environ["PATH"],
             expect_text="failed to spawn code-mode host",
         )
+    # The refusal comes from Codex's startup item and names the cause.
+    outcome = json.loads((scratch / "missing-host/out/findings/codex.json").read_text())
+    if "host unavailable" not in outcome.get("error_message_redacted", ""):
+        raise AssertionError(f"missing-host: wrong error: {outcome.get('error_message_redacted')}")
 
 
 def run_cases(
@@ -738,6 +762,14 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         sentinel=secrets.token_hex(24),
         expect_text=reported,
     )
+    # A failed tool call that logs a quoted host-failure line stays usable.
+    add(
+        directory,
+        "quoted-host-failure",
+        REQUIRED_MODEL,
+        steps=[QUOTED_HOST_PATCH],
+        expect_text="\n" + QUOTED_HOST_LINE + "\n",
+    )
     # Codex reports the reconnect as a top-level error event, then completes.
     add(
         directory,
@@ -772,8 +804,10 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     # Models off the verified code-mode surface are refused from the pinned
     # CLI's own catalog, before the prompt is sent. The codec's fallback-metadata
     # check stays as a second signal; its captured fixture covers it.
-    from ai_review.codex_catalog import CODE_MODE, list_catalog, model_error  # noqa: PLC0415
+    from ai_review.codex_catalog import CODE_MODE, list_catalog  # noqa: PLC0415
 
+    # The bundled listing, as the seat's preflight reads it, whatever the
+    # invoking user's own Codex home holds.
     catalog = list_catalog("codex")
     add(
         directory,
@@ -781,7 +815,7 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         UNCATALOGUED_MODEL,
         empty=True,
         expected_status="model_error",
-        expect_error=model_error(catalog, UNCATALOGUED_MODEL),
+        expect_error="is not in the pinned Codex CLI's model catalog",
     )
     # A catalogued model with another tool surface (direct tools, tool_search).
     other = [e["slug"] for e in catalog["models"] if e.get("tool_mode") != CODE_MODE]
@@ -793,7 +827,7 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         f"openai/{other[0]}",
         empty=True,
         expected_status="model_error",
-        expect_error=model_error(catalog, f"openai/{other[0]}"),
+        expect_error="does not run in code mode",
     )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("failures/missing-host", partial(missing_host_case, install, directory)))

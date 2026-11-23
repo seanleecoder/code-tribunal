@@ -250,7 +250,9 @@ for event in [
         )
         cli.write_text(
             "#!/bin/sh\n"
-            f'if [ "$*" = "debug models" ]; then printf %s {shlex.quote(catalog)}; exit 0; fi\n'
+            'if [ "$*" = "debug models --bundled" ]; then\n'
+            f"  printf %s {shlex.quote(catalog)}; exit 0\n"
+            "fi\n"
             'args="$*"\n'
             "payload='{\"findings\":[]}'\n"
             'case "$args" in *critique_batch.schema.json*) payload=\'{"critiques":[]}\' ;; esac\n'

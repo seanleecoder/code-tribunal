@@ -91,9 +91,9 @@ These rules are worth stating because breaking them is silent:
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
   another reviewer's transport from stdout. Codex uses its `exec --json` events;
-  terminal failures, unavailable code-mode host (only Codex's own router log
-  line for it; other logged tool errors can quote model text), a model the pinned
-  CLI has no catalog metadata for (its fallback runs a different, unverified tool
+  terminal failures, unavailable code-mode host (Codex's startup error item;
+  stderr is diagnostic only, because logged tool errors can quote model text
+  across lines), a model the pinned CLI has no catalog metadata for (its fallback runs a different, unverified tool
   surface) and wholly failed operational tool attempts invalidate even a
   well-formed final answer, and a shell command item
   is a schema error because Codex runs without a shell. A repository MCP call that
@@ -115,7 +115,8 @@ These rules are worth stating because breaking them is silent:
   critique an empty working root. The shell adapters only check prerequisites
   and invoke the CLI. Codex's adapter also refuses, through the standard-library
   [`codex_catalog`](../../ai-review/src/ai_review/codex_catalog.py), a model whose
-  pinned catalog entry does not select code mode, before the prompt is sent; it
+  entry in the pinned CLI's bundled catalog does not select code mode, before the
+  prompt is sent; it
   then runs the CLI through the standard-library
   [`codex_stream_filter`](../../ai-review/src/ai_review/codex_stream_filter.py),
   which drops repository-tool arguments and results its codec never reads from

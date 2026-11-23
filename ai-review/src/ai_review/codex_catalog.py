@@ -30,10 +30,12 @@ from typing import Any
 CODE_MODE = "code_mode_only"
 # Listing reads local data and takes well under a second.
 _LIST_TIMEOUT_SECONDS = 60
-# Codex lists the catalog its exec run will use: CODEX_HOME's models_cache.json
-# when an authenticated session has refreshed one, else the copy bundled with
-# the pinned CLI. A seat's CODEX_HOME is its own fresh state directory, which
-# the review then runs with. No credential is passed to the listing.
+# --bundled lists only the catalog shipped with the pinned CLI. Without it,
+# Codex would prefer CODEX_HOME's models_cache.json, which an authenticated
+# session refreshes, and a model_catalog_json in CODEX_HOME's config.toml,
+# which the review's exec --ignore-user-config does not read. A seat's
+# CODEX_HOME is fresh state holding neither, so its exec run uses this same
+# bundled catalog. No credential is passed to the listing.
 _LIST_ENVIRONMENT = ("PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL")
 
 
@@ -65,7 +67,7 @@ def list_catalog(cli: str) -> Any:
     """Return the pinned CLI's bundled model catalog."""
     environment = {name: value for name in _LIST_ENVIRONMENT if (value := os.environ.get(name))}
     listed = subprocess.run(
-        [cli, "debug", "models"],
+        [cli, "debug", "models", "--bundled"],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         env=environment,

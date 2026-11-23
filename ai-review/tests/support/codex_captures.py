@@ -21,7 +21,6 @@ def capture(label: str) -> dict:
 def load(data: dict, stage: str = "review") -> dict:
     return _load_adapter_json(
         data["stdout"],
-        stderr=data["stderr"],
         returncode=data["returncode"],
         codec="codex_stream_json",
         stage=stage,

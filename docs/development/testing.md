@@ -63,8 +63,10 @@ transport failures as failures:
   The code-mode and direct tool sets are pinned, and `ALL_TOOLS` must list the
   repository tools, because Codex defers MCP tools in code mode.
 - Negative controls: malformed and truncated streams, a terminal provider
-  failure, a missing code-mode host, an unavailable tool server, and a
-  credential in the tool server's environment all yield unusable outcomes. A
+  failure, a missing code-mode host (named from Codex's startup item), an
+  unavailable tool server, and a credential in the tool server's environment
+  all yield unusable outcomes. A failed `apply_patch` whose logged error starts
+  a stderr line with a quoted host-failure line stays usable. A
   model outside the pinned CLI's catalog, and a catalogued model that does not
   run in code mode (chosen from the pinned catalog; the case fails if none
   remains), are refused with the error that names the cause, and the provider

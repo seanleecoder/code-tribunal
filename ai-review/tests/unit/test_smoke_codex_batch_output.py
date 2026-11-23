@@ -258,6 +258,7 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "tools/large-reads",
         "tools/tool-error",
         "tools/recovery",
+        "tools/quoted-host-failure",
         "tools/reconnect",
         "tools/containment",
         "failures/malformed",
