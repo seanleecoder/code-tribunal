@@ -184,9 +184,7 @@ def headline_and_action(
     return "Review health: full.", None
 
 
-def problems(
-    run_health: RunHealth, literal: Callable[[str], str]
-) -> list[tuple[str, str | None]]:
+def problems(run_health: RunHealth, literal: Callable[[str], str]) -> list[tuple[str, str | None]]:
     """One ``(bullet, error message)`` pair per job that did not succeed."""
     return [
         (

@@ -111,9 +111,7 @@ def _create_inline_discussion(
             position,
         )
     except ReviewPlatformError as exc:
-        result["warnings"].append(
-            f"create_discussion for {post_group['issue_id']} failed: {exc}"
-        )
+        result["warnings"].append(f"create_discussion for {post_group['issue_id']} failed: {exc}")
         summary_fallback_groups.append(group)
         return None
     if not isinstance(discussion, dict) or discussion.get("id") is None:

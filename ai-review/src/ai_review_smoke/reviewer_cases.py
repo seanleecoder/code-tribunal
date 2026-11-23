@@ -165,9 +165,7 @@ class PackagedReviewerImageTests(unittest.TestCase):
     def test_pinned_clis_report_a_version(self) -> None:
         for cli in PINNED_CLIS:
             with self.subTest(cli=cli):
-                self.assertIsNotNone(
-                    shutil.which(cli), f"{cli} does not resolve on the image PATH"
-                )
+                self.assertIsNotNone(shutil.which(cli), f"{cli} does not resolve on the image PATH")
                 completed = self._run([cli, "--version"])
                 self.assertEqual(
                     completed.returncode,

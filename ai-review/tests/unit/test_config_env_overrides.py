@@ -228,21 +228,22 @@ def test_yaml_cannot_select_a_panel_below_the_floor(document):
         validate_config(document)
 
 
-@pytest.mark.parametrize("retired", [
-    {"critique": {"allow_severity_downgrade": True}},
-    {"critique": {}},
-    {"posting": {"inline_multiline": True}},
-    {"posting": {"inline_multiline": False}},
-])
+@pytest.mark.parametrize(
+    "retired",
+    [
+        {"critique": {"allow_severity_downgrade": True}},
+        {"critique": {}},
+        {"posting": {"inline_multiline": True}},
+        {"posting": {"inline_multiline": False}},
+    ],
+)
 def test_retired_policy_and_placement_settings_require_migration(document, retired):
     document.update(retired)
     with pytest.raises(ConfigError, match="unknown config keys.*migrate"):
         validate_config(document)
 
 
-@pytest.mark.parametrize(
-    "section", ["posting", "state", "limits", "reviewers", "panel"]
-)
+@pytest.mark.parametrize("section", ["posting", "state", "limits", "reviewers", "panel"])
 def test_digest_binds_every_remaining_section(document, section):
     config = validate_config(document)
     changes = {

@@ -42,21 +42,27 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
     def test_unknown_scope_is_refused(self) -> None:
         with self.assertRaisesRegex(SmokeLoadError, "unknown packaged smoke scope"):
             build_suite("no-such-scope")
-        with (self.assertRaises(SystemExit) as error,
-              mock.patch.object(sys, "stderr", new=io.StringIO())):
+        with (
+            self.assertRaises(SystemExit) as error,
+            mock.patch.object(sys, "stderr", new=io.StringIO()),
+        ):
             smoke_cli.main(["no-such-scope"])
         self.assertNotEqual(error.exception.code, 0)
 
     def test_zero_collection_returns_nonzero(self) -> None:
         module = types.ModuleType(SCOPE_MODULES["base"])
-        with (mock.patch.dict(sys.modules, {module.__name__: module}),
-              mock.patch.object(sys, "stderr", new=io.StringIO()) as errors):
+        with (
+            mock.patch.dict(sys.modules, {module.__name__: module}),
+            mock.patch.object(sys, "stderr", new=io.StringIO()) as errors,
+        ):
             self.assertEqual(smoke_cli.main(["base"]), 1)
         self.assertIn("collected zero tests", errors.getvalue())
 
     def test_import_and_unittest_loading_failures_return_nonzero(self) -> None:
-        with (self.assertRaises(ImportError),
-              mock.patch.dict(sys.modules, {SCOPE_MODULES["base"]: None})):
+        with (
+            self.assertRaises(ImportError),
+            mock.patch.dict(sys.modules, {SCOPE_MODULES["base"]: None}),
+        ):
             smoke_cli.main(["base"])
 
         module = types.ModuleType(SCOPE_MODULES["base"])
@@ -65,9 +71,11 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
             return loader.loadTestsFromName("missing_case", module)
 
         module.load_tests = load_tests
-        with (mock.patch.dict(sys.modules, {module.__name__: module}),
-              mock.patch.object(sys, "stderr", new=io.StringIO()) as errors,
-              mock.patch.object(sys, "stdout", new=io.StringIO()) as output):
+        with (
+            mock.patch.dict(sys.modules, {module.__name__: module}),
+            mock.patch.object(sys, "stderr", new=io.StringIO()) as errors,
+            mock.patch.object(sys, "stdout", new=io.StringIO()) as output,
+        ):
             self.assertEqual(smoke_cli.main(["base"]), 1)
         self.assertIn("ERROR:", errors.getvalue())
         self.assertIn("has no attribute 'missing_case'", errors.getvalue())
@@ -76,9 +84,13 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
     def test_added_and_renamed_tests_run_without_inventory_changes(self) -> None:
         module = types.ModuleType(SCOPE_MODULES["base"])
         ran = []
-        case = type("CollectedTests", (unittest.TestCase,), {
-            "test_first": lambda self: ran.append("first"),
-        })
+        case = type(
+            "CollectedTests",
+            (unittest.TestCase,),
+            {
+                "test_first": lambda self: ran.append("first"),
+            },
+        )
         module.CollectedTests = case
         with mock.patch.dict(sys.modules, {module.__name__: module}):
             self.assertEqual(build_suite("base").countTestCases(), 1)
@@ -94,12 +106,18 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
 
     def test_failed_smoke_case_returns_nonzero(self) -> None:
         module = types.ModuleType(SCOPE_MODULES["base"])
-        module.FailingTests = type("FailingTests", (unittest.TestCase,), {
-            "test_failure": lambda self: self.fail("probe failed"),
-        })
-        with (mock.patch.dict(sys.modules, {module.__name__: module}),
-              mock.patch.object(sys, "stderr", new=io.StringIO()),
-              mock.patch.object(sys, "stdout", new=io.StringIO())):
+        module.FailingTests = type(
+            "FailingTests",
+            (unittest.TestCase,),
+            {
+                "test_failure": lambda self: self.fail("probe failed"),
+            },
+        )
+        with (
+            mock.patch.dict(sys.modules, {module.__name__: module}),
+            mock.patch.object(sys, "stderr", new=io.StringIO()),
+            mock.patch.object(sys, "stdout", new=io.StringIO()),
+        ):
             self.assertEqual(smoke_cli.main(["base"]), 1)
 
     def test_base_resource_probe_rejects_missing_packaged_file(self) -> None:
@@ -114,9 +132,9 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
                     if missing:
                         (root / missing).unlink()
                     result = unittest.TestResult()
-                    base_cases.PackagedBaseImageTests(
-                        "test_packaged_runtime_resources_exist"
-                    ).run(result)
+                    base_cases.PackagedBaseImageTests("test_packaged_runtime_resources_exist").run(
+                        result
+                    )
                     self.assertEqual(result.wasSuccessful(), missing is None)
                     if missing:
                         self.assertIn(missing, result.failures[0][1])
@@ -128,8 +146,9 @@ class PackagedSmokeLoaderTests(unittest.TestCase):
             case.run(result)
         self.assertFalse(result.wasSuccessful())
         for cli in smoke_manifest.PINNED_CLIS:
-            self.assertTrue(any(f"{cli} does not resolve" in detail
-                                for _, detail in result.failures))
+            self.assertTrue(
+                any(f"{cli} does not resolve" in detail for _, detail in result.failures)
+            )
 
     def test_runtime_file_manifest_names_files_that_exist(self) -> None:
         for relative in smoke_manifest.RUNTIME_FILES:

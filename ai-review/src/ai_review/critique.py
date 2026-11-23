@@ -217,9 +217,9 @@ def _apply_critiques(
             for critic in successful_critics
             if critic not in set(group["contributing_reviewers"])
         ]
-        majority_noise = bool(eligible_critics) and noise_counts.get(index, 0) > len(
-            eligible_critics
-        ) / 2
+        majority_noise = (
+            bool(eligible_critics) and noise_counts.get(index, 0) > len(eligible_critics) / 2
+        )
         apply_group_decision(
             group,
             agreeing_critics=agreeing.get(index, []),

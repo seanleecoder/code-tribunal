@@ -631,9 +631,7 @@ class GitHubReviewPlatform:
             return 10
         return None
 
-    def build_position(
-        self, anchor: Anchor, version: PullRequestVersion
-    ) -> Position:
+    def build_position(self, anchor: Anchor, version: PullRequestVersion) -> Position:
         return build_position(anchor, version)
 
     def root_note_id_from_thread(self, response: Thread) -> int:

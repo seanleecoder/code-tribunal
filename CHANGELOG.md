@@ -9,6 +9,9 @@ versioning.
 
 ### Changed
 
+- `make quality` now also runs `ruff format --check`. The Python sources were
+  reformatted once with the pinned Ruff, with no behavior change, so formatting
+  stays consistent from here on.
 - GitLab prepare snapshots an isolated checkout of the selected MR source commit
   using locally available Git objects, and rechecks its identity and the API
   revision before publishing inputs. Stale detached runs and unavailable source

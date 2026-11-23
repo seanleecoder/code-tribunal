@@ -85,11 +85,7 @@ def build_consensus(
     """Reduce admitted current-run outcomes; diagnostic metadata feeds only health."""
     enabled = sorted(enabled_reviewers(config))
     # successful_reviewers / resolution_eligible_reviewers share one predicate.
-    successful = sorted(
-        str(batch["reviewer"])
-        for batch in finding_batches
-        if batch_usable(batch)
-    )
+    successful = sorted(str(batch["reviewer"]) for batch in finding_batches if batch_usable(batch))
     resolution_eligible = list(successful)
     failed = sorted(set(enabled) - set(successful))
     status = panel_status(successful, enabled)

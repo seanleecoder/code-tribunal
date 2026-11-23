@@ -402,10 +402,14 @@ class CandidateIdentityTests(unittest.TestCase):
 
     def _cli_args(self) -> list[str]:
         return [
-            "--runtime-source", self.source,
-            "--base-image", self.base,
-            "--reviewer-image", self.reviewer,
-            "--campaigns", "panel,lifecycle",
+            "--runtime-source",
+            self.source,
+            "--base-image",
+            self.base,
+            "--reviewer-image",
+            self.reviewer,
+            "--campaigns",
+            "panel,lifecycle",
         ]
 
     def _verify_outputs(
@@ -448,11 +452,18 @@ class CandidateIdentityTests(unittest.TestCase):
             [
                 mock.call(
                     [
-                        "gh", "attestation", "verify", f"oci://{image}",
-                        "--repo", "seanleecoder/code-tribunal",
-                        "--predicate-type", "https://slsa.dev/provenance/v1",
-                        "--source-ref", "refs/heads/main",
-                        "--source-digest", self.source,
+                        "gh",
+                        "attestation",
+                        "verify",
+                        f"oci://{image}",
+                        "--repo",
+                        "seanleecoder/code-tribunal",
+                        "--predicate-type",
+                        "https://slsa.dev/provenance/v1",
+                        "--source-ref",
+                        "refs/heads/main",
+                        "--source-digest",
+                        self.source,
                         "--cert-identity",
                         "https://github.com/seanleecoder/code-tribunal/"
                         ".github/workflows/publish-ai-review-images.yml@refs/heads/main",
@@ -555,12 +566,8 @@ class CandidateIdentityTests(unittest.TestCase):
 
 class CandidateCollectionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.github = load_repository_script(
-            "canary_github_collection", GITHUB_ORCHESTRATOR
-        )
-        self.gitlab = load_repository_script(
-            "canary_gitlab_collection", GITLAB_ORCHESTRATOR
-        )
+        self.github = load_repository_script("canary_github_collection", GITHUB_ORCHESTRATOR)
+        self.gitlab = load_repository_script("canary_gitlab_collection", GITLAB_ORCHESTRATOR)
 
     def test_github_polls_status_with_one_end_to_end_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -770,9 +777,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(
-                    self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE
-                ),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
@@ -810,9 +815,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(Path(tmp) / "state.json")
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(
-                    self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE
-                ),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):
@@ -903,8 +906,9 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             ) as request,
             mock.patch.object(self.gitlab.time, "sleep") as sleep,
         ):
-            self.assertEqual(self.gitlab._request("GET", "projects/1/pipelines/2"),
-                             {"status": "running"})
+            self.assertEqual(
+                self.gitlab._request("GET", "projects/1/pipelines/2"), {"status": "running"}
+            )
         self.assertEqual(request.call_count, 2)
         sleep.assert_called_once_with(1)
 
@@ -918,8 +922,9 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                     side_effect=urllib.error.URLError("connection reset"),
                 ) as request,
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
-                self.assertRaisesRegex(self.gitlab.GitLabCanaryError,
-                                       f"after {count} attempt") as failure,
+                self.assertRaisesRegex(
+                    self.gitlab.GitLabCanaryError, f"after {count} attempt"
+                ) as failure,
             ):
                 self.gitlab._request(method, "projects/1/pipelines/2?private-query")
             self.assertEqual(request.call_count, count)
@@ -946,15 +951,17 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                 attempts = 3 if method == "GET" else 1
                 with (
                     self.subTest(status=status, method=method),
-                    mock.patch.object(self.gitlab.urllib.request, "urlopen",
-                                      side_effect=error) as request,
+                    mock.patch.object(
+                        self.gitlab.urllib.request, "urlopen", side_effect=error
+                    ) as request,
                     mock.patch.object(self.gitlab.time, "sleep") as sleep,
                     self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
                 ):
                     self.gitlab._request(method, "projects/1?private-query")
                 self.assertEqual(request.call_count, attempts)
-                self.assertEqual(sleep.call_args_list,
-                                 [mock.call(1), mock.call(2)] if method == "GET" else [])
+                self.assertEqual(
+                    sleep.call_args_list, [mock.call(1), mock.call(2)] if method == "GET" else []
+                )
                 self.assertEqual(failure.exception.status, status)
                 self.assertEqual(failure.exception.transient, method == "GET")
                 self.assertNotIn("private-query", str(failure.exception))
@@ -999,8 +1006,9 @@ class GitLabCanaryTransportTests(unittest.TestCase):
                     attempts = 3 if method == "GET" else 1
                     with (
                         self.subTest(error=type(error), phase=phase, method=method),
-                        mock.patch.object(self.gitlab.urllib.request, "urlopen",
-                                          side_effect=fail) as request,
+                        mock.patch.object(
+                            self.gitlab.urllib.request, "urlopen", side_effect=fail
+                        ) as request,
                         mock.patch.object(self.gitlab.time, "sleep") as sleep,
                         self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
                     ):
@@ -1032,11 +1040,18 @@ class GitLabCanaryTransportTests(unittest.TestCase):
     def test_rate_limit_retry_after_is_bounded_and_invalid_values_use_backoff(self) -> None:
         now = 1_000_000_000
         for header, delay in (
-            ("0", 0), ("7", 7), (" 8 ", 8), ("999", 30),
+            ("0", 0),
+            ("7", 7),
+            (" 8 ", 8),
+            ("999", 30),
             ("Sun, 09 Sep 2001 01:46:45 GMT", 5),
             ("Sun, 09 Sep 2001 01:49:40 GMT", 30),
             ("Sun, 09 Sep 2001 01:46:00 GMT", 0),
-            ("invalid", 1), ("-1", 1), ("1.5", 1), ("", 1), (None, 1),
+            ("invalid", 1),
+            ("-1", 1),
+            ("1.5", 1),
+            ("", 1),
+            (None, 1),
         ):
             headers = {} if header is None else {"Retry-After": header}
             error = urllib.error.HTTPError("https://fixture", 429, "limited", headers, None)
@@ -1055,8 +1070,9 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             ):
                 self.assertEqual(self.gitlab._request("GET", "projects/1"), {})
             sleep.assert_called_once_with(delay)
-        error = urllib.error.HTTPError("https://fixture", 429, "limited",
-                                       {"Retry-After": "invalid"}, None)
+        error = urllib.error.HTTPError(
+            "https://fixture", 429, "limited", {"Retry-After": "invalid"}, None
+        )
         with (
             mock.patch.object(self.gitlab.urllib.request, "urlopen", side_effect=error),
             mock.patch.object(self.gitlab.time, "sleep") as sleep,
@@ -1093,8 +1109,9 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             error = urllib.error.HTTPError("https://fixture", status, "permanent", {}, None)
             with (
                 self.subTest(status=status),
-                mock.patch.object(self.gitlab.urllib.request, "urlopen",
-                                  side_effect=error) as request,
+                mock.patch.object(
+                    self.gitlab.urllib.request, "urlopen", side_effect=error
+                ) as request,
                 mock.patch.object(self.gitlab.time, "sleep") as sleep,
                 self.assertRaises(self.gitlab.GitLabCanaryError) as failure,
             ):
@@ -1112,17 +1129,21 @@ class GitLabCanaryTransportTests(unittest.TestCase):
             for missing in (False, True):
                 result = (
                     urllib.error.HTTPError("https://fixture", 404, "missing", {}, None)
-                    if missing else io.BytesIO(b"")
+                    if missing
+                    else io.BytesIO(b"")
                 )
                 with (
                     self.subTest(failure=type(failure), missing=missing),
-                    mock.patch.object(self.gitlab.urllib.request, "urlopen",
-                                      side_effect=[failure, result]) as request,
+                    mock.patch.object(
+                        self.gitlab.urllib.request, "urlopen", side_effect=[failure, result]
+                    ) as request,
                     mock.patch.object(self.gitlab.time, "sleep") as sleep,
                 ):
-                    self.assertIsNone(self.gitlab._request(
-                        "DELETE", "resource", allow_missing=True, idempotent=True
-                    ))
+                    self.assertIsNone(
+                        self.gitlab._request(
+                            "DELETE", "resource", allow_missing=True, idempotent=True
+                        )
+                    )
                 self.assertEqual(request.call_count, 2)
                 sleep.assert_called_once_with(1)
 
@@ -1164,15 +1185,19 @@ class GitLabCanaryPollingTests(unittest.TestCase):
             return self.gitlab._await_protection("candidate", timeout_seconds=timeout)
         state = Path(tmp) / "state.json"
         state.write_text(json.dumps({"mr_iid": "7"}), encoding="utf-8")
-        return self.gitlab.collect_campaign(argparse.Namespace(
-            state=str(state), destination=str(Path(tmp) / "out"), timeout_seconds=timeout
-        ))
+        return self.gitlab.collect_campaign(
+            argparse.Namespace(
+                state=str(state), destination=str(Path(tmp) / "out"), timeout_seconds=timeout
+            )
+        )
 
     def test_polling_recovers_after_exhausted_request_retries(self) -> None:
         for protection in (False, True):
             self.now = 0
             responses = (
-                [b'{"protected":true}'] if protection else [
+                [b'{"protected":true}']
+                if protection
+                else [
                     b'[{"id":11}]',
                     b'{"id":11,"status":"success","web_url":"pipeline"}',
                     b"[]",
@@ -1201,11 +1226,13 @@ class GitLabCanaryPollingTests(unittest.TestCase):
                 self.subTest(protection=protection),
                 tempfile.TemporaryDirectory() as tmp,
                 mock.patch.object(
-                    self.gitlab, "_request",
+                    self.gitlab,
+                    "_request",
                     side_effect=self.gitlab.GitLabCanaryError("sanitized outage", transient=True),
                 ),
-                self.assertRaisesRegex(self.gitlab.GitLabCanaryError,
-                                       "last transient error: sanitized outage"),
+                self.assertRaisesRegex(
+                    self.gitlab.GitLabCanaryError, "last transient error: sanitized outage"
+                ),
             ):
                 self._poll(protection, tmp, timeout=3)
             self.assertEqual(self.now, 3)
@@ -1217,7 +1244,8 @@ class GitLabCanaryPollingTests(unittest.TestCase):
                 self.subTest(protection=protection),
                 tempfile.TemporaryDirectory() as tmp,
                 mock.patch.object(
-                    self.gitlab, "_request",
+                    self.gitlab,
+                    "_request",
                     side_effect=self.gitlab.GitLabCanaryError("forbidden", status=403),
                 ) as request,
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "forbidden"),
@@ -1252,7 +1280,8 @@ class GitLabCanaryPollingTests(unittest.TestCase):
         ):
             responses = [
                 [{"id": 11}],
-                {"id": 11, "status": "success", "web_url": "pipeline"}, final,
+                {"id": 11, "status": "success", "web_url": "pipeline"},
+                final,
             ]
             if isinstance(final, list):
                 responses.append(self.gitlab.GitLabCanaryError("artifact outage", transient=True))

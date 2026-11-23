@@ -97,9 +97,7 @@ class CritiquePromptRenderTests(unittest.TestCase):
                 _batch("claude", _finding("claude", "1" * 64, "major")),
             )
 
-            rendered, pool = render_critique_prompt(
-                input_dir, _config(), "opencode", findings_dir
-            )
+            rendered, pool = render_critique_prompt(input_dir, _config(), "opencode", findings_dir)
 
             self.assertIn("<POOLED_FINDINGS_JSON>", rendered)
             self.assertIn(_SHIPPED_CRITIQUE_PROMPT, rendered)

@@ -22,7 +22,9 @@ class BodyHashTests(unittest.TestCase):
     def _group(self) -> dict[str, object]:
         return {
             "representative_anchor": {
-                "old_path": "src/foo.py", "new_path": "src/foo.py", "side": "new",
+                "old_path": "src/foo.py",
+                "new_path": "src/foo.py",
+                "side": "new",
                 "start": {"old_line": None, "new_line": 2, "line_code": None},
                 "end": {"old_line": None, "new_line": 2, "line_code": None},
                 "symbol": None,
@@ -42,9 +44,7 @@ class BodyHashTests(unittest.TestCase):
 
     def test_body_hash_is_stable_for_same_group(self) -> None:
         first, first_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
-        second, second_hash = render_body(
-            self._group(), "run", posting_mode="gitlab_discussions"
-        )
+        second, second_hash = render_body(self._group(), "run", posting_mode="gitlab_discussions")
         self.assertEqual(first_hash, second_hash)
         self.assertEqual(parse_marker(first), parse_marker(second))
 
@@ -88,7 +88,7 @@ class BodyHashTests(unittest.TestCase):
             "payload after prose": f"`{header}` header; the value is {material}",
             "JSON escaped newline": f"`{header}`\\n{material}",
         }
-        chunks = [material[index:index + 4] for index in range(0, len(material), 4)]
+        chunks = [material[index : index + 4] for index in range(0, len(material), 4)]
         for separator in (" ", ",", ".", "-", "` `", "\u200b", "\u00ad"):
             cases[f"payload split by {separator!r}"] = f"`{header}` " + separator.join(chunks)
         for separator in ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
@@ -113,12 +113,8 @@ class BodyHashTests(unittest.TestCase):
         second_group = self._group()
         second_group["source_finding_ids"] = ["d" * 64, "e" * 64]
 
-        first, _first_hash = render_body(
-            first_group, "run", posting_mode="gitlab_discussions"
-        )
-        second, _second_hash = render_body(
-            second_group, "run", posting_mode="gitlab_discussions"
-        )
+        first, _first_hash = render_body(first_group, "run", posting_mode="gitlab_discussions")
+        second, _second_hash = render_body(second_group, "run", posting_mode="gitlab_discussions")
 
         self.assertEqual(first, second)
 
@@ -282,9 +278,7 @@ class BodyHashTests(unittest.TestCase):
         self.assertIn("- Agreeing critics: `opencode`", body)
         self.assertIn("- Independent support: 2", body)
         self.assertIn("- Status: surfaced for discussion", body)
-        self.assertIn(
-            "- Merge decision: left to maintainers and downstream automation", body
-        )
+        self.assertIn("- Merge decision: left to maintainers and downstream automation", body)
         self.assertIn("Dissent:", body)
         self.assertIn(
             "- `cursor` disputes: (suggested severity: `minor`)\n"
@@ -338,9 +332,7 @@ class BodyHashTests(unittest.TestCase):
         group["evidence_by_reviewer"] = {"claude": "e" * 70_000}
         group["suggestion"] = "return early"
 
-        body, _body_hash = render_body(
-            group, "run", posting_mode="github_reviews"
-        )
+        body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
         self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
         self.assertNotIn("Dissent:", body)
@@ -397,9 +389,7 @@ class BodyHashTests(unittest.TestCase):
         invalid["suggestion"] = "```python\nif not records:\n    return"
 
         valid_body, _valid_hash = render_body(valid, "run", posting_mode="gitlab_discussions")
-        invalid_body, _invalid_hash = render_body(
-            invalid, "run", posting_mode="gitlab_discussions"
-        )
+        invalid_body, _invalid_hash = render_body(invalid, "run", posting_mode="gitlab_discussions")
 
         self.assertIn("Suggestion:\n````text\n```python", valid_body)
         self.assertIn("Suggestion:\n````text\n```python", invalid_body)
@@ -465,12 +455,8 @@ class BodyHashTests(unittest.TestCase):
 
         for posting_mode in ("gitlab_discussions", "github_reviews"):
             with self.subTest(posting_mode=posting_mode):
-                first, first_hash = render_body(
-                    group, "run", posting_mode=posting_mode
-                )
-                second, second_hash = render_body(
-                    group, "run", posting_mode=posting_mode
-                )
+                first, first_hash = render_body(group, "run", posting_mode=posting_mode)
+                second, second_hash = render_body(group, "run", posting_mode=posting_mode)
 
                 limit = platform_comment_limit(posting_mode)
                 self.assertLessEqual(len(first), limit)
@@ -494,9 +480,7 @@ class BodyHashTests(unittest.TestCase):
         group["evidence_by_reviewer"] = {"claude": "The caller checks emptiness."}
         group["suggestion"] = "return early"
 
-        body, _body_hash = render_body(
-            group, "run", posting_mode="github_reviews"
-        )
+        body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
         self.assertLessEqual(len(body), platform_comment_limit("github_reviews"))
         self.assertNotIn("Body:", body)
@@ -515,9 +499,7 @@ class BodyHashTests(unittest.TestCase):
         group["title"] = "T" * 240
 
         with patch.dict(PLATFORM_COMMENT_LIMITS, {"github_reviews": 500}):
-            body, _body_hash = render_body(
-                group, "run", posting_mode="github_reviews"
-            )
+            body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
         self.assertNotIn("Title:", body)
         self.assertNotIn("`T", body)
@@ -561,9 +543,7 @@ class BodyHashTests(unittest.TestCase):
             with self.subTest(body=body):
                 group = self._group()
                 group["body"] = body
-                rendered, _body_hash = render_body(
-                    group, "run", posting_mode="gitlab_discussions"
-                )
+                rendered, _body_hash = render_body(group, "run", posting_mode="gitlab_discussions")
                 parsed = parse_review_note(rendered)
                 self.assertIsNotNone(parsed)
                 assert parsed is not None
@@ -594,13 +574,9 @@ class BodyHashTests(unittest.TestCase):
     def test_just_under_limit_output_and_hash_are_unchanged(self) -> None:
         group = self._group()
         group["body"] = "x"
-        probe_body, _probe_hash = render_body(
-            group, "run", posting_mode="github_reviews"
-        )
+        probe_body, _probe_hash = render_body(group, "run", posting_mode="github_reviews")
         group["body"] = "x" * (65_535 - (len(probe_body) - 1))
-        expected_body, expected_hash = render_body(
-            group, "run", posting_mode="github_reviews"
-        )
+        expected_body, expected_hash = render_body(group, "run", posting_mode="github_reviews")
 
         body, body_hash = render_body(group, "run", posting_mode="github_reviews")
 
@@ -613,13 +589,9 @@ class BodyHashTests(unittest.TestCase):
         group = self._group()
         group["body"] = "whole fragment with `ticks`"
         group["suggestion"] = "x"
-        probe_body, _probe_hash = render_body(
-            group, "run", posting_mode="gitlab_discussions"
-        )
+        probe_body, _probe_hash = render_body(group, "run", posting_mode="gitlab_discussions")
         group["suggestion"] = "x" * (65_537 - (len(probe_body) - 1))
-        full_body, _full_hash = render_body(
-            group, "run", posting_mode="gitlab_discussions"
-        )
+        full_body, _full_hash = render_body(group, "run", posting_mode="gitlab_discussions")
 
         body, _body_hash = render_body(group, "run", posting_mode="github_reviews")
 
@@ -638,9 +610,7 @@ class BodyHashTests(unittest.TestCase):
 
     def test_oversized_fragment_does_not_suppress_smaller_later_fragment(self) -> None:
         self.assertEqual(
-            _limit_fragments(
-                [RenderFragment("x" * 100), RenderFragment("retained")], 60
-            ),
+            _limit_fragments([RenderFragment("x" * 100), RenderFragment("retained")], 60),
             "retained\n\n" + PLATFORM_TRUNCATION_NOTICE,
         )
 
@@ -662,7 +632,6 @@ class BodyHashTests(unittest.TestCase):
         for scalar in (" \t ", "   ", " ", " \t abc", "a\tb"):
             with self.subTest(scalar=scalar):
                 self.assertEqual(_unwrap_span(_encode_span(scalar)), scalar)
-
 
     def test_unknown_posting_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported posting mode"):

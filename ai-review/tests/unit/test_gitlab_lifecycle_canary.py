@@ -18,12 +18,8 @@ ROOT = Path(__file__).resolve().parents[3]
 common = load_repository_script(
     "candidate_canary_common", ROOT / "scripts/candidate_canary_common.py"
 )
-canary = load_repository_script(
-    "canary_gitlab", ROOT / "scripts/canary_gitlab.py"
-)
-lifecycle = load_repository_script(
-    "canary_gitlab", ROOT / "scripts/canary_gitlab.py"
-)
+canary = load_repository_script("canary_gitlab", ROOT / "scripts/canary_gitlab.py")
+lifecycle = load_repository_script("canary_gitlab", ROOT / "scripts/canary_gitlab.py")
 ARGS = argparse.Namespace(
     base_image="ghcr.io/example/ai-review-base:2.0-" + "a" * 40 + "@sha256:" + "b" * 64,
     reviewer_image="ghcr.io/example/ai-review-reviewer:2.0-" + "a" * 40 + "@sha256:" + "c" * 64,

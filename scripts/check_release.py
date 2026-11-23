@@ -115,7 +115,9 @@ def _json_object(text: str, label: str) -> dict[str, Any]:
 def _extract(root: Path, revision: str, paths: tuple[str, ...], destination: Path) -> None:
     archive = subprocess.run(
         ["git", "archive", "--format=tar", revision, "--", *paths],
-        cwd=root, check=False, capture_output=True,
+        cwd=root,
+        check=False,
+        capture_output=True,
     )
     if archive.returncode:
         raise ReleaseValidationError(archive.stderr.decode(errors="replace").strip())
@@ -133,9 +135,7 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
         if not (tree / GITHUB_WORKFLOW).exists():
             raise ReleaseValidationError(f"release commit has no {GITHUB_WORKFLOW}")
         gitlab = (tree / GITLAB_TEMPLATE).read_text(encoding="utf-8")
-        issues = image_pin_issues(
-            gitlab, (tree / GITHUB_WORKFLOW).read_text(encoding="utf-8")
-        )
+        issues = image_pin_issues(gitlab, (tree / GITHUB_WORKFLOW).read_text(encoding="utf-8"))
     if issues:
         raise ReleaseValidationError("\n".join(issues))
     pins, _ = gitlab_image_pins(gitlab)
@@ -143,9 +143,11 @@ def release_pins(root: Path, revision: str) -> tuple[str, Pins]:
     if not git_is_ancestor(runtime_source, release_commit, root):
         raise ReleaseValidationError(f"runtime source {runtime_source} is not an ancestor of P")
     outside = [
-        path for path in diff_paths(root, runtime_source, release_commit)
-        if not any(path == item or (item.endswith("/") and path.startswith(item))
-                   for item in RELEASE_PATHS)
+        path
+        for path in diff_paths(root, runtime_source, release_commit)
+        if not any(
+            path == item or (item.endswith("/") and path.startswith(item)) for item in RELEASE_PATHS
+        )
     ]
     if outside:
         raise ReleaseValidationError(
@@ -183,15 +185,19 @@ def verify_tag(root: Path, tag: str) -> tuple[str, str, str]:
         raise ReleaseValidationError("release commit is not on protected main")
     # Signer revocations on protected main apply even to older tags.
     signers = _git(root, "show", "refs/remotes/origin/main:.github/allowed_signers")
-    if not any(line.strip() and not line.lstrip().startswith("#")
-               for line in signers.splitlines()):
+    if not any(line.strip() and not line.lstrip().startswith("#") for line in signers.splitlines()):
         raise ReleaseValidationError("protected main has no allowed release signers")
     with tempfile.TemporaryDirectory() as temporary:
         trust = Path(temporary) / "allowed_signers"
         trust.write_text(signers + "\n", encoding="utf-8")
         _git(
-            root, "-c", "gpg.format=ssh", "-c",
-            f"gpg.ssh.allowedSignersFile={trust}", "verify-tag", tag_object,
+            root,
+            "-c",
+            "gpg.format=ssh",
+            "-c",
+            f"gpg.ssh.allowedSignersFile={trust}",
+            "verify-tag",
+            tag_object,
         )
     message = _git(root, "cat-file", "-p", tag_object)
     # verify-tag checks the object's signature, not the ref that points at it: a
@@ -209,8 +215,9 @@ def verify_tag(root: Path, tag: str) -> tuple[str, str, str]:
 
 def _download_json(run_id: str, artifact: str, workdir: Path) -> dict[str, Any]:
     directory = workdir / artifact
-    _gh("run", "download", run_id, "--repo", REPOSITORY, "--name", artifact,
-        "--dir", str(directory))
+    _gh(
+        "run", "download", run_id, "--repo", REPOSITORY, "--name", artifact, "--dir", str(directory)
+    )
     files = list(directory.glob("*.json"))
     if len(files) != 1:
         raise ReleaseValidationError(f"{artifact} must contain exactly one JSON file")
@@ -241,10 +248,18 @@ def verify_canary(run_id: str, pins: Pins, workdir: Path) -> CanaryRun:
     identity artifact lists its campaign, so its uploaded summary must exist. The
     identity itself is written only after verify-candidate checked both images.
     """
-    meta = _json_object(_gh(
-        "run", "view", run_id, "--repo", REPOSITORY, "--json",
-        "attempt,conclusion,event,headBranch,status,url,workflowDatabaseId",
-    ), "canary run metadata")
+    meta = _json_object(
+        _gh(
+            "run",
+            "view",
+            run_id,
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "attempt,conclusion,event,headBranch,status,url,workflowDatabaseId",
+        ),
+        "canary run metadata",
+    )
     required = {
         "status": "completed",
         "conclusion": "success",
@@ -319,7 +334,7 @@ def absolute_links(notes: str, tag: str) -> str:
             return match.group(0)
         # CHANGELOG.md is at the root, so relative and root-relative paths agree.
         path = posixpath.normpath(parts.path.lstrip("/")) if parts.path else "CHANGELOG.md"
-        suffix = destination[len(parts.path):]
+        suffix = destination[len(parts.path) :]
         return f"{match.group(1)}{base}{path}{suffix}"
 
     lines, fence = [], None
@@ -329,8 +344,11 @@ def absolute_links(notes: str, tag: str) -> str:
             fence = opening.group(1)
         elif fence is not None:
             closing = CLOSING_FENCE.match(line)
-            if closing is not None and closing.group(1)[0] == fence[0] \
-                    and len(closing.group(1)) >= len(fence):
+            if (
+                closing is not None
+                and closing.group(1)[0] == fence[0]
+                and len(closing.group(1)) >= len(fence)
+            ):
                 fence = None
         else:
             line = REFERENCE_DESTINATION.sub(absolute, INLINE_DESTINATION.sub(absolute, line))
@@ -367,7 +385,11 @@ gh attestation verify oci://{pins.reviewer_image} \\
 
 
 def publish(
-    root: Path, tag: str, out: Path, publish_run_url: str, github_output: Path | None = None,
+    root: Path,
+    tag: str,
+    out: Path,
+    publish_run_url: str,
+    github_output: Path | None = None,
 ) -> Path:
     version = tag_version(tag)
     tag_object, release_commit, run_id = verify_tag(root, tag)

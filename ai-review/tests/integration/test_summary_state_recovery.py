@@ -612,13 +612,21 @@ def test_refuted_overflow_fails_before_resolving_or_writing(mode: str) -> None:
     if mode == "github_reviews":
         client.add_reply(root, "/ai-review refuted", author_id=7)
     else:
-        client.discussions[0]["notes"].append({
-            "id": 10000, "body": "/ai-review refuted", "author": {"id": 7},
-        })
+        client.discussions[0]["notes"].append(
+            {
+                "id": 10000,
+                "body": "/ai-review refuted",
+                "author": {"id": 7},
+            }
+        )
     original_summary = client.state_notes[0]["body"]
-    config = replace(config, state=replace(
-        config.state, retention=replace(config.state.retention, max_records=0),
-    ))
+    config = replace(
+        config,
+        state=replace(
+            config.state,
+            retention=replace(config.state.retention, max_records=0),
+        ),
+    )
     with (
         patch.object(client, "resolve_thread", wraps=client.resolve_thread) as resolve,
         patch.object(client, "update_comment", wraps=client.update_comment) as update,

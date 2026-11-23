@@ -481,9 +481,7 @@ class StringifiedStructuredOutputTests(unittest.TestCase):
                         self.assertEqual(loaded[field], [item])
 
     def test_envelopes_are_unchanged(self) -> None:
-        payloads = (
-            ({"type": "result", "structured_output": {"findings": []}}, "review"),
-        )
+        payloads = (({"type": "result", "structured_output": {"findings": []}}, "review"),)
         for payload, stage in payloads:
             with self.subTest(stage=stage):
                 self.assertIs(_coerce_adapter_root(payload, stage=stage), payload)
@@ -929,7 +927,8 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
             paths = _scaffold_project(Path(tmp))
             config_path = _write_reviewer_config(paths["config_dir"], "opencode")
             _write_adapter(
-                paths["adapter_dir"], "opencode",
+                paths["adapter_dir"],
+                "opencode",
                 '#!/bin/sh\necho "opencode provider/API error: rate_limit_exceeded" >&2\nexit 1\n',
             )
             self._set_env(paths, config_path)
@@ -1255,9 +1254,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_enabled_critique_renders_prompt_and_pooled_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Preserve this finding")
             _write_adapter(
                 paths["adapter_dir"],
@@ -1282,9 +1279,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_pool_audit_copy_cannot_change_trusted_short_id_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Original pool")
             _write_adapter(
                 paths["adapter_dir"],
@@ -1306,9 +1301,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
         # Unknown short IDs invalidate the batch before it reaches consensus.
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Pooled")
             critiques = [
                 {
@@ -1333,9 +1326,7 @@ class AdapterStatusEndToEndTests(unittest.TestCase):
     def test_malformed_critique_with_unknown_id_emits_schema_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _scaffold_project(Path(tmp))
-            config_path = _write_reviewer_config(
-                paths["config_dir"], "codex"
-            )
+            config_path = _write_reviewer_config(paths["config_dir"], "codex")
             _write_author_findings(paths["output_dir"], title="Pooled")
             payload = json.dumps(
                 {

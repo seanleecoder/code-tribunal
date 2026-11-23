@@ -51,9 +51,7 @@ def load_pin(path: Path = PIN_PATH) -> dict[str, str]:
         )
     for target in PLATFORMS:
         sha256 = fields[f"{target}_sha256"]
-        if len(sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in sha256
-        ):
+        if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
             raise LinkCheckError(
                 f"Lychee pin {target}_sha256 must be 64 lowercase hexadecimal characters"
             )
@@ -124,14 +122,15 @@ def _inventory() -> tuple[str, ...]:
     """Tracked Markdown outside the frozen release notes."""
     completed = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--", "*.md"],
-        cwd=ROOT, capture_output=True, check=False,
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
     )
     if completed.returncode:
         raise LinkCheckError("git ls-files failed while inventorying Markdown")
     names = (relative.decode("utf-8") for relative in completed.stdout.split(b"\0") if relative)
     return tuple(
-        name for name in names
-        if not name.startswith(FROZEN_NOTES) and (ROOT / name).is_file()
+        name for name in names if not name.startswith(FROZEN_NOTES) and (ROOT / name).is_file()
     )
 
 

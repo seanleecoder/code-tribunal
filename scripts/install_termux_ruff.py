@@ -4,6 +4,7 @@
 Explicit setup only: no quality target downloads tools. The musllinux executable
 is probed locally; this does not install incompatible wheel metadata.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,7 +26,11 @@ MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 
 
 def install_archive(
-    data: bytes, digest: str, version: str, scripts: Path, site: Path,
+    data: bytes,
+    digest: str,
+    version: str,
+    scripts: Path,
+    site: Path,
 ) -> Path:
     if hashlib.sha256(data).hexdigest() != digest:
         raise ValueError("Ruff archive SHA256 mismatch")
@@ -44,7 +49,10 @@ def install_archive(
         candidate.write_bytes(binary_data)
         candidate.chmod(0o755)
         result = subprocess.run(
-            [str(candidate), "--version"], capture_output=True, text=True, check=False,
+            [str(candidate), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode or result.stdout.strip() != f"ruff {version}":
             raise ValueError(f"pinned Ruff cannot execute on this runtime: {result.stderr.strip()}")
@@ -79,7 +87,10 @@ def main() -> int:
             raise ValueError("Ruff archive exceeds the size limit")
         digest = wheel["digests"]["sha256"]
         binary = install_archive(
-            data, digest, version, Path(sysconfig.get_path("scripts")),
+            data,
+            digest,
+            version,
+            Path(sysconfig.get_path("scripts")),
             Path(sysconfig.get_path("purelib")),
         )
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:

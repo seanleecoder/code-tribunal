@@ -130,10 +130,16 @@ class PostTests(PostCase):
             {"created_discussions": "0"},
             {"warnings": [123]},
             {"summary_comment": {**result["summary_comment"], "action": "unknown"}},
-            {"posted_discussions": [{
-                "issue_id": "a" * 64, "action": "created",
-                "discussion_id": "thread", "root_note_id": "123",
-            }]},
+            {
+                "posted_discussions": [
+                    {
+                        "issue_id": "a" * 64,
+                        "action": "created",
+                        "discussion_id": "thread",
+                        "root_note_id": "123",
+                    }
+                ]
+            },
         ):
             with self.subTest(changes=changes), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -843,7 +849,9 @@ class PostTests(PostCase):
         client = FakePostClient("head")
         consensus = self._consensus()
         consensus["groups"][0]["representative_anchor"]["end"] = {
-            "old_line": None, "new_line": 4, "line_code": None,
+            "old_line": None,
+            "new_line": 4,
+            "line_code": None,
         }
         with patch.object(
             client, "create_inline_comment", side_effect=ReviewPlatformError("invalid position")

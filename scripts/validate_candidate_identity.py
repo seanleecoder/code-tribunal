@@ -154,13 +154,17 @@ def cli(argv: list[str] | None = None) -> int:
             verify_pulled_image(role=role, image=image, runtime_source=args.runtime_source)
     if args.candidate_out is not None:
         args.candidate_out.parent.mkdir(parents=True, exist_ok=True)
-        args.candidate_out.write_bytes(canonical_json_bytes({
-            "schema_version": CANDIDATE_SCHEMA,
-            "runtime_source": args.runtime_source,
-            "base_image": args.base_image,
-            "reviewer_image": args.reviewer_image,
-            "campaigns": campaigns,
-        }))
+        args.candidate_out.write_bytes(
+            canonical_json_bytes(
+                {
+                    "schema_version": CANDIDATE_SCHEMA,
+                    "runtime_source": args.runtime_source,
+                    "base_image": args.base_image,
+                    "reviewer_image": args.reviewer_image,
+                    "campaigns": campaigns,
+                }
+            )
+        )
     return 0
 
 

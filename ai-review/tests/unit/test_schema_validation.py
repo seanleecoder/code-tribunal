@@ -203,8 +203,16 @@ class SchemaValidationTests(unittest.TestCase):
         cases = [
             ("added", "/dev/null", "b/new.py", "@@ -0,0 +1,2 @@", "+a\n+b", "new", 1, 2, None, 1),
             (
-                "integral coordinates", "/dev/null", "b/new.py", "@@ -0,0 +1,2 @@",
-                "+a\n+b", "new", 1.0, 2.0, None, 1,
+                "integral coordinates",
+                "/dev/null",
+                "b/new.py",
+                "@@ -0,0 +1,2 @@",
+                "+a\n+b",
+                "new",
+                1.0,
+                2.0,
+                None,
+                1,
             ),
             (
                 "deleted",

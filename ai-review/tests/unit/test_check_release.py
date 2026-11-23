@@ -48,9 +48,13 @@ class ReleaseRepository:
         _git(root, "init", "-q", "-b", "main")
         # maintenance.auto: each commit otherwise starts a detached `git maintenance
         # run --auto`, which can write into .git while the temp dir is removed.
-        for key, value in (("user.name", "Fixture"), ("user.email", "fixture@example.test"),
-                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"),
-                           ("maintenance.auto", "false")):
+        for key, value in (
+            ("user.name", "Fixture"),
+            ("user.email", "fixture@example.test"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
+            ("maintenance.auto", "false"),
+        ):
             _git(root, "config", key, value)
         for relative in TEMPLATES:
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -116,8 +120,10 @@ class ReleasePinsTests(unittest.TestCase):
         (self.repo.root / tool.GITHUB_WORKFLOW).rename(template)
         shutil.copyfile(template, self.repo.root / GITHUB_CALLER)
         self.repo.runtime_source = self.repo.commit("copied-template R")
-        self.repo.repin(self.repo.runtime_source, (str(template.relative_to(self.repo.root)),
-                                                   GITHUB_CALLER, tool.GITLAB_TEMPLATE))
+        self.repo.repin(
+            self.repo.runtime_source,
+            (str(template.relative_to(self.repo.root)), GITHUB_CALLER, tool.GITLAB_TEMPLATE),
+        )
         self.repo.commit("copied-template P")
         with self.assertRaisesRegex(tool.ReleaseValidationError, tool.GITHUB_WORKFLOW):
             tool.release_pins(self.repo.root, "HEAD")
@@ -198,8 +204,12 @@ class ReleaseTagTests(unittest.TestCase):
 
     def test_a_ref_must_carry_the_tag_object_signed_under_its_name(self) -> None:
         _git(self.root, "tag", "-s", "v2.1.1", "-m", "Canary-run: 4242\n")
-        _git(self.root, "update-ref", "refs/tags/v2.1.0",
-             _git(self.root, "rev-parse", "refs/tags/v2.1.1"))
+        _git(
+            self.root,
+            "update-ref",
+            "refs/tags/v2.1.0",
+            _git(self.root, "rev-parse", "refs/tags/v2.1.1"),
+        )
         with self.assertRaisesRegex(tool.ReleaseValidationError, "signed as 'v2.1.1'"):
             tool.verify_tag(self.root, "v2.1.0")
         self.assertEqual(tool.verify_tag(self.root, "v2.1.1")[2], "4242")
@@ -215,9 +225,13 @@ class TagVersionTests(unittest.TestCase):
     def test_tag_versions_start_at_the_first_reusable_workflow_release(self) -> None:
         self.assertEqual(tool.tag_version("v3.0.0-rc.1"), "3.0.0-rc.1")
         self.assertEqual(tool.tag_version("v10.0.0"), "10.0.0")
-        for tag, error in (("v2.0.3", "predates 3.0.0"), ("v2.1.0", "predates 3.0.0"),
-                           ("v2.1.1-rc.1", "predates 3.0.0"),
-                           ("3.0.0", "v-prefixed"), ("v3.0", "v-prefixed")):
+        for tag, error in (
+            ("v2.0.3", "predates 3.0.0"),
+            ("v2.1.0", "predates 3.0.0"),
+            ("v2.1.1-rc.1", "predates 3.0.0"),
+            ("3.0.0", "v-prefixed"),
+            ("v3.0", "v-prefixed"),
+        ):
             with self.subTest(tag=tag), self.assertRaisesRegex(tool.ReleaseValidationError, error):
                 tool.tag_version(tag)
 
@@ -228,28 +242,42 @@ class FakeCanary:
     def __init__(self, pins, campaigns=("panel", "lifecycle", "hostile")) -> None:
         candidate = pins.candidate()
         self.meta = {
-            "attempt": 1, "conclusion": "success", "event": "workflow_dispatch",
-            "headBranch": "main", "status": "completed", "workflowDatabaseId": 7,
+            "attempt": 1,
+            "conclusion": "success",
+            "event": "workflow_dispatch",
+            "headBranch": "main",
+            "status": "completed",
+            "workflowDatabaseId": 7,
             "url": "https://github.com/seanleecoder/code-tribunal/actions/runs/4242",
         }
         self.workflow = {"id": 7, "path": tool.CANARY_WORKFLOW}
-        self.artifacts = {tool.IDENTITY_ARTIFACT: {
-            "schema_version": tool.CANDIDATE_SCHEMA, **candidate, "campaigns": list(campaigns),
-        }}
+        self.artifacts = {
+            tool.IDENTITY_ARTIFACT: {
+                "schema_version": tool.CANDIDATE_SCHEMA,
+                **candidate,
+                "campaigns": list(campaigns),
+            }
+        }
         for campaign, artifacts in tool.CAMPAIGN_SUMMARIES.items():
             if campaign not in campaigns:
                 continue
             for artifact in artifacts.values():
                 if campaign == "panel":
                     summary = {
-                        "candidate": candidate, "cleanup": "success",
+                        "candidate": candidate,
+                        "cleanup": "success",
                         "consensus": {"panel_status": "full"},
                         "posting": {"status": "success", "posted_thread_count": 3},
                     }
                 else:
-                    summary = {"candidate": candidate, "passed": True, "steps": [
-                        {"name": "create", "passed": True}, {"name": "reopen", "passed": True},
-                    ]}
+                    summary = {
+                        "candidate": candidate,
+                        "passed": True,
+                        "steps": [
+                            {"name": "create", "passed": True},
+                            {"name": "reopen", "passed": True},
+                        ],
+                    }
                 self.artifacts[artifact] = summary
 
     def __call__(self, *args: str) -> str:
@@ -278,20 +306,25 @@ class CanaryVerificationTests(unittest.TestCase):
         )
 
     def _verify(self, canary: FakeCanary):
-        with (tempfile.TemporaryDirectory() as workdir,
-              mock.patch.object(tool, "_gh", side_effect=canary)):
+        with (
+            tempfile.TemporaryDirectory() as workdir,
+            mock.patch.object(tool, "_gh", side_effect=canary),
+        ):
             return tool.verify_canary("4242", self.pins, Path(workdir))
 
     def test_a_green_run_on_the_pins_yields_one_verdict_per_campaign_and_platform(self) -> None:
         run = self._verify(FakeCanary(self.pins))
         self.assertEqual(run.url, "https://github.com/seanleecoder/code-tribunal/actions/runs/4242")
-        self.assertEqual(run.verdicts, (
-            "panel / github: full panel, 3 threads posted, cleanup succeeded",
-            "panel / gitlab: full panel, 3 threads posted, cleanup succeeded",
-            "lifecycle / github: 2/2 steps passed",
-            "lifecycle / gitlab: 2/2 steps passed",
-            "hostile / gitlab: 2/2 steps passed",
-        ))
+        self.assertEqual(
+            run.verdicts,
+            (
+                "panel / github: full panel, 3 threads posted, cleanup succeeded",
+                "panel / gitlab: full panel, 3 threads posted, cleanup succeeded",
+                "lifecycle / github: 2/2 steps passed",
+                "lifecycle / gitlab: 2/2 steps passed",
+                "hostile / gitlab: 2/2 steps passed",
+            ),
+        )
 
     def test_hostile_is_optional(self) -> None:
         run = self._verify(FakeCanary(self.pins, ("panel", "lifecycle")))
@@ -299,18 +332,26 @@ class CanaryVerificationTests(unittest.TestCase):
 
     def test_panel_and_lifecycle_are_required(self) -> None:
         for campaigns in (("panel",), ("lifecycle", "hostile")):
-            with self.subTest(campaigns=campaigns), self.assertRaisesRegex(
-                tool.ReleaseValidationError, "must include panel and lifecycle"
+            with (
+                self.subTest(campaigns=campaigns),
+                self.assertRaisesRegex(
+                    tool.ReleaseValidationError, "must include panel and lifecycle"
+                ),
             ):
                 self._verify(FakeCanary(self.pins, campaigns))
 
     def test_the_run_must_be_a_first_attempt_green_dispatch_of_the_canary_on_main(self) -> None:
-        for field, value in (("conclusion", "failure"), ("event", "push"),
-                             ("headBranch", "feature"), ("attempt", 2)):
+        for field, value in (
+            ("conclusion", "failure"),
+            ("event", "push"),
+            ("headBranch", "feature"),
+            ("attempt", 2),
+        ):
             canary = FakeCanary(self.pins)
             canary.meta[field] = value
-            with self.subTest(field=field), self.assertRaisesRegex(
-                tool.ReleaseValidationError, field
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(tool.ReleaseValidationError, field),
             ):
                 self._verify(canary)
         canary = FakeCanary(self.pins)
@@ -322,8 +363,9 @@ class CanaryVerificationTests(unittest.TestCase):
         for field in ("runtime_source", "base_image", "reviewer_image"):
             canary = FakeCanary(self.pins)
             canary.artifacts[tool.IDENTITY_ARTIFACT][field] = "something else"
-            with self.subTest(field=field), self.assertRaisesRegex(
-                tool.ReleaseValidationError, f"canary tested {field}"
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(tool.ReleaseValidationError, f"canary tested {field}"),
             ):
                 self._verify(canary)
         canary = FakeCanary(self.pins)
@@ -345,7 +387,6 @@ class CanaryVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ReleaseValidationError, "no artifact"):
             self._verify(canary)
 
-
     def test_the_summary_table_matches_the_canary_campaigns_and_uploads(self) -> None:
         identity = load_repository_script(
             "validate_candidate_identity", REPO / "scripts/validate_candidate_identity.py"
@@ -363,11 +404,15 @@ class CanaryVerificationTests(unittest.TestCase):
                         )
                         for platform in platforms
                     }
-        self.assertEqual(uploads, {tool.IDENTITY_ARTIFACT} | {
-            artifact
-            for artifacts in tool.CAMPAIGN_SUMMARIES.values()
-            for artifact in artifacts.values()
-        })
+        self.assertEqual(
+            uploads,
+            {tool.IDENTITY_ARTIFACT}
+            | {
+                artifact
+                for artifacts in tool.CAMPAIGN_SUMMARIES.values()
+                for artifact in artifacts.values()
+            },
+        )
 
 
 class ReleaseBodyTests(unittest.TestCase):
@@ -377,31 +422,35 @@ class ReleaseBodyTests(unittest.TestCase):
             "### Changed\n\n- The release body now records the tested identity.",
         )
         for version in ("2.1.1", "Unreleased"):
-            with self.subTest(version=version), self.assertRaisesRegex(
-                tool.ReleaseValidationError, "no `## \\["
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(tool.ReleaseValidationError, "no `## \\["),
             ):
                 tool.changelog_section(CHANGELOG, version)
 
     def test_repository_links_are_pinned_to_the_tag(self) -> None:
         blob = "https://github.com/seanleecoder/code-tribunal/blob/v2.1.0/"
         notes = (
-            "- See [ADR-0004](docs/decisions/0004.md) and [guide](<docs/g.md#protect> \"Guide\").\n"
+            '- See [ADR-0004](docs/decisions/0004.md) and [guide](<docs/g.md#protect> "Guide").\n'
             "- Root [file](/README.md?plain=1), [here](#unreleased), [web](https://example.test/x),"
             " [mail](mailto:a@example.test), [up](./docs/../SECURITY.md).\n"
-            "[ref]: docs/ref.md \"Title\"\n"
+            '[ref]: docs/ref.md "Title"\n'
             "```md\n[example](docs/untouched.md)\n```python\n[still](docs/code.md)\n```\n"
             "[after](docs/after.md)"
         )
-        self.assertEqual(tool.absolute_links(notes, "v2.1.0"), (
-            f"- See [ADR-0004]({blob}docs/decisions/0004.md) and"
-            f" [guide](<{blob}docs/g.md#protect> \"Guide\").\n"
-            f"- Root [file]({blob}README.md?plain=1), [here]({blob}CHANGELOG.md#unreleased),"
-            " [web](https://example.test/x), [mail](mailto:a@example.test),"
-            f" [up]({blob}SECURITY.md).\n"
-            f"[ref]: {blob}docs/ref.md \"Title\"\n"
-            "```md\n[example](docs/untouched.md)\n```python\n[still](docs/code.md)\n```\n"
-            f"[after]({blob}docs/after.md)"
-        ))
+        self.assertEqual(
+            tool.absolute_links(notes, "v2.1.0"),
+            (
+                f"- See [ADR-0004]({blob}docs/decisions/0004.md) and"
+                f' [guide](<{blob}docs/g.md#protect> "Guide").\n'
+                f"- Root [file]({blob}README.md?plain=1), [here]({blob}CHANGELOG.md#unreleased),"
+                " [web](https://example.test/x), [mail](mailto:a@example.test),"
+                f" [up]({blob}SECURITY.md).\n"
+                f'[ref]: {blob}docs/ref.md "Title"\n'
+                "```md\n[example](docs/untouched.md)\n```python\n[still](docs/code.md)\n```\n"
+                f"[after]({blob}docs/after.md)"
+            ),
+        )
 
     def test_every_link_outside_fences_is_pinned_without_corrupting_its_path(self) -> None:
         blob = "https://github.com/seanleecoder/code-tribunal/blob/v2.1.0/"
@@ -411,18 +460,23 @@ class ReleaseBodyTests(unittest.TestCase):
             "[c](docs/`c`.md) and `[d](docs/d.md)`\n"
             "- item\n  - nested\n    [e](docs/e.md)"
         )
-        self.assertEqual(tool.absolute_links(notes, "v2.1.0"), (
-            f"An escaped \\` before [a]({blob}docs/a.md) and `real code`.\n"
-            f"`first on one line and\nsecond` and [b]({blob}docs/b.md) then `last`.\n"
-            f"[c]({blob}docs/`c`.md) and `[d]({blob}docs/d.md)`\n"
-            f"- item\n  - nested\n    [e]({blob}docs/e.md)"
-        ))
+        self.assertEqual(
+            tool.absolute_links(notes, "v2.1.0"),
+            (
+                f"An escaped \\` before [a]({blob}docs/a.md) and `real code`.\n"
+                f"`first on one line and\nsecond` and [b]({blob}docs/b.md) then `last`.\n"
+                f"[c]({blob}docs/`c`.md) and `[d]({blob}docs/d.md)`\n"
+                f"- item\n  - nested\n    [e]({blob}docs/e.md)"
+            ),
+        )
 
     def test_the_body_records_identity_verdicts_and_the_attestation_command(self) -> None:
         source = "a" * 40
         pins = tool.Pins(source, "base@sha256:" + "b" * 64, "reviewer@sha256:" + "c" * 64)
         body = tool.release_body(
-            "Notes.", "d" * 40, pins,
+            "Notes.",
+            "d" * 40,
+            pins,
             tool.CanaryRun(
                 "https://canary.test/1", ("panel / github: ok", "lifecycle / gitlab: ok")
             ),
@@ -430,27 +484,34 @@ class ReleaseBodyTests(unittest.TestCase):
         )
         self.assertTrue(body.startswith("Notes.\n\n## Release identity\n"))
         for expected in (
-            f"Runtime source (R): `{source}`", f"Release commit (P): `{'d' * 40}`",
-            "Base image: `base@sha256:", "Reviewer image: `reviewer@sha256:",
+            f"Runtime source (R): `{source}`",
+            f"Release commit (P): `{'d' * 40}`",
+            "Base image: `base@sha256:",
+            "Reviewer image: `reviewer@sha256:",
             "Candidate Canary: https://canary.test/1\n  - panel / github: ok\n"
             "  - lifecycle / gitlab: ok\n",
             "Publication: https://publish.test/2",
             "gh attestation verify oci://reviewer@sha256:",
-            f"--source-digest {source}", f"--cert-identity {tool.SIGNER_IDENTITY}",
+            f"--source-digest {source}",
+            f"--cert-identity {tool.SIGNER_IDENTITY}",
         ):
             self.assertIn(expected, body)
 
 
 class PublishWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.workflow = yaml.load(PUBLISH_WORKFLOW.read_text(encoding="utf-8"),
-                                  Loader=yaml.BaseLoader)
+        self.workflow = yaml.load(
+            PUBLISH_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
 
     def test_validation_runs_main_code_with_read_only_credentials(self) -> None:
         validate = self.workflow["jobs"]["validate"]
         self.assertEqual(validate["permissions"], {"contents": "read", "actions": "read"})
-        checkouts = [step for step in validate["steps"]
-                     if step.get("uses", "").startswith("actions/checkout@")]
+        checkouts = [
+            step
+            for step in validate["steps"]
+            if step.get("uses", "").startswith("actions/checkout@")
+        ]
         self.assertEqual(len(checkouts), 1)
         self.assertEqual(checkouts[0]["with"]["ref"], "main")
         self.assertEqual(checkouts[0]["with"]["persist-credentials"], "false")
@@ -462,11 +523,12 @@ class PublishWorkflowTests(unittest.TestCase):
     def test_publication_rechecks_the_tag_and_attaches_no_assets(self) -> None:
         publish = self.workflow["jobs"]["publish"]
         self.assertEqual(publish["permissions"], {"contents": "write"})
-        self.assertFalse(any("actions/checkout@" in step.get("uses", "")
-                             for step in publish["steps"]))
+        self.assertFalse(
+            any("actions/checkout@" in step.get("uses", "") for step in publish["steps"])
+        )
         run = publish["steps"][-1]["run"]
         self.assertIn('"$remote_object" != "$TAG_OBJECT"', run)
-        create = run[run.index("gh release create"):]
+        create = run[run.index("gh release create") :]
         self.assertIn('--notes-file "$RUNNER_TEMP/release/release-body.md"', create)
         self.assertNotIn("manifest", create)
         self.assertEqual(

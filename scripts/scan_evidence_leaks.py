@@ -158,8 +158,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: cannot read --exact-value-file: {exc}", file=sys.stderr)
             return 2
         if not exact_values:
-            print("ERROR: --exact-value-file contained no value of at least 8 characters",
-                  file=sys.stderr)
+            print(
+                "ERROR: --exact-value-file contained no value of at least 8 characters",
+                file=sys.stderr,
+            )
             return 2
 
     findings, scanned, total_bytes = scan(
