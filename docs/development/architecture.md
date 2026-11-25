@@ -97,9 +97,9 @@ These rules are worth stating because breaking them is silent:
   well-formed final answer, and a shell command item is a schema error because
   Codex runs without a shell. A repository MCP call that reports a tool error
   (missing file, refused path) is a usable result, like a grep with no match; a
-  call whose `error` is set is operational, which includes a search that timed
-  out or could not start, because the tool server returns those as JSON-RPC
-  errors. Calls to Codex's own MCP resource tools are admitted and do not count
+  call whose `error` is set is operational. The tool server returns JSON-RPC
+  errors when a search times out, fails to start, or terminates on an unexpected
+  signal. Calls to Codex's own MCP resource tools are admitted and do not count
   as repository attempts. No-tool reviews and critiques and recovery after a
   failed tool remain usable.
 - Codex runs without a shell. Review reads the snapshot through the trusted

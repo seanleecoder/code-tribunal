@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tomllib
@@ -79,6 +80,21 @@ def test_grep_caps_dense_files_only_in_a_directory_search(repo: Path) -> None:
     assert len([line for line in lines if line.startswith("dense.txt:")]) == cap
     text, is_error = call(repo, "grep", pattern="hit", path="dense.txt")
     assert not is_error and len(text.splitlines()) == cap + 10
+
+
+@needs_rg
+def test_grep_applies_the_file_size_limit_to_named_files(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "MAX_FILE_BYTES", 16)
+    (repo / "exact.txt").write_bytes(b"hit" + b"x" * 12 + b"\n")
+    (repo / "big.txt").write_bytes(b"hit" + b"x" * 13 + b"\n")
+    match = "exact.txt:1:hit" + "x" * 12 + "\n"
+
+    assert call(repo, "grep", pattern="hit", path="exact.txt") == (match, False)
+    assert call(repo, "grep", pattern="hit", path="big.txt") == (
+        "file exceeds 16-byte search limit: big.txt",
+        True,
+    )
+    assert call(repo, "grep", pattern="hit") == (match, False)
 
 
 @needs_rg
@@ -171,21 +187,39 @@ def test_grep_searches_a_root_file_named_dash(repo: Path) -> None:
 
 def test_output_and_listing_are_bounded(repo: Path, monkeypatch) -> None:
     lines = call(repo, "read_file", path="pkg/module.py", max_lines=1)[0]
-    assert lines == "1\tvalue = 1\n[1 more lines; continue with start_line]"
+    assert lines == "1\tvalue = 1\n[1 more lines; continue with start_line=2]"
     monkeypatch.setattr(tools, "MAX_LIST_ENTRIES", 2)
     assert call(repo, "list_dir") == (".github/\npkg/\n[truncated at 2 entries]", False)
     monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
     text, _ = call(repo, "read_file", path="sentinel.txt")
-    assert text == "1\tsnapsh\n[output truncated at 8 bytes]"
+    assert text == "1\tsnapsh\n[output truncated at 8 bytes]\n[line 1 is partial]"
 
 
 def test_read_file_notes_survive_output_truncation(repo: Path, monkeypatch) -> None:
-    (repo / "long.txt").write_text("".join(f"line {n}\n" for n in range(1, 21)))
+    path = repo / "long.txt"
+    path.write_text("".join(f"line {n}\n" for n in range(1, 21)))
     monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 20)
-    text, is_error = call(repo, "read_file", path="long.txt", max_lines=10)
-    assert not is_error and text.startswith("1\tline 1\n2\tline 2\n")
-    assert text.endswith(
-        "[output truncated at 20 bytes]\n[10 more lines; continue with start_line]"
+    assert call(repo, "read_file", path=path.name) == (
+        "1\tline 1\n2\tline 2\n[output truncated at 20 bytes]\n"
+        "[18 more lines; continue with start_line=3]",
+        False,
+    )
+    assert call(repo, "read_file", path=path.name, start_line=3) == (
+        "3\tline 3\n4\tline 4\n[output truncated at 20 bytes]\n"
+        "[16 more lines; continue with start_line=5]",
+        False,
+    )
+
+    path.write_text("é" * 10 + "\nnext\nextra\n")
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 7)
+    assert call(repo, "read_file", path=path.name) == (
+        "1\téé\n[output truncated at 7 bytes]\n[line 1 is partial]\n"
+        "[2 more lines; continue with start_line=2]",
+        False,
+    )
+    assert call(repo, "read_file", path=path.name, start_line=2, max_lines=1) == (
+        "2\tnext\n[1 more lines; continue with start_line=3]",
+        False,
     )
 
 
@@ -215,6 +249,37 @@ def test_grep_times_out_and_kills_the_search(repo: Path, monkeypatch, tmp_path: 
         "code": -32603,
         "message": "search timed out after 0.2 seconds",
     }
+
+
+@pytest.mark.parametrize(
+    "script, capped",
+    [
+        ("kill -TERM $$", False),
+        ("printf 'match'; kill -TERM $$", False),
+        ("printf '123456789'; exec sleep 30", True),
+    ],
+)
+def test_grep_distinguishes_signal_failure_from_the_output_cap(
+    repo: Path, monkeypatch, tmp_path: Path, script: str, capped: bool
+) -> None:
+    search = tmp_path / "rg-probe"
+    search.write_text(f"#!/bin/sh\n{script}\n")
+    search.chmod(0o755)
+    monkeypatch.setattr(tools, "RG", str(search))
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
+    monkeypatch.setattr(tools, "GREP_TIMEOUT_SECONDS", 2)
+
+    response = rpc(repo, "grep", pattern="x")
+    if capped:
+        assert response["result"] == {
+            "content": [{"type": "text", "text": "12345678\n[output truncated at 8 bytes]"}],
+            "isError": False,
+        }
+    else:
+        assert response["error"] == {
+            "code": -32603,
+            "message": f"search terminated by signal {signal.SIGTERM.value}",
+        }
 
 
 def test_a_search_tool_that_cannot_start_is_a_server_error(repo: Path, monkeypatch) -> None:

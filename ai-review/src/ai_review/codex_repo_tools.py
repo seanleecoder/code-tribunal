@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -93,8 +94,8 @@ TOOLS = [
             "Search the repository under review with a ripgrep regular expression. "
             "Returns path:line:text matches, including hidden files except .git. "
             f"A directory search shows at most {MAX_MATCHES_PER_FILE} matching lines per "
-            "file; grep the file's path for more. Long lines are shortened; read_file "
-            "shows them whole."
+            "file; grep the file's path for more. Long matches are shortened; use read_file "
+            "for more context."
         ),
         "inputSchema": {
             "type": "object",
@@ -173,12 +174,28 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     lines = [line.removesuffix("\r") for line in text.split("\n")]
     if lines[-1] == "":
         lines.pop()
-    selected = lines[start - 1 : start - 1 + count]
-    body = "\n".join(f"{number}\t{line}" for number, line in enumerate(selected, start))
     truncated = len(data) > MAX_FILE_BYTES
+    body: list[str] = []
     notes = []
-    if start - 1 + count < len(lines):
-        notes.append(f"[{len(lines) - (start - 1 + count)} more lines; continue with start_line]")
+    body_bytes = 0
+    for number in range(start, min(start + count, len(lines) + 1)):
+        line = f"{number}\t{lines[number - 1]}"
+        line_bytes = len(line.encode("utf-8")) + (1 if body else 0)
+        if body_bytes + line_bytes > MAX_OUTPUT_BYTES:
+            if body:
+                notes.append(f"[output truncated at {MAX_OUTPUT_BYTES} bytes]")
+            else:
+                body.append(_bounded(line))
+                notes.append(f"[line {number} is partial]")
+            break
+        body.append(line)
+        body_bytes += line_bytes
+
+    next_line = start + len(body)
+    remaining = len(lines) - next_line + 1
+    if remaining > 0:
+        scope = " within the read limit" if truncated else ""
+        notes.append(f"[{remaining} more lines{scope}; continue with start_line={next_line}]")
     elif start > max(len(lines), 1) and truncated:
         notes.append(
             f"[start_line {start} is past the {len(lines)} lines within the "
@@ -190,8 +207,7 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         )
     if truncated:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
-    # Bound only the body, so the notes saying where to continue survive.
-    return "\n".join(part for part in (_bounded(body), *notes) if part)
+    return "\n".join((*body, *notes))
 
 
 def list_dir(root: Path, arguments: dict[str, Any]) -> str:
@@ -209,7 +225,7 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
 
 def _read_limited(stream: IO[bytes], limit: int) -> bytes:
     chunks, size = [], 0
-    while size <= limit and (chunk := stream.read(65536)):
+    while size <= limit and (chunk := stream.read(min(65536, limit + 1 - size))):
         chunks.append(chunk)
         size += len(chunk)
     return b"".join(chunks)
@@ -223,6 +239,10 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # A process argument cannot hold NUL; Popen would raise and end the server.
         raise ToolError("pattern must not contain NUL")
     target = contained(root, arguments.get("path"))
+    if target.is_file() and target.stat().st_size > MAX_FILE_BYTES:
+        raise ToolError(
+            f"file exceeds {MAX_FILE_BYTES}-byte search limit: {_relative(root, target)}"
+        )
     argv = [
         RG,
         "--no-config",
@@ -274,23 +294,33 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
             process.kill()
 
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
-    timer.start()
+    capped = stopped_at_cap = False
     try:
+        timer.start()
         assert process.stdout is not None
         data = _read_limited(process.stdout, MAX_OUTPUT_BYTES)
+        capped = len(data) > MAX_OUTPUT_BYTES
+        if not capped:
+            # Keep the deadline active even if rg closes stdout before exiting.
+            process.wait()
     finally:
         with lock:
             finished = True
         timer.cancel()
-        process.kill()  # Stop a search still running after the output cap.
-        process.wait()
-        if process.stdout is not None:
-            process.stdout.close()
+        try:
+            if process.poll() is None:
+                stopped_at_cap = capped
+                process.kill()
+            returncode = process.wait()
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
     if timed_out:
         raise ServerError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
-    # Output cut at the cap is a result even though rg was killed. Otherwise rg
-    # exits 1 for no match; 2 can accompany partial results (unreadable files).
-    if not data and process.returncode not in (0, 1):
+    if returncode < 0 and not (stopped_at_cap and returncode == -signal.SIGKILL):
+        raise ServerError(f"search terminated by signal {-returncode}")
+    # rg exits 1 for no match; 2 can accompany partial results (unreadable files).
+    if not data and returncode not in (0, 1):
         raise ToolError("search failed; check the pattern and path")
     return _bounded(data.decode("utf-8", errors="replace"))
 

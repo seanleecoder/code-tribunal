@@ -155,10 +155,11 @@ through the trusted
 [`codex_repo_tools`](../ai-review/src/ai_review/codex_repo_tools.py) MCP server,
 which Codex starts outside any sandbox. That server therefore enforces the
 boundary itself: it resolves every requested path, symlinks included, inside the
-snapshot, rejects absolute paths, bounds file, listing and search output, runs
-grep through the image's pinned `rg` with fixed arguments and a timeout, and has
-no write operation. It runs in isolated Python mode and allowlists process
-variables and the certificate paths that the runner and Codex pass through. A
+snapshot, rejects absolute paths, and bounds file, listing and search output.
+It runs the image's pinned `rg` with fixed arguments, a file-size limit and a
+timeout. The server has no write operation. It runs in isolated Python mode
+and allowlists process variables and the certificate paths that the runner
+and Codex pass through. A
 provider credential or other unexpected variable stops the server at startup
 and makes the review fail. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
