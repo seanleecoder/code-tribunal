@@ -398,6 +398,16 @@ def run_case(
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
 
+    ca_environment = {
+        name: os.environ[name]
+        for name in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+        if name in os.environ
+    }
+    if os.environ.get("AI_REVIEW_PACKAGED_RUNTIME") == "1" and not (
+        ca_environment.get("SSL_CERT_FILE") and ca_environment.get("REQUESTS_CA_BUNDLE")
+    ):
+        raise AssertionError("packaged Codex smoke requires SSL_CERT_FILE and REQUESTS_CA_BUNDLE")
+
     work = scratch / label
     source = work / "source"
     source.mkdir(parents=True)
@@ -447,6 +457,7 @@ def run_case(
                 str(int(drop_first_stream)),
             ],
             env={
+                **ca_environment,
                 "PATH": cli_path or os.environ["PATH"],
                 "PYTHONPATH": str(install / "src"),
                 "HOME": str(work / "home"),

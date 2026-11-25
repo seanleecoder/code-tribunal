@@ -411,8 +411,23 @@ def test_tool_surface_rejects_each_unsafe_or_vacuous_result(tmp_path: Path, dama
 def test_a_negative_control_must_fail_for_its_own_cause(
     tmp_path: Path, monkeypatch, stderr: str, shown: bool
 ) -> None:
+    ca_environment = {
+        "SSL_CERT_FILE": "/test/certificates.pem",
+        "SSL_CERT_DIR": "/test/certificates/",
+        "REQUESTS_CA_BUNDLE": "/test/requests.pem",
+        "CURL_CA_BUNDLE": "/test/curl.pem",
+    }
+    for name, value in ca_environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AI_REVIEW_PACKAGED_RUNTIME", "1")
+    monkeypatch.setenv("CODEX_HOME", "/ambient/codex")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-credential")
+
     # A nonzero exit and model_error alone would also follow a rejected override.
     def run(command, *, env, **_kwargs):
+        assert {name: env[name] for name in ca_environment} == ca_environment
+        assert "CODEX_HOME" not in env
+        assert env["OPENROUTER_API_KEY"] == "preflight-dummy"
         Path(command[6]).write_text(json.dumps({"stdout": "", "stderr": stderr, "returncode": 1}))
         findings = Path(env["AI_REVIEW_OUTPUT_DIR"]) / "findings"
         findings.mkdir(parents=True)
@@ -434,3 +449,9 @@ def test_a_negative_control_must_fail_for_its_own_cause(
     else:
         with pytest.raises(AssertionError, match="control did not show"):
             case()
+
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        with monkeypatch.context() as packaged:
+            packaged.setenv(name, "")
+            with pytest.raises(AssertionError, match="packaged Codex smoke requires"):
+                case()

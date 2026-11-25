@@ -157,11 +157,10 @@ which Codex starts outside any sandbox. That server therefore enforces the
 boundary itself: it resolves every requested path, symlinks included, inside the
 snapshot, rejects absolute paths, bounds file, listing and search output, runs
 grep through the image's pinned `rg` with fixed arguments and a timeout, and has
-no write operation. It runs in isolated Python
-mode and refuses to start if its environment carries anything beyond plain
-process variables, so a provider credential cannot reach model-driven tool
-calls; Codex then fails the review
-instead of continuing without tools. Codex's remaining `apply_patch` tool is
+no write operation. It runs in isolated Python mode and allowlists process
+variables and the certificate paths that the runner and Codex pass through. A
+provider credential or other unexpected variable stops the server at startup
+and makes the review fail. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
 [image gate](development/testing.md#codex-image-gate) checks containment,
 credential refusal, the pinned tool set and unchanged bytes. The registry also

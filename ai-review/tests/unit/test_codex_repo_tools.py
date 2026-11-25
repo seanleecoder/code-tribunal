@@ -272,7 +272,15 @@ def test_an_unexpected_handler_error_does_not_end_the_server(repo: Path, monkeyp
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:
     script = Path(tools.__file__)
-    clean = {"PATH": os.environ["PATH"], "HOME": str(repo), "LC_CTYPE": "C.UTF-8"}
+    bundle = str(repo / "ca-bundle.pem")
+    clean = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(repo),
+        "LC_CTYPE": "C.UTF-8",
+        "SSL_CERT_FILE": bundle,
+        "REQUESTS_CA_BUNDLE": bundle,
+        "CURL_CA_BUNDLE": bundle,
+    }
     run = lambda env: subprocess.run(  # noqa: E731
         [sys.executable, "-I", str(script), "--root", str(repo)],
         input='{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
@@ -284,9 +292,10 @@ def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:
     )
     ok = run(clean)
     assert ok.returncode == 0 and json.loads(ok.stdout)["result"] == {}
-    leaked = run({**clean, "OPENROUTER_API_KEY": "credential-value"})
+    leaked = run({**clean, "OPENROUTER_API_KEY": "credential-value", "OTHER_VAR": "other-value"})
     assert leaked.returncode == 2 and not leaked.stdout
     assert "OPENROUTER_API_KEY" in leaked.stderr and "credential-value" not in leaked.stderr
+    assert "OTHER_VAR" in leaked.stderr and "other-value" not in leaked.stderr
 
 
 def test_stdio_protocol_offers_only_read_only_tools(repo: Path) -> None:

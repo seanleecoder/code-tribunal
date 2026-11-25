@@ -8,9 +8,9 @@ containment: every path is resolved, symlinks included, and must stay below the
 root; output is bounded; nothing is written.
 
 The file is standard-library only and runs in isolated mode, so it imports
-nothing from the runner package or the environment. It refuses to start if its
-environment carries anything beyond the plain process variables Codex passes to
-MCP servers, so a credential can never reach model-driven tool calls.
+nothing from the runner package or the environment. It accepts only the process
+variables and certificate paths that the runner and Codex pass to MCP servers.
+It refuses credentials and other unexpected variables at startup.
 """
 
 from __future__ import annotations
@@ -36,10 +36,23 @@ MAX_MATCHES_PER_FILE = 50
 GREP_TIMEOUT_SECONDS = 20
 RG = "/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
-# Codex passes MCP servers only these variables unless configured otherwise
-# (codex-rs rmcp-client DEFAULT_ENV_VARS); Python's locale coercion adds LC_*.
+# Codex forwards DEFAULT_ENV_VARS and CUSTOM_CA_ENV_KEYS to local stdio MCP.
+# Admit the runner's forwarded certificate paths. Locale coercion can add LC_*.
 ALLOWED_ENVIRONMENT = frozenset(
-    {"HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "TERM", "TMPDIR", "TZ"}
+    {
+        "HOME",
+        "LOGNAME",
+        "PATH",
+        "SHELL",
+        "USER",
+        "LANG",
+        "TERM",
+        "TMPDIR",
+        "TZ",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+    }
 )
 
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}

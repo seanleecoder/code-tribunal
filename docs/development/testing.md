@@ -36,7 +36,9 @@ against their code markers by `test_temporary_compatibility.py`.
 Codex CLI, its shipped adapter and registry arguments inside the reviewer image
 with `--network none` and default container security options. A scripted
 loopback Responses provider drives code-mode tool calls; no credential or paid
-provider is used. Only the provider URL is redirected. The image workflow runs it
+provider is used. The loopback runner forwards the allowed certificate-path
+variables and requires the two default CA bundle paths in the reviewer image.
+Only the provider URL is redirected. The image workflow runs the gate
 unconditionally, including on CLI pin bumps, and image handoff depends on it.
 
 Codex runs without a shell (see the
