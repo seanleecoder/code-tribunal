@@ -45,3 +45,9 @@ the thread ID is replaced and the stderr timestamp normalized. In
 real host until the provider receives its first request and then exits 42.
 Codex emits no tool or error item and exits 0 with a valid answer; only its
 stderr router line records that the code-mode session failed to open.
+
+`abandoned-call` was captured on 2026-11-25 with the same Termux Codex 0.172.0
+build and stub; the thread ID and sentinel are replaced. After a completed read,
+the scripted cell starts a second read and then throws (`console` is undefined
+in code mode). In this race Codex emits `item.started` for the second read and
+never `item.completed`, then completes the turn with exit 0 and a valid answer.

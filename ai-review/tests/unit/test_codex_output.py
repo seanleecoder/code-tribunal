@@ -62,6 +62,32 @@ def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> 
         load(capture(label))
 
 
+@pytest.mark.parametrize(
+    "variant,error",
+    [
+        ("captured", None),
+        ("only-abandoned", AdapterModelError),
+        ("other-server", SchemaValidationError),
+    ],
+)
+def test_an_abandoned_repository_call_is_a_failed_attempt(
+    variant: str, error: type[Exception] | None
+) -> None:
+    data = capture("abandoned-call")
+    events = [json.loads(line) for line in data["stdout"].splitlines()]
+    if variant == "only-abandoned":
+        # Without the completed read, every repository attempt failed.
+        events = [e for e in events if e.get("item", {}).get("id") != "item_0"]
+    elif variant == "other-server":
+        events[4]["item"]["server"] = "other"
+    data["stdout"] = "\n".join(json.dumps(e) for e in events)
+    if error is None:
+        assert load(data) == {"findings": []}
+    else:
+        with pytest.raises(error):
+            load(data)
+
+
 # The pinned CLI's startup item for a host disabled by configuration, as the
 # loopback probe printed it; missing-host.json captures the spawn failure.
 _DISABLED_HOST = (

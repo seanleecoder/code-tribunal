@@ -24,7 +24,9 @@ versioning.
   and resolution eligibility and exposing it in run health; a shell command
   event is rejected as a schema error. Empty reviews, tool-free critiques,
   no-match searches, tool-reported errors, recovery, calls to Codex's own MCP
-  resource tools and a recovered stream reconnect remain valid. An unconditional network-disabled real-CLI
+  resource tools and a recovered stream reconnect remain valid. A repository
+  call that a failed code-mode cell leaves unfinished counts as a failed attempt
+  rather than discarding the completed review. An unconditional network-disabled real-CLI
   image gate guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
   exact-pair canary; existing v3.1.0 tags and digests remain immutable.
 

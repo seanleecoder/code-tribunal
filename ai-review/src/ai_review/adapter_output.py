@@ -347,6 +347,13 @@ _CODEX_BUILTIN_RESOURCE_TOOLS = frozenset(
 )
 
 
+def _is_codex_builtin_call(item: dict[str, Any]) -> bool:
+    return (
+        item.get("server") == _CODEX_BUILTIN_SERVER
+        and item.get("tool") in _CODEX_BUILTIN_RESOURCE_TOOLS
+    )
+
+
 def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
@@ -354,7 +361,9 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
     call itself failed, including a server-side search failure. A built-in
-    resource-tool call is neither. Only one anchored stderr line, a failed
+    resource-tool call is neither. A repository call still open at
+    ``turn.completed`` was abandoned by a failed code-mode cell; it counts as an
+    operationally failed attempt. Only one anchored stderr line, a failed
     code-mode session, is read from stderr. A top-level ``error`` event is fatal unless it is a
     stream reconnect notice before ``turn.completed``, which Codex reports that
     way and recovers from. No-tool reviews and critiques remain valid. See the
@@ -364,7 +373,7 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
     if returncode:
         raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
     thread_started = turn_started = turn_completed = reconnected = False
-    active: set[str] = set()
+    active: dict[str, dict[str, Any]] = {}
     finished: set[str] = set()
     attempts = operational_failures = 0
     answer: str | None = None
@@ -417,21 +426,17 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
             if item_id in finished:
                 raise SchemaValidationError("Codex stream repeated a completed item")
             if kind != "item.completed":
-                active.add(item_id)
+                active[item_id] = item
                 continue
-            active.discard(item_id)
+            active.pop(item_id, None)
             finished.add(item_id)
             if item_type == "agent_message":
                 if not isinstance(item.get("text"), str):
                     raise SchemaValidationError("Codex agent_message must contain text")
                 answer = item["text"]
             elif item_type == "mcp_tool_call":
-                server = item.get("server")
-                builtin = (
-                    server == _CODEX_BUILTIN_SERVER
-                    and item.get("tool") in _CODEX_BUILTIN_RESOURCE_TOOLS
-                )
-                if server != CODEX_REPO_SERVER and not builtin:
+                builtin = _is_codex_builtin_call(item)
+                if item.get("server") != CODEX_REPO_SERVER and not builtin:
                     raise SchemaValidationError("Codex called an unregistered MCP server")
                 if item.get("status") not in {"completed", "failed"}:
                     raise SchemaValidationError("Codex MCP call has no terminal result")
@@ -443,11 +448,22 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
                 raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")
         else:
             raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
-    if not turn_completed or active or answer is None:
+    incomplete = "Codex stream was incomplete or contained no final answer"
+    if not turn_completed or answer is None:
         if reconnected and not turn_completed:
             # A reconnect that never led to completion is the provider failing.
             raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
-        raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
+        raise SchemaValidationError(incomplete)
+    for item in active.values():
+        # A code-mode cell that throws while a call is in flight can leave its
+        # item.started without an item.completed, even though the turn finishes.
+        if item.get("type") != "mcp_tool_call":
+            raise SchemaValidationError(incomplete)
+        if item.get("server") == CODEX_REPO_SERVER:
+            attempts += 1
+            operational_failures += 1
+        elif not _is_codex_builtin_call(item):
+            raise SchemaValidationError(incomplete)
     if attempts and attempts == operational_failures:
         raise AdapterModelError("Codex repository-tool attempts all failed operationally")
     if _CODEX_HOST_SESSION_FAILED.search(stderr):
