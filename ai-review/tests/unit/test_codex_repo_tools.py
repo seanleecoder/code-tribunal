@@ -260,8 +260,8 @@ def test_grep_times_out_and_kills_the_search(repo: Path, monkeypatch, tmp_path: 
 @pytest.mark.parametrize(
     "script, capped",
     [
-        ("kill -TERM $$", False),
-        ("printf 'match'; kill -TERM $$", False),
+        ("kill -KILL $$", False),
+        ("printf 'match'; kill -KILL $$", False),
         ("printf '123456789'; exec sleep 30", True),
     ],
 )
@@ -284,7 +284,7 @@ def test_grep_distinguishes_signal_failure_from_the_output_cap(
     else:
         assert response["error"] == {
             "code": -32603,
-            "message": f"search terminated by signal {signal.SIGTERM.value}",
+            "message": f"search terminated by signal {signal.SIGKILL.value}",
         }
 
 
