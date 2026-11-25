@@ -287,7 +287,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     def expire() -> None:
         nonlocal timed_out
         with lock:
-            if finished:
+            if finished or process.poll() is not None:
                 return  # The search already ended; its output is complete.
             timed_out = True
             process.kill()
@@ -314,7 +314,9 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         finally:
             if process.stdout is not None:
                 process.stdout.close()
-    if timed_out:
+    # The timer can also fire while wait() reaps a search that already exited;
+    # only a search its kill actually ended timed out.
+    if timed_out and returncode == -signal.SIGKILL:
         raise ServerError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
     if returncode < 0 and not (stopped_at_cap and returncode == -signal.SIGKILL):
         raise ServerError(f"search terminated by signal {-returncode}")

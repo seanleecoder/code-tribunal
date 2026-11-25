@@ -318,6 +318,37 @@ def test_a_timer_firing_after_the_search_ends_keeps_its_result(repo: Path, monke
     assert call(repo, "grep", pattern="other", path="pkg") == ("pkg/module.py:2:other = 2\n", False)
 
 
+def test_a_timer_firing_right_after_the_search_exits_keeps_its_result(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    search = tmp_path / "rg-probe"
+    search.write_text("#!/bin/sh\nprintf 'pkg/module.py:2:other = 2\\n'\n")
+    search.chmod(0o755)
+    monkeypatch.setattr(tools, "RG", str(search))
+    timers = []
+
+    class IdleTimer:
+        def __init__(self, _seconds: float, expire) -> None:
+            timers.append(expire)
+
+        def start(self) -> None:
+            pass
+
+        def cancel(self) -> None:
+            pass
+
+    class Search(subprocess.Popen):
+        # The deadline passes after the child exited, before grep marks it finished.
+        def wait(self, timeout: float | None = None) -> int:
+            returncode = super().wait(timeout)
+            timers[0]()
+            return returncode
+
+    monkeypatch.setattr(tools.threading, "Timer", IdleTimer)
+    monkeypatch.setattr(tools.subprocess, "Popen", Search)
+    assert call(repo, "grep", pattern="other") == ("pkg/module.py:2:other = 2\n", False)
+
+
 def test_an_unexpected_handler_error_does_not_end_the_server(repo: Path, monkeypatch) -> None:
     def broken(_root: Path, _arguments: dict) -> str:
         raise RuntimeError("repository-derived detail")
