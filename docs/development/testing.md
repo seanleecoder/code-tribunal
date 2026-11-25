@@ -53,16 +53,20 @@ transport failures as failures:
   after one stay usable, and so does a provider stream dropped before completion: Codex reports the reconnect as a top-level
   `error` event, retries once, and completes. That notice is the only top-level
   error the parser admits, so a reworded notice fails this case.
-- Containment: traversal and absolute paths are refused, and protected bytes
-  outside the snapshot never reach the model. `exec_command`/`write_stdin` are
+- Containment, for each of the two models: traversal and absolute paths are
+  refused, and protected bytes outside the snapshot never reach the model. `exec_command`/`write_stdin` are
   absent at runtime; `apply_patch` is rejected by the read-only policy and
   snapshot bytes are unchanged, checked independently by the trusted parent.
   The code-mode and direct tool sets are pinned, and `ALL_TOOLS` must list the
   repository tools, because Codex defers MCP tools in code mode.
 - Negative controls: a terminal provider failure, a missing code-mode host
   (named from Codex's startup item), an unavailable tool server, and a
-  credential in the tool server's environment all yield unusable outcomes.
-  Malformed and truncated streams are covered by the codec's unit tests.
+  credential in the tool server's environment all yield unusable outcomes. The
+  last two must also show their own cause in Codex's stderr (a missing command,
+  or a server that started and refused), so a rejected override cannot pass
+  them. Malformed and truncated streams, a host that fails to open a session,
+  and searches that all time out are covered by the codec's and tool server's
+  unit tests.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that

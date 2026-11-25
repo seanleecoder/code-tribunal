@@ -517,6 +517,9 @@ def run_case(
         # Negative controls stop at tool-server startup, before a usable answer.
         if capture["returncode"] == 0:
             raise AssertionError(f"{label}: CLI accepted an unusable repository tool server")
+        # Any nonzero exit is not enough: a rejected override would also fail.
+        if expect_text is not None and expect_text not in capture["stderr"]:
+            raise AssertionError(f"{label}: control did not show {expect_text!r}")
         return capture
     from ai_review.reviewer_setup import stage_schema_path  # noqa: PLC0415
     from ai_review.schema import load_json_file  # noqa: PLC0415
@@ -574,7 +577,11 @@ def run_case(
         from ai_review.reviewers import get_reviewer_definition  # noqa: PLC0415
 
         raw = _load_adapter_json(
-            capture["stdout"], codec=get_reviewer_definition("codex").output_codec, stage=stage
+            capture["stdout"],
+            codec=get_reviewer_definition("codex").output_codec,
+            stage=stage,
+            returncode=capture["returncode"],
+            stderr=capture["stderr"],
         )
         if raw != batch:
             raise AssertionError(f"{label}: final batch differs: {raw}")
@@ -587,7 +594,7 @@ def assert_unchanged(protected: dict[Path, bytes]) -> None:
             raise AssertionError(f"repository tools changed protected file: {path}")
 
 
-def containment_case(install: Path, scratch: Path) -> None:
+def containment_case(install: Path, scratch: Path, model: str = REQUIRED_MODEL) -> None:
     with TemporaryDirectory(prefix=".codex-read-only-", dir=install) as runtime:
         protected = Path(runtime) / "protected.txt"
         protected.write_text(secrets.token_hex(24))
@@ -595,7 +602,7 @@ def containment_case(install: Path, scratch: Path) -> None:
             install,
             scratch,
             "containment",
-            REQUIRED_MODEL,
+            model,
             sentinel=secrets.token_hex(24),
             protected_runtime=protected,
         )
@@ -677,6 +684,10 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     for index, model in enumerate(dict.fromkeys((REQUIRED_MODEL, configured))):
         directory = scratch / str(index)
         add(directory, "read", model, steps=[read], sentinel=secrets.token_hex(24))
+        # Model metadata shapes Codex's tool surface, so pin it per model.
+        directory.mkdir(parents=True, exist_ok=True)
+        run = partial(containment_case, install, directory, model)
+        cases.append((f"{directory.name}/containment", run))
     # Empty reviews and tool-free critiques need only one model.
     add(scratch / "0", "empty", REQUIRED_MODEL, empty=True)
     add(scratch / "0", "critique", REQUIRED_MODEL, stage="critique")
@@ -707,8 +718,6 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         drop_first_stream=True,
         sentinel=secrets.token_hex(24),
     )
-    directory.mkdir(parents=True, exist_ok=True)
-    cases.append(("tools/containment", partial(containment_case, install, directory)))
     directory = scratch / "failures"
     add(directory, "terminal", REQUIRED_MODEL, terminal=True, expected_status="model_error")
     add(
@@ -717,6 +726,7 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         REQUIRED_MODEL,
         overrides=["-c", 'mcp_servers.repo.command="/nonexistent/code-tribunal-python"'],
         expected_status="model_error",
+        expect_text="repo: No such file or directory",
     )
     # The server refuses any credential-bearing environment; a required server
     # that refuses to start must make the review unusable.
@@ -726,6 +736,8 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         REQUIRED_MODEL,
         overrides=["-c", 'mcp_servers.repo.env={OPENROUTER_API_KEY="smoke-credential"}'],
         expected_status="model_error",
+        # The server started and then refused; not a config or spawn failure.
+        expect_text="repo: handshaking with MCP server failed",
     )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("failures/missing-host", partial(missing_host_case, install, directory)))

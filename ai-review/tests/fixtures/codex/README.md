@@ -35,3 +35,13 @@ unescaped inside the event's JSON string.
 not in the CLI's catalog (renamed to `example/uncatalogued-model`; the thread ID
 is replaced). Codex reports its fallback metadata as an `error` item before
 `turn.started`, then completes with exit 0 and a valid answer.
+
+`list-mcp-resources` and `host-session-failure` were captured on 2026-11-25
+with the Termux aarch64 Codex 0.172.0 build against the gate's loopback stub;
+the thread ID is replaced and the stderr timestamp normalized. In
+`list-mcp-resources` the scripted model calls Codex's built-in
+`list_mcp_resources`, which Codex reports as an `mcp_tool_call` from server
+`codex`, then answers. In `host-session-failure` a host shim delegates to the
+real host until the provider receives its first request and then exits 42.
+Codex emits no tool or error item and exits 0 with a valid answer; only its
+stderr router line records that the code-mode session failed to open.

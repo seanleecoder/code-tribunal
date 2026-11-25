@@ -197,6 +197,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 codec=reviewer_definition.output_codec,
                 stage=stage,
                 returncode=result.returncode,
+                stderr=result.stderr,
             )
             if stage == "review":
                 finalized = finalize_finding_batch(

@@ -27,7 +27,11 @@ def capture(label: str) -> dict:
 
 def load(data: dict, stage: str = "review") -> dict:
     return _load_adapter_json(
-        data["stdout"], returncode=data["returncode"], codec="codex_stream_json", stage=stage
+        data["stdout"],
+        returncode=data["returncode"],
+        stderr=data["stderr"],
+        codec="codex_stream_json",
+        stage=stage,
     )
 
 
@@ -41,19 +45,20 @@ def load(data: dict, stage: str = "review") -> dict:
         "mcp-containment",
         "reconnect",
         "separator",
+        "list-mcp-resources",
     ],
 )
 def test_captured_usable_executions(label: str) -> None:
     stage = "critique" if label == "critique" else "review"
     raw = load(capture(label), stage)
     assert len(raw["critiques" if stage == "critique" else "findings"]) == (
-        1 if label in {"mcp-read", "mcp-tool-error", "mcp-containment"} else 0
+        1 if label in {"mcp-read", "mcp-tool-error", "mcp-containment", "list-mcp-resources"} else 0
     )
 
 
 @pytest.mark.parametrize(
     "label",
-    ["missing-host", "terminal", "mcp-operational", "fallback-metadata"],
+    ["missing-host", "terminal", "mcp-operational", "fallback-metadata", "host-session-failure"],
 )
 def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> None:
     with pytest.raises(AdapterModelError):
@@ -81,7 +86,7 @@ def _with_startup_error(data: dict, message: str) -> dict:
 @pytest.mark.parametrize("source", ["missing-host", "disabled"])
 def test_startup_host_item_rejects_a_valid_answer_without_stderr(source: str) -> None:
     if source == "missing-host":
-        data = capture("missing-host")
+        data = {**capture("missing-host"), "stderr": ""}
     else:
         data = _with_startup_error(capture("empty"), _DISABLED_HOST)
     with pytest.raises(AdapterModelError, match="host unavailable"):
@@ -209,6 +214,8 @@ def test_nonzero_cli_exit_overrides_valid_answer() -> None:
         ("mcp-read", "success"),
         ("mcp-tool-error", "success"),
         ("mcp-operational", "model_error"),
+        ("list-mcp-resources", "success"),
+        ("host-session-failure", "model_error"),
     ],
 )
 def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, label, status) -> None:
@@ -292,3 +299,40 @@ def test_one_operational_mcp_failure_still_allows_recovery() -> None:
     events[turn + 1 : turn + 1] = broken
     good["stdout"] = "\n".join(json.dumps(e) for e in events) + "\n"
     assert len(load(good)["findings"]) == 1
+
+
+def test_builtin_resource_tools_are_admitted_without_counting_as_attempts() -> None:
+    data = capture("list-mcp-resources")
+    assert len(load(data)["findings"]) == 1
+    events = list(map(json.loads, data["stdout"].splitlines()))
+    turn = next(i for i, e in enumerate(events) if e["type"] == "turn.started")
+    # Only Codex's resource tools are exempt, and only as terminal calls.
+    for field, value in [("tool", "clock__curr_time"), ("status", "in_progress")]:
+        damaged = copy.deepcopy(events)
+        for event in damaged:
+            if event.get("item", {}).get("type") == "mcp_tool_call":
+                event["item"][field] = value
+        stream = {**data, "stdout": "\n".join(map(json.dumps, damaged)) + "\n"}
+        with pytest.raises(SchemaValidationError):
+            load(stream)
+    # A resource call cannot stand in for a repository call that failed.
+    failed = [
+        json.loads(line)
+        for line in capture("mcp-operational")["stdout"].splitlines()
+        if '"mcp_tool_call"' in line
+    ]
+    for event in failed:
+        event["item"]["id"] = "item_failed"
+    events[turn + 1 : turn + 1] = failed
+    with pytest.raises(AdapterModelError, match="all failed operationally"):
+        load({**data, "stdout": "\n".join(map(json.dumps, events)) + "\n"})
+
+
+def test_only_codex_host_session_line_rejects_a_valid_answer() -> None:
+    failure = capture("host-session-failure")
+    with pytest.raises(AdapterModelError, match="host transport failed"):
+        load(failure)
+    line = failure["stderr"].strip()
+    # Quoted, indented or unprefixed copies are not Codex's own log line.
+    for stderr in (f"tool said: {line}\n", f"  {line}\n", line.split(" ", 1)[1] + "\n"):
+        assert load({**capture("empty"), "stderr": stderr}) == {"findings": []}

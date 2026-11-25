@@ -28,7 +28,7 @@ registry; they are not operator configuration.
 |---|---|---|
 | `schema_version` | string, `review_config.v4` | Configuration contract version; no other value is accepted. |
 | `reviewers.<name>.enabled` | boolean | Whether the seat participates. Defaults: Claude/Codex/OpenCode true, Cursor false. Usually set through `AI_REVIEW_REVIEWERS` rather than per seat. |
-| `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. |
+| `reviewers.<name>.model` | string | Provider model identifier passed to the adapter. A Codex model must be in the pinned Codex CLI's bundled catalog: for any other model Codex falls back to default metadata, and the seat fails closed as `model_error`. |
 | `reviewers.<name>.effort` | enum, optional | `low`, `medium`, `high`, `xhigh`, or `max`; Claude, Codex, and OpenCode forward all levels unchanged to their provider-specific effort setting. Provider/model rejection fails the reviewer rather than falling back silently. Cursor accepts only null effort; choose its model variant instead. |
 | `reviewers.<name>.timeout_seconds` | positive integer, `1800` | Whole review process-group timeout. The summary's run details show it as each review job's limit and mark a job that used at least 80% of it. |
 | `reviewers.<name>.critique_timeout_seconds` | positive integer, optional (`900`) | Whole critique process-group timeout. Omitting it resolves to 900 seconds regardless of `timeout_seconds`, so the 20-minute CI ceiling is respected. |

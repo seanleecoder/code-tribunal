@@ -42,6 +42,14 @@ def call(root: Path, name: str, **arguments) -> tuple[str, bool]:
     return result["content"][0]["text"], result["isError"]
 
 
+def rpc(root: Path, name: str, **arguments) -> dict:
+    params = {"name": name, "arguments": arguments}
+    message = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": params}
+    reply = tools.respond(message, root)
+    assert reply is not None
+    return reply
+
+
 def test_read_and_list_inside_the_snapshot(repo: Path) -> None:
     assert call(repo, "read_file", path="sentinel.txt") == ("1\tsnapshot-only-value", False)
     assert call(repo, "read_file", path="pkg/module.py", start_line=2) == ("2\tother = 2", False)
@@ -154,6 +162,13 @@ def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     assert json.loads(wire)["result"]["content"][0]["text"] == "bad�/\nmodule.py"
 
 
+@needs_rg
+def test_grep_searches_a_root_file_named_dash(repo: Path) -> None:
+    # A bare "-" operand would make rg read stdin and report no match.
+    (repo / "-").write_text("dash-only-value\n")
+    assert call(repo, "grep", pattern="dash-only", path="-") == ("./-:1:dash-only-value\n", False)
+
+
 def test_output_and_listing_are_bounded(repo: Path, monkeypatch) -> None:
     lines = call(repo, "read_file", path="pkg/module.py", max_lines=1)[0]
     assert lines == "1\tvalue = 1\n[1 more lines; continue with start_line]"
@@ -162,6 +177,24 @@ def test_output_and_listing_are_bounded(repo: Path, monkeypatch) -> None:
     monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
     text, _ = call(repo, "read_file", path="sentinel.txt")
     assert text == "1\tsnapsh\n[output truncated at 8 bytes]"
+
+
+def test_read_file_notes_survive_output_truncation(repo: Path, monkeypatch) -> None:
+    (repo / "long.txt").write_text("".join(f"line {n}\n" for n in range(1, 21)))
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 20)
+    text, is_error = call(repo, "read_file", path="long.txt", max_lines=10)
+    assert not is_error and text.startswith("1\tline 1\n2\tline 2\n")
+    assert text.endswith(
+        "[output truncated at 20 bytes]\n[10 more lines; continue with start_line]"
+    )
+
+
+def test_past_end_of_a_capped_file_names_the_read_limit(repo: Path, monkeypatch) -> None:
+    (repo / "big.txt").write_text("a\nb\nc\nd\n")
+    monkeypatch.setattr(tools, "MAX_FILE_BYTES", 4)
+    text, is_error = call(repo, "read_file", path="big.txt", start_line=9)
+    assert not is_error and "past the end of the file" not in text
+    assert text.startswith("[start_line 9 is past the 2 lines within the 4-byte read limit]")
 
 
 def test_binary_and_non_string_paths_are_refused(repo: Path) -> None:
@@ -177,7 +210,64 @@ def test_grep_times_out_and_kills_the_search(repo: Path, monkeypatch, tmp_path: 
     slow.chmod(0o755)
     monkeypatch.setattr(tools, "RG", str(slow))
     monkeypatch.setattr(tools, "GREP_TIMEOUT_SECONDS", 0.2)
-    assert call(repo, "grep", pattern="x") == ("search timed out after 0.2 seconds", True)
+    # A JSON-RPC error, so Codex records the call itself as failed.
+    assert rpc(repo, "grep", pattern="x")["error"] == {
+        "code": -32603,
+        "message": "search timed out after 0.2 seconds",
+    }
+
+
+def test_a_search_tool_that_cannot_start_is_a_server_error(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "RG", str(repo / "no-such-rg"))
+    grep = {"name": "grep", "arguments": {"pattern": "x"}}
+    read = {"name": "read_file", "arguments": {"path": "sentinel.txt"}}
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": grep},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": read},
+    ]
+    out = io.StringIO()
+    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
+    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    assert first["error"]["code"] == -32603
+    assert first["error"]["message"].startswith("search tool failed to start: ")
+    assert second["result"] == {
+        "content": [{"type": "text", "text": "1\tsnapshot-only-value"}],
+        "isError": False,
+    }
+
+
+@needs_rg
+def test_a_timer_firing_after_the_search_ends_keeps_its_result(repo: Path, monkeypatch) -> None:
+    class LateTimer:
+        # Fires exactly when the search is being torn down, after its output.
+        def __init__(self, _seconds: float, expire) -> None:
+            self.expire = expire
+
+        def start(self) -> None:
+            pass
+
+        def cancel(self) -> None:
+            self.expire()
+
+    monkeypatch.setattr(tools.threading, "Timer", LateTimer)
+    assert call(repo, "grep", pattern="other", path="pkg") == ("pkg/module.py:2:other = 2\n", False)
+
+
+def test_an_unexpected_handler_error_does_not_end_the_server(repo: Path, monkeypatch) -> None:
+    def broken(_root: Path, _arguments: dict) -> str:
+        raise RuntimeError("repository-derived detail")
+
+    monkeypatch.setitem(tools.HANDLERS, "read_file", broken)
+    call_ = {"name": "read_file", "arguments": {"path": "sentinel.txt"}}
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call_},
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    ]
+    out = io.StringIO()
+    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
+    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    assert first["error"] == {"code": -32603, "message": "internal error"}
+    assert second == {"jsonrpc": "2.0", "id": 2, "result": {}}
 
 
 def test_server_refuses_a_credential_bearing_environment(repo: Path) -> None:

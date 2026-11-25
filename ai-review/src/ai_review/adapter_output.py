@@ -329,15 +329,33 @@ _CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
 # startup error item, which fails like every error item; matching it names the
 # cause.
 _CODEX_HOST_UNAVAILABLE = re.compile(r"Code Mode is unavailable because ")
+# A host that starts but cannot open a code-mode session leaves no stream item;
+# Codex logs only this router line. It is anchored on Codex's own timestamped
+# tracing prefix and session-opening text: other router lines (a rejected patch,
+# a host that cannot spawn) occur in usable or otherwise classified runs, and
+# model-controlled tool and script errors do not reach stderr.
+_CODEX_HOST_SESSION_FAILED = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z "
+    r"ERROR codex_core::tools::router: error=gRPC code-mode session opening failed: ",
+    re.MULTILINE,
+)
+# Codex's own MCP resource tools stay on the pinned code-mode surface. They read
+# no repository content, so they are admitted without counting as attempts.
+_CODEX_BUILTIN_SERVER = "codex"
+_CODEX_BUILTIN_RESOURCE_TOOLS = frozenset(
+    {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+)
 
 
-def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
+def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str = "") -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
     Codex runs without a shell, so a command item is outside the contract.
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
-    call itself failed. A top-level ``error`` event is fatal unless it is a
+    call itself failed, including a server-side search failure. A built-in
+    resource-tool call is neither. Only one anchored stderr line, a failed
+    code-mode session, is read from stderr. A top-level ``error`` event is fatal unless it is a
     stream reconnect notice before ``turn.completed``, which Codex reports that
     way and recovers from. No-tool reviews and critiques remain valid. See the
     captured fixtures in tests/fixtures/codex and the real-CLI image gate in
@@ -408,13 +426,19 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
                     raise SchemaValidationError("Codex agent_message must contain text")
                 answer = item["text"]
             elif item_type == "mcp_tool_call":
-                if item.get("server") != CODEX_REPO_SERVER:
+                server = item.get("server")
+                builtin = (
+                    server == _CODEX_BUILTIN_SERVER
+                    and item.get("tool") in _CODEX_BUILTIN_RESOURCE_TOOLS
+                )
+                if server != CODEX_REPO_SERVER and not builtin:
                     raise SchemaValidationError("Codex called an unregistered MCP server")
                 if item.get("status") not in {"completed", "failed"}:
                     raise SchemaValidationError("Codex MCP call has no terminal result")
-                attempts += 1
-                if item.get("error") is not None:
-                    operational_failures += 1
+                if not builtin:
+                    attempts += 1
+                    if item.get("error") is not None:
+                        operational_failures += 1
             elif item_type not in {"reasoning", "todo_list"}:
                 raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")
         else:
@@ -426,11 +450,16 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
         raise SchemaValidationError("Codex stream was incomplete or contained no final answer")
     if attempts and attempts == operational_failures:
         raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    if _CODEX_HOST_SESSION_FAILED.search(stderr):
+        # Never echo stderr: it can carry model or tool text.
+        raise AdapterModelError(
+            "Codex code-mode host transport failed; repository tools could not run"
+        )
     return _load_answer_json(answer, stage=stage)
 
 
 def _load_adapter_json(
-    stdout: str, *, codec: OutputCodec, stage: str, returncode: int = 0
+    stdout: str, *, codec: OutputCodec, stage: str, returncode: int = 0, stderr: str = ""
 ) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
@@ -438,7 +467,7 @@ def _load_adapter_json(
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
     elif codec == "codex_stream_json":
-        raw = _load_codex_stream(stdout, stage=stage, returncode=returncode)
+        raw = _load_codex_stream(stdout, stage=stage, returncode=returncode, stderr=stderr)
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)

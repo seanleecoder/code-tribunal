@@ -98,6 +98,14 @@ class ToolError(Exception):
     """A refused or failed call, returned to the model as an isError result."""
 
 
+class ServerError(Exception):
+    """The server could not run a call; returned as a JSON-RPC error.
+
+    Codex then records the call itself as failed, so a review whose repository
+    attempts all failed this way is rejected rather than admitted.
+    """
+
+
 def contained(root: Path, requested: Any) -> Path:
     if requested is None or requested == "":
         requested = "."
@@ -154,16 +162,23 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         lines.pop()
     selected = lines[start - 1 : start - 1 + count]
     body = "\n".join(f"{number}\t{line}" for number, line in enumerate(selected, start))
+    truncated = len(data) > MAX_FILE_BYTES
     notes = []
     if start - 1 + count < len(lines):
         notes.append(f"[{len(lines) - (start - 1 + count)} more lines; continue with start_line]")
+    elif start > max(len(lines), 1) and truncated:
+        notes.append(
+            f"[start_line {start} is past the {len(lines)} lines within the "
+            f"{MAX_FILE_BYTES}-byte read limit]"
+        )
     elif start > max(len(lines), 1):
         notes.append(
             f"[start_line {start} is past the end of the file, which has {len(lines)} lines]"
         )
-    if len(data) > MAX_FILE_BYTES:
+    if truncated:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
-    return _bounded("\n".join(part for part in (body, *notes) if part))
+    # Bound only the body, so the notes saying where to continue survive.
+    return "\n".join(part for part in (_bounded(body), *notes) if part)
 
 
 def list_dir(root: Path, arguments: dict[str, Any]) -> str:
@@ -219,20 +234,31 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--",
     ]
     if target != root:
-        argv.append(target.relative_to(root).as_posix())
-    process = subprocess.Popen(
-        argv,
-        cwd=root,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        env={"PATH": "/usr/bin:/bin"},
-    )
-    timed_out = threading.Event()
+        operand = target.relative_to(root).as_posix()
+        # rg reads stdin for a bare "-" operand, even after "--".
+        argv.append("./-" if operand == "-" else operand)
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        reason = exc.strerror or type(exc).__name__
+        raise ServerError(f"search tool failed to start: {reason}") from exc
+    lock = threading.Lock()
+    finished = timed_out = False
 
     def expire() -> None:
-        timed_out.set()
-        process.kill()
+        nonlocal timed_out
+        with lock:
+            if finished:
+                return  # The search already ended; its output is complete.
+            timed_out = True
+            process.kill()
 
     timer = threading.Timer(GREP_TIMEOUT_SECONDS, expire)
     timer.start()
@@ -240,13 +266,15 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         assert process.stdout is not None
         data = _read_limited(process.stdout, MAX_OUTPUT_BYTES)
     finally:
+        with lock:
+            finished = True
         timer.cancel()
         process.kill()  # Stop a search still running after the output cap.
         process.wait()
         if process.stdout is not None:
             process.stdout.close()
-    if timed_out.is_set():
-        raise ToolError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
+    if timed_out:
+        raise ServerError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
     # Output cut at the cap is a result even though rg was killed. Otherwise rg
     # exits 1 for no match; 2 can accompany partial results (unreadable files).
     if not data and process.returncode not in (0, 1):
@@ -273,6 +301,10 @@ def call_tool(root: Path, params: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
+def _rpc_error(request_id: Any, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": message}}
+
+
 def respond(message: dict[str, Any], root: Path) -> dict[str, Any] | None:
     method, request_id = message.get("method"), message.get("id")
     if request_id is None:
@@ -288,7 +320,14 @@ def respond(message: dict[str, Any], root: Path) -> dict[str, Any] | None:
     elif method == "tools/list":
         result = {"tools": TOOLS}
     elif method == "tools/call":
-        result = call_tool(root, params)
+        try:
+            result = call_tool(root, params)
+        except ServerError as exc:
+            return _rpc_error(request_id, str(exc))
+        except Exception:
+            # A handler bug must not end the required server. No exception
+            # text: it can echo repository content.
+            return _rpc_error(request_id, "internal error")
     elif method == "ping":
         result = {}
     else:

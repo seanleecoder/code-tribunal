@@ -169,7 +169,9 @@ disables Codex's provider-hosted web search.
 
 Residual risk: the image gate pins the tool set only for the configured default
 and `openai/gpt-6.1-sol`; other models can offer other tools, still without a
-shell. Repository names and file text reach the model as they are, so crafted
+shell. Codex's event stream, tool results included, counts toward the runner's
+32 MiB adapter output limit; a run that exceeds it fails visibly rather than
+being admitted. Repository names and file text reach the model as they are, so crafted
 content can look like other entries; model output is untrusted either way.
 Intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary

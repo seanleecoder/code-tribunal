@@ -224,37 +224,56 @@ def test_independent_byte_check_rejects_mutations(tmp_path: Path, damage: str) -
 def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, monkeypatch) -> None:
     import sys
 
+    from ai_review.config import load_config
+
     visited = []
+    real_containment_case = smoke.containment_case
     monkeypatch.setattr(
         sys,
         "argv",
         ["probe", "--install-root", str(ROOT / "ai-review"), "--scratch", str(tmp_path)],
     )
+    models = {}
     monkeypatch.setattr(
         smoke,
         "run_case",
         lambda _i, scratch, label, _m, **_kw: visited.append(f"{scratch.name}/{label}"),
     )
-    monkeypatch.setattr(smoke, "containment_case", lambda *_: visited.append("tools/containment"))
+    monkeypatch.setattr(
+        smoke,
+        "containment_case",
+        lambda _i, scratch, model: (
+            visited.append(f"{scratch.name}/containment"),
+            models.update({scratch.name: model}),
+        ),
+    )
     monkeypatch.setattr(
         smoke, "missing_host_case", lambda *_: visited.append("failures/missing-host")
     )
     assert smoke.main() == 0
     assert visited == [
         "0/read",
+        "0/containment",
         "1/read",
+        "1/containment",
         "0/empty",
         "0/critique",
         "tools/search",
         "tools/no-match",
         "tools/recovery",
         "tools/reconnect",
-        "tools/containment",
         "failures/terminal",
         "failures/tool-server-unavailable",
         "failures/credential-in-tool-env",
         "failures/missing-host",
     ]
+    configured = load_config(ROOT / "ai-review/config/review.yaml").reviewers["codex"].model
+    assert models == {"0": smoke.REQUIRED_MODEL, "1": configured} and configured != models["0"]
+    # The real containment case must forward its model, not hard-code one.
+    seen = []
+    monkeypatch.setattr(smoke, "run_case", lambda _i, _s, _label, model, **_kw: seen.append(model))
+    real_containment_case(tmp_path, tmp_path / "1", configured)
+    assert seen == [configured]
 
 
 @pytest.mark.parametrize("damage", ["none", "write", "delete"])
@@ -380,3 +399,38 @@ def test_tool_surface_rejects_each_unsafe_or_vacuous_result(tmp_path: Path, dama
             smoke.assert_tool_surface(stub, protected)
     else:
         smoke.assert_tool_surface(stub, protected)
+
+
+@pytest.mark.parametrize(
+    "stderr,shown",
+    [
+        ("Error: MCP servers failed: repo: handshaking with MCP server failed\n", True),
+        ("Error loading config.toml: invalid type: string, expected a map\n", False),
+    ],
+)
+def test_a_negative_control_must_fail_for_its_own_cause(
+    tmp_path: Path, monkeypatch, stderr: str, shown: bool
+) -> None:
+    # A nonzero exit and model_error alone would also follow a rejected override.
+    def run(command, *, env, **_kwargs):
+        Path(command[6]).write_text(json.dumps({"stdout": "", "stderr": stderr, "returncode": 1}))
+        findings = Path(env["AI_REVIEW_OUTPUT_DIR"]) / "findings"
+        findings.mkdir(parents=True)
+        (findings / "codex.json").write_text(json.dumps({"adapter_status": "model_error"}))
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(smoke, "subprocess", SimpleNamespace(run=run))
+    case = lambda: smoke.run_case(  # noqa: E731
+        ROOT / "ai-review",
+        tmp_path,
+        "credential",
+        smoke.REQUIRED_MODEL,
+        overrides=["-c", 'mcp_servers.repo.env={OPENROUTER_API_KEY="x"}'],
+        expected_status="model_error",
+        expect_text="repo: handshaking with MCP server failed",
+    )
+    if shown:
+        assert case()["returncode"] == 1
+    else:
+        with pytest.raises(AssertionError, match="control did not show"):
+            case()
