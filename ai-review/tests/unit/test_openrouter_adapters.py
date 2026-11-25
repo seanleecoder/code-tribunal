@@ -227,6 +227,17 @@ printf '%s\n' "$result"
             cli.write_text(f"#!{sys.executable}\n" + source.read_text(), encoding="utf-8")
             cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
             return
+        codex_stream = """
+import json, sys
+payload = sys.argv[1]
+for event in [
+    {"type": "thread.started", "thread_id": "fake"},
+    {"type": "turn.started"},
+    {"type": "item.completed", "item": {"id": "answer", "type": "agent_message", "text": payload}},
+    {"type": "turn.completed", "usage": {}},
+]:
+    print(json.dumps(event))
+"""
         cli.write_text(
             "#!/bin/sh\n"
             'args="$*"\n'
@@ -239,24 +250,16 @@ printf '%s\n' "$result"
             '  env | sort > "$trace_dir/cli.env"\n'
             '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$trace_dir/cli.key"\n'
             "fi\n"
-            "out=''\n"
             "cd_dir=.\n"
             'while [ "$#" -gt 0 ]; do\n'
             '  case "$1" in\n'
-            '    -o) shift; out="$1" ;;\n'
             '    --cd) shift; cd_dir="$1" ;;\n'
             "  esac\n"
             "  shift || true\n"
             "done\n"
-            'if [ -n "$out" ]; then\n'
-            '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$out.tree"\n'  # noqa: E501
-            '  printf \'%s\\n\' "$0 $args" > "$out.args"\n'
-            '  env | sort > "$out.env"\n'
-            '  printf \'%s\\n\' "$OPENROUTER_API_KEY" > "$out.key"\n'
-            '  printf \'%s\' "$payload" > "$out"\n'
-            "else\n"
-            "  printf '%s' \"$payload\"\n"
-            "fi\n",
+            'if [ -n "$trace_dir" ]; then\n'
+            '  (cd "$cd_dir" && find . -mindepth 1 -type d | sed \'s|$|/|\' && find . -mindepth 1 ! -type d) > "$trace_dir/cli.tree"\n'  # noqa: E501
+            "fi\n" + f'{shlex.quote(sys.executable)} -c {shlex.quote(codex_stream)} "$payload"\n',
             encoding="utf-8",
         )
         cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
@@ -276,7 +279,6 @@ printf '%s\n' "$result"
             output_dir = root / "out"
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            raw_out = output_dir / ".tmp" / f"{reviewer}-{stage}.raw.json"
             write_adapter_input_bundle(input_dir)
             self._write_fake_cli(bin_dir, cli_name)
             if payload is not None:
@@ -379,14 +381,6 @@ printf '%s\n' "$result"
                     cli_pwd_path = output_dir / "claude.pwd"
                     cli_tree_path = output_dir / "claude.tree"
                     expected_key = "sk-or-v1-test"
-                elif Path(f"{raw_out}.args").exists():
-                    trace_prefix = Path(str(raw_out))
-                    cli_args_path = Path(f"{trace_prefix}.args")
-                    cli_env_path = Path(f"{trace_prefix}.env")
-                    cli_key_path = Path(f"{trace_prefix}.key")
-                    cli_pwd_path = None
-                    cli_tree_path = Path(f"{trace_prefix}.tree")
-                    expected_key = "sk-or-v1-test"
                 else:
                     trace_dir = (
                         output_dir
@@ -397,7 +391,7 @@ printf '%s\n' "$result"
                     cli_env_path = trace_dir / "cli.env"
                     cli_key_path = trace_dir / "cli.key"
                     cli_pwd_path = None
-                    cli_tree_path = None
+                    cli_tree_path = trace_dir / "cli.tree" if cli_name == "codex" else None
                     expected_key = "sk-or-v1-test"
                 cli_args = cli_args_path.read_text(encoding="utf-8")
                 cli_env = cli_env_path.read_text(encoding="utf-8")
@@ -522,7 +516,7 @@ printf '%s\n' "$result"
 
         self.assertEqual(batch["adapter_status"], "success")
         self.assertEqual(batch["reviewer"], "codex")
-        self.assertIn(" exec ", cli_args)
+        self.assertIn(" exec --json ", cli_args)
         self.assertIn("--model openai/gpt-6-luna", cli_args)
         self.assertIn("--ephemeral", cli_args)
         self.assertIn("--skip-git-repo-check", cli_args)
@@ -990,9 +984,7 @@ printf '%s\n' "$result"
                 # This helper only drives the invalid-config (model_error) path,
                 # so the adapter now exits non-zero.
                 self.assertEqual(run_prepared_adapter(reviewer, "review"), _EXIT_ERROR)
-                self.assertFalse(
-                    (output_dir / ".tmp" / f"{reviewer}-review.raw.json.args").exists()
-                )
+                self.assertEqual(list(output_dir.rglob("cli.args")), [])
                 return load_json_file(output_dir / "findings" / f"{reviewer}.json")
             finally:
                 for key, value in previous.items():

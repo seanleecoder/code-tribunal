@@ -7,6 +7,29 @@ versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex reviews could not read repository files in v3.1.0. The image pruned
+  Codex's native code-mode host, which models such as `openai/gpt-6.1-sol`
+  require, and on Linux runners Codex's shell sandbox cannot start under default
+  container security policies. Affected reviews saw only the inline diff and
+  could report success with zero findings. The host is restored, and Codex now
+  runs without a shell: review reads the snapshot through a trusted read-only
+  repository tool server (`read_file`, `list_dir`, `grep`), and other optional
+  Codex tools, including provider-hosted web search, are disabled. No runner
+  security options are needed. Codex execution events reject missing-host,
+  failed host session, terminal, unavailable-tool-server, unrecognized
+  top-level error and wholly failed operational tool runs (including searches
+  that all timed out) as `model_error`, excluding the seat from review success
+  and resolution eligibility and exposing it in run health; a shell command
+  event is rejected as a schema error. Empty reviews, tool-free critiques,
+  no-match searches, tool-reported errors, recovery, calls to Codex's own MCP
+  resource tools and a recovered stream reconnect remain valid. A repository
+  call that a failed code-mode cell leaves unfinished counts as a failed attempt
+  rather than discarding the completed review. An unconditional network-disabled real-CLI
+  image gate guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
+  exact-pair canary; existing v3.1.0 tags and digests remain immutable.
+
 ### Changed
 
 - `make quality` now also runs `ruff format --check`. The Python sources were

@@ -11,7 +11,7 @@ from typing import Literal
 
 EndpointKind = Literal["anthropic_openrouter", "openrouter", "cursor_backend"]
 ReviewerStage = Literal["review", "critique"]
-OutputCodec = Literal["batch_json", "claude_stream_json"]
+OutputCodec = Literal["batch_json", "claude_stream_json", "codex_stream_json"]
 
 
 class ReviewerRegistryError(ValueError):
@@ -79,6 +79,23 @@ def _definition(
     )
 
 
+# The MCP server name the Codex codec admits tool calls from.
+CODEX_REPO_SERVER = "repo"
+_CODEX_REPO_CONFIG = f"--config=mcp_servers.{CODEX_REPO_SERVER}"
+
+# Stable (or deprecated, still default-on) feature flags of the pinned Codex
+# CLI. The image gate pins the tool set that remains.
+_CODEX_DISABLED_FEATURES = (
+    "shell_tool",
+    "view_image",
+    "sleep_tool",
+    "goals",
+    "image_generation",
+    "multi_agent",
+    "apps",
+    "plugins",
+)
+
 REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
     {
         "claude": _definition(
@@ -110,9 +127,10 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
         "codex": _definition(
             "codex",
             "openrouter",
-            output_codec="batch_json",
+            output_codec="codex_stream_json",
             cli_arguments=(
                 "exec",
+                "--json",
                 "--cd",
                 "{root}",
                 "--ephemeral",
@@ -133,9 +151,24 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
                 "--output-schema",
                 "{schema_path}",
-                "-o",
-                "{AI_REVIEW_RAW_OUTPUT}",
+                # No shell: Linux runners' default container policies block the
+                # nested bwrap sandbox it needs. Drop tools a reviewer never uses.
+                *(f"--config=features.{feature}=false" for feature in _CODEX_DISABLED_FEATURES),
+                # Model metadata selects multi-agent V2; its documented config
+                # hides the native sub-agent tools. Braces are format_map escapes.
+                "--config=features.multi_agent_v2={{enabled=false, disable_native_tools=true}}",
+                # A provider-hosted search is no repository tool. Code-mode models
+                # do not offer it; this keeps it off whatever the model metadata.
+                '--config=web_search="disabled"',
                 "-",
+            ),
+            # Review reads the snapshot only through the trusted read-only MCP
+            # server; critique has no repository tools. Paths are TOML strings.
+            review_arguments=(
+                _CODEX_REPO_CONFIG + ".command={python_toml}",
+                _CODEX_REPO_CONFIG + '.args=["-I", {repo_tools_toml}, "--root", {root_toml}]',
+                _CODEX_REPO_CONFIG + ".required=true",
+                _CODEX_REPO_CONFIG + '.default_tools_approval_mode="approve"',
             ),
             effort_arguments=("--config", 'model_reasoning_effort="{effort}"'),
             state_directories=(("HOME", "codex-home"), ("CODEX_HOME", "codex-home")),

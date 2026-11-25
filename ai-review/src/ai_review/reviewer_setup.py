@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -76,7 +77,6 @@ def prepare_shell_adapter(
     tmp_dir, root = prepare_workspace(
         definition, stage, Path(env["AI_REVIEW_INPUT_DIR"]), Path(env["AI_REVIEW_OUTPUT_DIR"])
     )
-    env["AI_REVIEW_RAW_OUTPUT"] = str(tmp_dir / f"{definition.reviewer_id}-{stage}.raw.json")
     values = {
         **env,
         # The adapter itself reports a missing credential; templates must not.
@@ -85,6 +85,12 @@ def prepare_shell_adapter(
         "root": str(root),
         "schema_path": str(stage_schema_path(stage)),
         "schema_json": json.dumps(transport_schema(stage)),
+        # TOML basic strings for the Codex MCP server's --config values.
+        "root_toml": json.dumps(str(root), ensure_ascii=False),
+        "python_toml": json.dumps(sys.executable, ensure_ascii=False),
+        "repo_tools_toml": json.dumps(
+            str(Path(__file__).with_name("codex_repo_tools.py")), ensure_ascii=False
+        ),
     }
     env.update(state_environment(definition, tmp_dir, values))
     arguments = definition.cli_arguments + (

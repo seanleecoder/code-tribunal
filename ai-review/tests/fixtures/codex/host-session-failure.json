@@ -1,0 +1,5 @@
+{
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"captured-thread\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"{\\\"findings\\\": []}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":2,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":2,\"reasoning_output_tokens\":0}}\n",
+  "stderr": "2026-11-25T00:00:00.000000Z ERROR codex_core::tools::router: error=gRPC code-mode session opening failed: code: 'The service is currently unavailable', message: \"code-mode host transport failed\", source: tonic::transport::Error(Transport, hyper::Error(Io, Custom { kind: BrokenPipe, error: \"stream closed because of a broken pipe\" }))\n",
+  "returncode": 0
+}

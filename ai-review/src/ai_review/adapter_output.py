@@ -18,12 +18,13 @@ Deliberately free of filesystem I/O: status and debug artifact writing lives in
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import OutputCodec
+from .reviewers import CODEX_REPO_SERVER, OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -315,12 +316,205 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         raise
 
 
-def _load_adapter_json(stdout: str, *, codec: OutputCodec, stage: str) -> dict[str, Any]:
+# The only top-level error Codex recovers from: a stream reconnect, reported as
+# "Reconnecting... 1/5 (stream disconnected before completion: ...)". Any other
+# top-level error is fatal, so an unrecognized problem cannot be admitted with a
+# tool-free answer. The image gate's dropped-stream case pins this wording.
+# The CLI also contains "Reconnecting... waiting for network"; no capture shows
+# it as a stream error on this route, so it stays fatal, as a deliberate choice.
+_CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
+# Do not include raw model/tool diagnostics: they can contain secrets.
+_CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
+# A missing, unspawnable or disabled code-mode host is reported by Codex as a
+# startup error item, which fails like every error item; matching it names the
+# cause.
+_CODEX_HOST_UNAVAILABLE = "Code Mode is unavailable because "
+# A host that starts but cannot open a code-mode session leaves no stream item;
+# Codex logs only this router line. It is anchored on Codex's own timestamped
+# tracing prefix and session-opening text: other router lines (a rejected patch,
+# a host that cannot spawn) occur in usable or otherwise classified runs, and
+# model-controlled tool and script errors do not reach stderr.
+_CODEX_HOST_SESSION_FAILED = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z "
+    r"ERROR codex_core::tools::router: error=gRPC code-mode session opening failed: ",
+    re.MULTILINE,
+)
+# The same line, matched over the runner's whole stderr capture before it is
+# clipped to the redacted diagnostic tail.
+_CODEX_HOST_SESSION_FAILED_BYTES = re.compile(
+    _CODEX_HOST_SESSION_FAILED.pattern.encode("ascii"), re.MULTILINE
+)
+# Codex's own MCP resource tools stay on the pinned code-mode surface. They read
+# no repository content, so they are admitted without counting as attempts.
+_CODEX_BUILTIN_SERVER = "codex"
+_CODEX_BUILTIN_RESOURCE_TOOLS = frozenset(
+    {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+)
+
+
+def _is_codex_builtin_call(item: dict[str, Any]) -> bool:
+    return (
+        item.get("server") == _CODEX_BUILTIN_SERVER
+        and item.get("tool") in _CODEX_BUILTIN_RESOURCE_TOOLS
+    )
+
+
+def _stderr_failure_pattern(codec: OutputCodec) -> re.Pattern[bytes] | None:
+    """The stderr line the runner must detect in full capture for this codec."""
+    return _CODEX_HOST_SESSION_FAILED_BYTES if codec == "codex_stream_json" else None
+
+
+def _load_codex_stream(
+    stdout: str,
+    *,
+    stage: str,
+    returncode: int,
+    stderr: str,
+    stderr_host_session_failed: bool = False,
+) -> Any:
+    """Admit the pinned exec --json contract; execution health precedes content.
+
+    Codex runs without a shell, so a command item is outside the contract.
+    A ``failed`` repository MCP call without an ``error`` is a tool-reported
+    result (missing file, refused path, no match); a set ``error`` means the
+    call itself failed, including a server-side search failure. A built-in
+    resource-tool call is neither. A repository call still open at
+    ``turn.completed`` was abandoned by a failed code-mode cell; it counts as an
+    operationally failed attempt. Only one anchored stderr line, a failed
+    code-mode session, is read from stderr; the runner matches it over the
+    whole capture before clipping and passes ``stderr_host_session_failed``.
+    A top-level ``error`` event is fatal unless it is a stream reconnect notice
+    before ``turn.completed``, which Codex reports that way and recovers from.
+    No-tool reviews and critiques remain valid. See the captured fixtures in
+    tests/fixtures/codex and the real-CLI image gate in
+    scripts/smoke_codex_batch_output.py.
+    """
+    if returncode:
+        raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
+    thread_started = turn_started = turn_completed = reconnected = False
+    active: dict[str, dict[str, Any]] = {}
+    finished: set[str] = set()
+    attempts = operational_failures = 0
+    answer: str | None = None
+    # JSONL ends records only at "\n". str.splitlines() would also split at
+    # U+2028, U+2029 and U+0085, which Codex leaves unescaped inside strings.
+    for line in stdout.split("\n"):
+        if not line.strip():
+            continue
+        try:
+            event = json_loads_no_duplicates(line)
+        except ValueError as exc:
+            raise SchemaValidationError("Codex stream contained a non-JSON event") from exc
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            raise SchemaValidationError("Codex stream event must be an object with a type")
+        kind = event["type"]
+        if kind == "error":
+            message = event.get("message")
+            if turn_completed or not (isinstance(message, str) and _CODEX_RECONNECT.match(message)):
+                raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+            reconnected = True
+            continue
+        if kind == "turn.failed":
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+        if (
+            kind == "item.completed"
+            and isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "error"
+        ):
+            # Startup error items can precede turn.started, with no tool
+            # events at all. Only Codex writes these items, never the model.
+            message = event["item"].get("message")
+            if isinstance(message, str) and message.startswith(_CODEX_HOST_UNAVAILABLE):
+                raise AdapterModelError(
+                    "Codex code-mode host unavailable; repository tools could not run"
+                )
+            raise AdapterModelError("Codex emitted an execution error item")
+        if turn_completed:
+            raise SchemaValidationError("Codex stream continued after turn.completed")
+        if kind == "thread.started" and not thread_started:
+            thread_started = True
+        elif kind == "turn.started" and thread_started and not turn_started:
+            turn_started = True
+        elif kind == "turn.completed" and turn_started:
+            turn_completed = True
+        elif kind in {"item.started", "item.updated", "item.completed"} and turn_started:
+            item = event.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise SchemaValidationError("Codex item must have an id")
+            item_id, item_type = item["id"], item.get("type")
+            if item_id in finished:
+                raise SchemaValidationError("Codex stream repeated a completed item")
+            if kind != "item.completed":
+                active[item_id] = item
+                continue
+            active.pop(item_id, None)
+            finished.add(item_id)
+            if item_type == "agent_message":
+                if not isinstance(item.get("text"), str):
+                    raise SchemaValidationError("Codex agent_message must contain text")
+                answer = item["text"]
+            elif item_type == "mcp_tool_call":
+                builtin = _is_codex_builtin_call(item)
+                if item.get("server") != CODEX_REPO_SERVER and not builtin:
+                    raise SchemaValidationError("Codex called an unregistered MCP server")
+                if item.get("status") not in {"completed", "failed"}:
+                    raise SchemaValidationError("Codex MCP call has no terminal result")
+                if not builtin:
+                    attempts += 1
+                    if item.get("error") is not None:
+                        operational_failures += 1
+            elif item_type not in {"reasoning", "todo_list"}:
+                raise SchemaValidationError(f"unsupported Codex item type: {item_type!r}")
+        else:
+            raise SchemaValidationError(f"unexpected Codex stream event: {kind!r}")
+    incomplete = "Codex stream was incomplete or contained no final answer"
+    if not turn_completed or answer is None:
+        if reconnected and not turn_completed:
+            # A reconnect that never led to completion is the provider failing.
+            raise AdapterModelError(_CODEX_TERMINAL_FAILURE)
+        raise SchemaValidationError(incomplete)
+    for item in active.values():
+        # A code-mode cell that throws while a call is in flight can leave its
+        # item.started without an item.completed, even though the turn finishes.
+        if item.get("type") != "mcp_tool_call":
+            raise SchemaValidationError(incomplete)
+        if item.get("server") == CODEX_REPO_SERVER:
+            attempts += 1
+            operational_failures += 1
+        elif not _is_codex_builtin_call(item):
+            raise SchemaValidationError(incomplete)
+    if attempts and attempts == operational_failures:
+        raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    if stderr_host_session_failed or _CODEX_HOST_SESSION_FAILED.search(stderr):
+        # Never echo stderr: it can carry model or tool text.
+        raise AdapterModelError(
+            "Codex code-mode host transport failed; repository tools could not run"
+        )
+    return _load_answer_json(answer, stage=stage)
+
+
+def _load_adapter_json(
+    stdout: str,
+    *,
+    codec: OutputCodec,
+    stage: str,
+    returncode: int = 0,
+    stderr: str = "",
+    stderr_host_session_failed: bool = False,
+) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
         raw = _load_answer_json(stdout, stage=stage)
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
+    elif codec == "codex_stream_json":
+        raw = _load_codex_stream(
+            stdout,
+            stage=stage,
+            returncode=returncode,
+            stderr=stderr,
+            stderr_host_session_failed=stderr_host_session_failed,
+        )
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)

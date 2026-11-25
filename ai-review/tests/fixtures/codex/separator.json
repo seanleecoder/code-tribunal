@@ -1,0 +1,5 @@
+{
+  "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"captured-thread\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"{\\\"findings\\\": []}\u2028\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":1,\"reasoning_output_tokens\":0}}\n",
+  "stderr": "",
+  "returncode": 0
+}

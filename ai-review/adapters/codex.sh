@@ -9,5 +9,6 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   exit 2
 fi
 
-codex "$@" < "$AI_REVIEW_RENDERED_PROMPT" >/dev/null
-cat "$AI_REVIEW_RAW_OUTPUT"
+# The registry selects --json. Preserve execution events as well as the answer;
+# a valid final batch cannot hide an unusable repository-tool runtime.
+exec codex "$@" < "$AI_REVIEW_RENDERED_PROMPT"

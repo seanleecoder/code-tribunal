@@ -17,6 +17,7 @@ import yaml
 from ai_review.adapter_process import (
     _ANTHROPIC_OPENROUTER_BASE_URL,
     _OPENROUTER_BASE_URL,
+    _AdapterResult,
     _build_adapter_env,
 )
 from ai_review.adapter_runner import _EXIT_ERROR
@@ -369,8 +370,7 @@ class ReviewerAdapterContractTests(unittest.TestCase):
                         )
 
     def test_runner_uses_the_registry_codec_instead_of_guessing_from_stdout(self) -> None:
-        result = subprocess.CompletedProcess(
-            args=[],
+        result = _AdapterResult(
             returncode=0,
             stdout=json.dumps({"type": "result", "structured_output": {"findings": []}}),
             stderr="",

@@ -149,7 +149,31 @@ opened, a symlinked `CLAUDE.md` is left out instead of rejecting the snapshot.
 The hostile-symlink and no-follow behavior is exercised in
 [`test_input_bundle.py`](../ai-review/tests/unit/test_input_bundle.py).
 
-Residual risk: intentionally tracked symlinks are unsupported. Hard links to
+Codex runs with its shell tool disabled, because its shell sandbox cannot start
+under default Linux container policies. Its review reads the copied snapshot only
+through the trusted
+[`codex_repo_tools`](../ai-review/src/ai_review/codex_repo_tools.py) MCP server,
+which Codex starts outside any sandbox. That server therefore enforces the
+boundary itself: it resolves every requested path, symlinks included, inside the
+snapshot, rejects absolute paths, and bounds file, listing and search output.
+It runs the image's pinned `rg` with fixed arguments, a file-size limit and a
+timeout. The server has no write operation. It runs in isolated Python mode
+and allowlists process variables and the certificate paths that the runner
+and Codex pass through. A
+provider credential or other unexpected variable stops the server at startup
+and makes the review fail. Codex's remaining `apply_patch` tool is
+rejected by its read-only policy and writes only to the disposable copy. The
+[image gate](development/testing.md#codex-image-gate) checks containment,
+credential refusal, the pinned tool set and unchanged bytes. The registry also
+disables Codex's provider-hosted web search.
+
+Residual risk: the image gate pins the tool set only for the configured default
+and `openai/gpt-6.1-sol`; other models can offer other tools, still without a
+shell. Codex's event stream, tool results included, counts toward the runner's
+32 MiB adapter output limit; a run that exceeds it fails visibly rather than
+being admitted. Repository names and file text reach the model as they are, so crafted
+content can look like other entries; model output is untrusted either way.
+Intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary
 Git checkouts cannot create them.
 

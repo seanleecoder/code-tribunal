@@ -183,7 +183,7 @@ class PostCase(unittest.TestCase):
 
         def mutate(config: dict[str, Any]) -> None:
             for name, values in sections.items():
-                _deep_update(config[name], values)
+                deep_update(config[name], values)
 
         return runtime_config(mutate)
 
@@ -226,10 +226,10 @@ class PostCase(unittest.TestCase):
         )
 
 
-def _deep_update(target: dict[str, Any], values: dict[str, Any]) -> None:
+def deep_update(target: dict[str, Any], values: dict[str, Any]) -> None:
     """``dict.update`` that recurses into nested mappings instead of replacing them."""
     for key, value in values.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):
-            _deep_update(target[key], value)
+            deep_update(target[key], value)
         else:
             target[key] = value

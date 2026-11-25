@@ -90,7 +90,17 @@ These rules are worth stating because breaking them is silent:
   module run under the runner's own interpreter) and the output codec for the
   pinned adapter invocation. `_load_adapter_json` decodes that transport and
   passes the explicit stage to the shared root normalizer; no decoder guesses
-  another reviewer's transport from stdout.
+  another reviewer's transport from stdout. Codex's `exec --json` codec checks
+  execution health before content: a terminal failure, an unavailable code-mode
+  host or wholly failed repository-tool attempts invalidate even a well-formed
+  final answer. The admission rules live in the `_load_codex_stream` docstring
+  and are pinned by the [image gate](testing.md#codex-image-gate).
+- Codex runs without a shell. Review reads the snapshot through the trusted
+  [`codex_repo_tools`](../../ai-review/src/ai_review/codex_repo_tools.py) MCP
+  server that the registry configures; it is standard-library only and imports
+  nothing from the runner. See the
+  [ADR-0003 amendment](../decisions/0003-product-invariants-and-complexity-envelope.md#amendment-2026-11-17-no-shell-codex)
+  and the [image gate](testing.md#codex-image-gate).
 - The same registry declares CLI arguments, effort flags, schema transport,
   isolated state directories and environment settings. `reviewer_setup` prepares
   them for the shell seats and OpenCode; review receives a copied snapshot and

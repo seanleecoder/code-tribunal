@@ -17,6 +17,7 @@ from .adapter_artifacts import (
 )
 from .adapter_output import (
     _load_adapter_json,
+    _stderr_failure_pattern,
 )
 from .adapter_process import (
     AdapterOutputLimitError,
@@ -173,7 +174,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         timeout_seconds = _effective_adapter_timeout_seconds(reviewer_config, stage)
         try:
-            result = _run_adapter_process(command, env, timeout_seconds, cwd=workspace)
+            result = _run_adapter_process(
+                command,
+                env,
+                timeout_seconds,
+                cwd=workspace,
+                stderr_pattern=_stderr_failure_pattern(reviewer_definition.output_codec),
+            )
         finally:
             # The runner created the workspace, so it removes it, even after a
             # timeout kill that no shell trap would survive.
@@ -193,7 +200,12 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
         try:
             raw = _load_adapter_json(
-                result.stdout, codec=reviewer_definition.output_codec, stage=stage
+                result.stdout,
+                codec=reviewer_definition.output_codec,
+                stage=stage,
+                returncode=result.returncode,
+                stderr=result.stderr,
+                stderr_host_session_failed=result.stderr_matched,
             )
             if stage == "review":
                 finalized = finalize_finding_batch(
