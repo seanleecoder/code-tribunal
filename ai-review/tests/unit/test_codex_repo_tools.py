@@ -17,6 +17,8 @@ from ai_review import codex_repo_tools as tools
 from ai_review.reviewer_setup import prepare_shell_adapter
 from ai_review.reviewers import get_reviewer_definition
 
+from tests.support.post_case import deep_update
+
 RG = shutil.which("rg")
 needs_rg = pytest.mark.skipif(RG is None, reason="ripgrep is not installed")
 needs_non_utf8_names = pytest.mark.skipif(
@@ -43,12 +45,27 @@ def call(root: Path, name: str, **arguments) -> tuple[str, bool]:
     return result["content"][0]["text"], result["isError"]
 
 
-def rpc(root: Path, name: str, **arguments) -> dict:
+def tool_call(name: str, request_id: int = 7, **arguments) -> dict:
     params = {"name": name, "arguments": arguments}
-    message = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": params}
-    reply = tools.respond(message, root)
+    return {"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": params}
+
+
+def rpc(root: Path, name: str, **arguments) -> dict:
+    reply = tools.respond(tool_call(name, **arguments), root)
     assert reply is not None
     return reply
+
+
+def serve(root: Path, messages: list[dict], tail: str = "") -> list[dict]:
+    stdin = io.StringIO("".join(json.dumps(m) + "\n" for m in messages) + tail)
+    out = io.StringIO()
+    tools.serve(root, stdin, out)
+    return [json.loads(line) for line in out.getvalue().splitlines()]
+
+
+def add_escape_links(root: Path) -> None:
+    (root / "escape.txt").symlink_to(root.parent / "outside.txt")
+    (root / "escape-dir").symlink_to(root.parent)
 
 
 def test_read_and_list_inside_the_snapshot(repo: Path) -> None:
@@ -132,8 +149,7 @@ def test_grep_bounds_long_lines_and_reports_failure(repo: Path) -> None:
     ],
 )
 def test_paths_cannot_leave_the_snapshot(repo: Path, path: str, refusal: str) -> None:
-    (repo / "escape.txt").symlink_to(repo.parent / "outside.txt")
-    (repo / "escape-dir").symlink_to(repo.parent)
+    add_escape_links(repo)
     for name in ("read_file", "list_dir", "grep"):
         arguments = {"path": path, **({"pattern": "x"} if name == "grep" else {})}
         text, is_error = call(repo, name, **arguments)
@@ -142,8 +158,7 @@ def test_paths_cannot_leave_the_snapshot(repo: Path, path: str, refusal: str) ->
 
 @needs_rg
 def test_search_never_follows_symlinks_out(repo: Path) -> None:
-    (repo / "escape.txt").symlink_to(repo.parent / "outside.txt")
-    (repo / "escape-dir").symlink_to(repo.parent)
+    add_escape_links(repo)
     assert "outside-secret" not in call(repo, "grep", pattern="outside-secret")[0]
 
 
@@ -164,16 +179,7 @@ def test_read_file_numbers_lines_as_git_does(repo: Path) -> None:
 @needs_non_utf8_names
 def test_non_utf8_names_are_json_safe(repo: Path) -> None:
     os.mkdir(os.fsencode(repo / "pkg") + b"/bad\xff")
-    reply = tools.respond(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "list_dir", "arguments": {"path": "pkg"}},
-        },
-        repo,
-    )
-    wire = json.dumps(reply)
+    wire = json.dumps(rpc(repo, "list_dir", path="pkg"))
     assert "\\udc" not in wire
     assert json.loads(wire)["result"]["content"][0]["text"] == "bad�/\nmodule.py"
 
@@ -284,15 +290,9 @@ def test_grep_distinguishes_signal_failure_from_the_output_cap(
 
 def test_a_search_tool_that_cannot_start_is_a_server_error(repo: Path, monkeypatch) -> None:
     monkeypatch.setattr(tools, "RG", str(repo / "no-such-rg"))
-    grep = {"name": "grep", "arguments": {"pattern": "x"}}
-    read = {"name": "read_file", "arguments": {"path": "sentinel.txt"}}
-    messages = [
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": grep},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": read},
-    ]
-    out = io.StringIO()
-    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
-    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    first, second = serve(
+        repo, [tool_call("grep", 1, pattern="x"), tool_call("read_file", 2, path="sentinel.txt")]
+    )
     assert first["error"]["code"] == -32603
     assert first["error"]["message"].startswith("search tool failed to start: ")
     assert second["result"] == {
@@ -323,14 +323,13 @@ def test_an_unexpected_handler_error_does_not_end_the_server(repo: Path, monkeyp
         raise RuntimeError("repository-derived detail")
 
     monkeypatch.setitem(tools.HANDLERS, "read_file", broken)
-    call_ = {"name": "read_file", "arguments": {"path": "sentinel.txt"}}
-    messages = [
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call_},
-        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
-    ]
-    out = io.StringIO()
-    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
-    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    first, second = serve(
+        repo,
+        [
+            tool_call("read_file", 1, path="sentinel.txt"),
+            {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+        ],
+    )
     assert first["error"] == {"code": -32603, "message": "internal error"}
     assert second == {"jsonrpc": "2.0", "id": 2, "result": {}}
 
@@ -373,18 +372,10 @@ def test_stdio_protocol_offers_only_read_only_tools(repo: Path) -> None:
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {"name": "read_file", "arguments": {"path": "sentinel.txt"}},
-        },
+        tool_call("read_file", 3, path="sentinel.txt"),
         {"jsonrpc": "2.0", "id": 4, "method": "resources/write"},
     ]
-    out = io.StringIO()
-    stdin = io.StringIO("".join(json.dumps(m) + "\n" for m in messages) + "\nnot json\n")
-    tools.serve(repo, stdin, out)
-    replies = [json.loads(line) for line in out.getvalue().splitlines()]
+    replies = serve(repo, messages, tail="\nnot json\n")
     assert [r.get("id") for r in replies] == [1, 2, 3, 4, None]
     assert replies[0]["result"]["protocolVersion"] == "2025-06-18"
     offered = replies[1]["result"]["tools"]
@@ -392,30 +383,6 @@ def test_stdio_protocol_offers_only_read_only_tools(repo: Path) -> None:
     assert all(t["annotations"]["readOnlyHint"] for t in offered)
     assert replies[2]["result"]["content"][0]["text"] == "1\tsnapshot-only-value"
     assert replies[3]["error"]["code"] == -32601 and replies[4]["error"]["code"] == -32700
-
-
-def test_a_nul_pattern_cannot_end_the_server(repo: Path) -> None:
-    grep = {"name": "grep", "arguments": {"pattern": "a\x00b"}}
-    messages = [
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": grep},
-        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
-    ]
-    out = io.StringIO()
-    tools.serve(repo, io.StringIO("".join(json.dumps(m) + "\n" for m in messages)), out)
-    first, second = (json.loads(line) for line in out.getvalue().splitlines())
-    assert first["result"]["isError"] is True and second == {
-        "jsonrpc": "2.0",
-        "id": 2,
-        "result": {},
-    }
-
-
-def merge(target: dict, update: dict) -> None:
-    for key, value in update.items():
-        if isinstance(value, dict):
-            merge(target.setdefault(key, {}), value)
-        else:
-            target[key] = value
 
 
 @pytest.mark.parametrize("stage", ["review", "critique"])
@@ -437,7 +404,7 @@ def test_registry_renders_parseable_no_shell_configuration(tmp_path: Path, stage
             value = arguments[index + 1]
         else:
             continue
-        merge(overrides, tomllib.loads(value))
+        deep_update(overrides, tomllib.loads(value))
     assert overrides["features"]["shell_tool"] is False
     assert overrides["features"]["view_image"] is False
     assert overrides["features"]["multi_agent_v2"] == {

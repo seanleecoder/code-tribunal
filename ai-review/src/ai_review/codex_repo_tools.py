@@ -165,9 +165,10 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     start = _positive(arguments, "start_line", 1)
     count = _positive(arguments, "max_lines", DEFAULT_MAX_LINES)
     with path.open("rb") as handle:
-        data = handle.read(MAX_FILE_BYTES + 1)
-    if b"\x00" in data[:8192]:
-        raise ToolError(f"binary file: {_relative(root, path)}")
+        data = handle.read(min(8192, MAX_FILE_BYTES + 1))
+        if b"\x00" in data:
+            raise ToolError(f"binary file: {_relative(root, path)}")
+        data += handle.read(MAX_FILE_BYTES + 1 - len(data))
     # Number lines as git and the diff do: only "\n" ends a line. splitlines()
     # also splits on form feeds and Unicode separators, shifting every anchor.
     text = data[:MAX_FILE_BYTES].decode("utf-8", errors="replace")
@@ -196,14 +197,12 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
     if remaining > 0:
         scope = " within the read limit" if truncated else ""
         notes.append(f"[{remaining} more lines{scope}; continue with start_line={next_line}]")
-    elif start > max(len(lines), 1) and truncated:
+    elif start > max(len(lines), 1):
         notes.append(
             f"[start_line {start} is past the {len(lines)} lines within the "
             f"{MAX_FILE_BYTES}-byte read limit]"
-        )
-    elif start > max(len(lines), 1):
-        notes.append(
-            f"[start_line {start} is past the end of the file, which has {len(lines)} lines]"
+            if truncated
+            else f"[start_line {start} is past the end of the file, which has {len(lines)} lines]"
         )
     if truncated:
         notes.append(f"[file truncated at {MAX_FILE_BYTES} bytes]")
@@ -344,8 +343,8 @@ def call_tool(root: Path, params: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-def _rpc_error(request_id: Any, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": message}}
+def _rpc_error(request_id: Any, message: str, code: int = -32603) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
 def respond(message: dict[str, Any], root: Path) -> dict[str, Any] | None:
@@ -374,8 +373,7 @@ def respond(message: dict[str, Any], root: Path) -> dict[str, Any] | None:
     elif method == "ping":
         result = {}
     else:
-        error = {"code": -32601, "message": "method not found"}
-        return {"jsonrpc": "2.0", "id": request_id, "error": error}
+        return _rpc_error(request_id, "method not found", -32601)
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
@@ -387,11 +385,7 @@ def serve(root: Path, stdin: IO[str], stdout: IO[str]) -> None:
             message = json.loads(line)
             reply = respond(message, root) if isinstance(message, dict) else None
         except json.JSONDecodeError:
-            reply = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": "parse error"},
-            }
+            reply = _rpc_error(None, "parse error", -32700)
         if reply is not None:
             stdout.write(json.dumps(reply) + "\n")
             stdout.flush()

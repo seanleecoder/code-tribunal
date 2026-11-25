@@ -36,24 +36,21 @@ def load(data: dict, stage: str = "review") -> dict:
 
 
 @pytest.mark.parametrize(
-    "label",
+    "label,stage,count",
     [
-        "empty",
-        "critique",
-        "mcp-read",
-        "mcp-tool-error",
-        "mcp-containment",
-        "reconnect",
-        "separator",
-        "list-mcp-resources",
+        ("empty", "review", 0),
+        ("critique", "critique", 0),
+        ("mcp-read", "review", 1),
+        ("mcp-tool-error", "review", 1),
+        ("mcp-containment", "review", 1),
+        ("reconnect", "review", 0),
+        ("separator", "review", 0),
+        ("list-mcp-resources", "review", 1),
     ],
 )
-def test_captured_usable_executions(label: str) -> None:
-    stage = "critique" if label == "critique" else "review"
+def test_captured_usable_executions(label: str, stage: str, count: int) -> None:
     raw = load(capture(label), stage)
-    assert len(raw["critiques" if stage == "critique" else "findings"]) == (
-        1 if label in {"mcp-read", "mcp-tool-error", "mcp-containment", "list-mcp-resources"} else 0
-    )
+    assert len(raw["critiques" if stage == "critique" else "findings"]) == count
 
 
 @pytest.mark.parametrize(
@@ -73,14 +70,32 @@ _DISABLED_HOST = (
 )
 
 
+def events_of(data: dict) -> list[dict]:
+    return [json.loads(line) for line in data["stdout"].split("\n") if line.strip()]
+
+
+def with_events(data: dict, events: list[dict]) -> dict:
+    return {**data, "stdout": "\n".join(map(json.dumps, events)) + "\n"}
+
+
+def with_failed_repository_call(events: list[dict]) -> list[dict]:
+    """Splice mcp-operational's failed repository call in after turn.started."""
+    failed = [e for e in events_of(capture("mcp-operational")) if "item" in e]
+    failed = [e for e in failed if e["item"].get("type") == "mcp_tool_call"]
+    for event in failed:
+        event["item"]["id"] = "item_failed"
+    turn = next(i for i, e in enumerate(events) if e["type"] == "turn.started")
+    return [*events[: turn + 1], *failed, *events[turn + 1 :]]
+
+
 def _with_startup_error(data: dict, message: str) -> dict:
-    events = [json.loads(line) for line in data["stdout"].split("\n") if line.strip()]
+    events = events_of(data)
     item = {
         "type": "item.completed",
         "item": {"id": "startup", "type": "error", "message": message},
     }
     events.insert(1, item)
-    return {**data, "stdout": "\n".join(map(json.dumps, events)) + "\n"}
+    return with_events(data, events)
 
 
 @pytest.mark.parametrize("source", ["missing-host", "disabled"])
@@ -275,7 +290,7 @@ def test_shell_command_item_is_outside_the_no_shell_contract() -> None:
 @pytest.mark.parametrize("damage", ["server", "status"])
 def test_mcp_calls_must_be_terminal_and_from_the_registered_server(damage: str) -> None:
     data = capture("mcp-read")
-    events = list(map(json.loads, data["stdout"].splitlines()))
+    events = events_of(data)
     for event in events:
         item = event.get("item", {})
         if event["type"] == "item.completed" and item.get("type") == "mcp_tool_call":
@@ -283,49 +298,31 @@ def test_mcp_calls_must_be_terminal_and_from_the_registered_server(damage: str) 
                 item["server"] = "other"
             else:
                 item["status"] = "in_progress"
-    data["stdout"] = "\n".join(json.dumps(e) for e in events) + "\n"
     with pytest.raises(SchemaValidationError):
-        load(data)
+        load(with_events(data, events))
 
 
 def test_one_operational_mcp_failure_still_allows_recovery() -> None:
-    failed = capture("mcp-operational")["stdout"].splitlines()
     good = capture("mcp-read")
-    events = list(map(json.loads, good["stdout"].splitlines()))
-    broken = [json.loads(line) for line in failed if '"mcp_tool_call"' in line]
-    for event in broken:
-        event["item"]["id"] = "item_failed"
-    turn = next(i for i, e in enumerate(events) if e["type"] == "turn.started")
-    events[turn + 1 : turn + 1] = broken
-    good["stdout"] = "\n".join(json.dumps(e) for e in events) + "\n"
-    assert len(load(good)["findings"]) == 1
+    recovered = with_events(good, with_failed_repository_call(events_of(good)))
+    assert len(load(recovered)["findings"]) == 1
 
 
 def test_builtin_resource_tools_are_admitted_without_counting_as_attempts() -> None:
     data = capture("list-mcp-resources")
     assert len(load(data)["findings"]) == 1
-    events = list(map(json.loads, data["stdout"].splitlines()))
-    turn = next(i for i, e in enumerate(events) if e["type"] == "turn.started")
+    events = events_of(data)
     # Only Codex's resource tools are exempt, and only as terminal calls.
     for field, value in [("tool", "clock__curr_time"), ("status", "in_progress")]:
         damaged = copy.deepcopy(events)
         for event in damaged:
             if event.get("item", {}).get("type") == "mcp_tool_call":
                 event["item"][field] = value
-        stream = {**data, "stdout": "\n".join(map(json.dumps, damaged)) + "\n"}
         with pytest.raises(SchemaValidationError):
-            load(stream)
+            load(with_events(data, damaged))
     # A resource call cannot stand in for a repository call that failed.
-    failed = [
-        json.loads(line)
-        for line in capture("mcp-operational")["stdout"].splitlines()
-        if '"mcp_tool_call"' in line
-    ]
-    for event in failed:
-        event["item"]["id"] = "item_failed"
-    events[turn + 1 : turn + 1] = failed
     with pytest.raises(AdapterModelError, match="all failed operationally"):
-        load({**data, "stdout": "\n".join(map(json.dumps, events)) + "\n"})
+        load(with_events(data, with_failed_repository_call(events)))
 
 
 def test_only_codex_host_session_line_rejects_a_valid_answer() -> None:

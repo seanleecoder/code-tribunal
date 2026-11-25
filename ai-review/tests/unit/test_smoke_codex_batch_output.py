@@ -164,7 +164,8 @@ def test_image_gate_is_unconditional_and_precedes_image_save() -> None:
     assert "if" not in probe and "continue-on-error" not in probe
     assert steps.index(probe) < steps.index(save)
     wrapper = (ROOT / "scripts/smoke_codex_batch_output.sh").read_text()
-    assert "--network none" in wrapper and "readonly" in wrapper
+    # The argument line, not the comment that also names the flag.
+    assert "  --network none \\\n" in wrapper and "readonly" in wrapper
     # No-shell Codex needs no relaxed container policy or added capability.
     assert "--security-opt" not in wrapper and "--cap-add" not in wrapper
     assert "--privileged" not in wrapper

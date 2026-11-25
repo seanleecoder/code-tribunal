@@ -328,7 +328,7 @@ _CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
 # A missing, unspawnable or disabled code-mode host is reported by Codex as a
 # startup error item, which fails like every error item; matching it names the
 # cause.
-_CODEX_HOST_UNAVAILABLE = re.compile(r"Code Mode is unavailable because ")
+_CODEX_HOST_UNAVAILABLE = "Code Mode is unavailable because "
 # A host that starts but cannot open a code-mode session leaves no stream item;
 # Codex logs only this router line. It is anchored on Codex's own timestamped
 # tracing prefix and session-opening text: other router lines (a rejected patch,
@@ -347,7 +347,7 @@ _CODEX_BUILTIN_RESOURCE_TOOLS = frozenset(
 )
 
 
-def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str = "") -> Any:
+def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
     Codex runs without a shell, so a command item is outside the contract.
@@ -396,7 +396,7 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str 
             # Startup error items can precede turn.started, with no tool
             # events at all. Only Codex writes these items, never the model.
             message = event["item"].get("message")
-            if isinstance(message, str) and _CODEX_HOST_UNAVAILABLE.match(message):
+            if isinstance(message, str) and message.startswith(_CODEX_HOST_UNAVAILABLE):
                 raise AdapterModelError(
                     "Codex code-mode host unavailable; repository tools could not run"
                 )

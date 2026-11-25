@@ -8,8 +8,8 @@ error text are preserved. These are parser evidence, not a Linux image acceptanc
 claim. The unconditional image workflow runs the same probe with the npm-pinned
 Linux/amd64 CLI and its shipped adapter.
 
-`missing-host` copies only the native binary to reproduce the pruned package
-layout; it returns CLI exit 0 and valid final JSON, and emits no tool item.
+`missing-host` copies only the native binary, without the code-mode host beside
+it; it returns CLI exit 0 and valid final JSON, and emits no tool item.
 `terminal` returns a scripted Responses failure after an answer item.
 
 The `mcp-*` captures come from the no-shell Linux/amd64 run in

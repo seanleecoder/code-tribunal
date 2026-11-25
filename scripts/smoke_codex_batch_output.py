@@ -50,29 +50,27 @@ from pathlib import Path
 from ai_review import adapter_runner as runner
 url, capture_path, workspace_path, overrides, retries = sys.argv[2:7]
 original_prepare = runner.prepare_shell_adapter
+prepared = {}
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = url
-    arguments, root = original_prepare(definition, stage, env)
-    Path(workspace_path).write_text(json.dumps({"root": str(root)}))
+    arguments, prepared["root"] = original_prepare(definition, stage, env)
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
     arguments += ["-c", "model_providers.openrouter.request_max_retries=0",
                   "-c", f"model_providers.openrouter.stream_max_retries={retries}"]
     # Negative controls only: trusted overrides after the registry's arguments.
     arguments += json.loads(overrides)
-    return arguments, root
+    return arguments, prepared["root"]
 runner.prepare_shell_adapter = prepare
 original_run = runner._run_adapter_process
 def record(*args, **kwargs):
     result = original_run(*args, **kwargs)
     # The runner deletes its copied snapshot after admission. Observe actual
     # bytes in this trusted parent, after CLI exit and before that cleanup.
-    metadata = json.loads(Path(workspace_path).read_text())
-    root = Path(metadata["root"])
-    metadata["files_after_cli"] = {
-        name: path.read_bytes().hex() if path.is_file() and not path.is_symlink() else None
-        for name in ("example.py", "sentinel.txt") for path in (root / name,)
-    }
-    Path(workspace_path).write_text(json.dumps(metadata))
+    files = {}
+    for name in ("example.py", "sentinel.txt"):
+        path = Path(prepared["root"]) / name
+        files[name] = path.read_bytes().hex() if path.is_file() and not path.is_symlink() else None
+    Path(workspace_path).write_text(json.dumps({"files_after_cli": files}))
     Path(capture_path).write_text(json.dumps({"stdout": result.stdout,
         "stderr": result.stderr, "returncode": result.returncode}))
     return result
@@ -147,9 +145,7 @@ class StubProvider:
         self.thread.join(timeout=5)
 
 
-def response_events(
-    index: int, *, code: str | None, answer: str, terminal: bool = False
-) -> list[dict]:
+def response_events(index: int, *, code: str | None, answer: str, terminal: bool) -> list[dict]:
     response_id = f"resp_{index}"
     if code is not None:
         item = {
@@ -393,10 +389,17 @@ def run_case(
     protected_runtime: Path | None = None,
     drop_first_stream: bool = False,
     expect_text: str | None = None,
+    expect_error: str | None = None,
     results: list[tuple[bool, str]] | None = None,
 ) -> dict:
+    # Deferred: main() puts the install root's package on sys.path first.
+    from ai_review.adapter_artifacts import _output_file  # noqa: PLC0415
+    from ai_review.adapter_output import _load_adapter_json  # noqa: PLC0415
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
+    from ai_review.reviewer_setup import stage_schema_path  # noqa: PLC0415
+    from ai_review.reviewers import get_reviewer_definition  # noqa: PLC0415
+    from ai_review.schema import load_json_file  # noqa: PLC0415
 
     ca_environment = {
         name: os.environ[name]
@@ -496,11 +499,7 @@ def run_case(
         )
     )
     capture = json.loads((work / "capture.json").read_text())
-    outcome = json.loads(
-        (
-            work / "out" / ("findings" if stage == "review" else "critiques") / "codex.json"
-        ).read_text()
-    )
+    outcome = json.loads((work / "out" / _output_file(stage, "codex")).read_text())
     print(
         "CODEX_EVIDENCE "
         + json.dumps(
@@ -522,19 +521,22 @@ def run_case(
         expected_status == "success"
     ):
         raise AssertionError(f"{label}: wrong outcome: {outcome}; {result.stderr}")
+    if expect_error is not None and expect_error not in outcome.get("error_message_redacted", ""):
+        raise AssertionError(f"{label}: wrong error: {outcome.get('error_message_redacted')}")
     if '"command_execution"' in capture["stdout"]:
         raise AssertionError(f"{label}: the no-shell reviewer executed a command")
+    # For a negative control, any nonzero exit is not enough: a rejected
+    # override would also fail.
+    if expect_text is not None and not any(
+        expect_text in text
+        for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
+    ):
+        raise AssertionError(f"{label}: control did not show {expect_text!r}")
     if overrides:
         # Negative controls stop at tool-server startup, before a usable answer.
         if capture["returncode"] == 0:
             raise AssertionError(f"{label}: CLI accepted an unusable repository tool server")
-        # Any nonzero exit is not enough: a rejected override would also fail.
-        if expect_text is not None and expect_text not in capture["stderr"]:
-            raise AssertionError(f"{label}: control did not show {expect_text!r}")
         return capture
-    from ai_review.reviewer_setup import stage_schema_path  # noqa: PLC0415
-    from ai_review.schema import load_json_file  # noqa: PLC0415
-
     assert_requests(
         stub,
         model,
@@ -555,11 +557,6 @@ def run_case(
     if results is not None and mcp_results(stub.requests[-1]) != results:
         # A step's own result, not just the final review, must be what it claims.
         raise AssertionError(f"{label}: repository tool results differ")
-    if expect_text is not None and not any(
-        expect_text in text
-        for text in [capture["stderr"], *(tool_outputs(r) for r in stub.requests[1:])]
-    ):
-        raise AssertionError(f"{label}: control did not show {expect_text!r}")
     if drop_first_stream and (
         not stub.dropped
         or not any(
@@ -584,9 +581,6 @@ def run_case(
                     raise AssertionError(f"{label}: runner changed authored finding content")
         # Compare authored content before runtime enrichment too: no dropped or
         # invented item may make a transport regression appear to pass.
-        from ai_review.adapter_output import _load_adapter_json  # noqa: PLC0415
-        from ai_review.reviewers import get_reviewer_definition  # noqa: PLC0415
-
         raw = _load_adapter_json(
             capture["stdout"],
             codec=get_reviewer_definition("codex").output_codec,
@@ -605,7 +599,7 @@ def assert_unchanged(protected: dict[Path, bytes]) -> None:
             raise AssertionError(f"repository tools changed protected file: {path}")
 
 
-def containment_case(install: Path, scratch: Path, model: str = REQUIRED_MODEL) -> None:
+def containment_case(install: Path, scratch: Path, model: str) -> None:
     with TemporaryDirectory(prefix=".codex-read-only-", dir=install) as runtime:
         protected = Path(runtime) / "protected.txt"
         protected.write_text(secrets.token_hex(24))
@@ -645,11 +639,9 @@ def missing_host_case(install: Path, scratch: Path) -> None:
             expected_status="model_error",
             cli_path=str(isolated) + os.pathsep + os.environ["PATH"],
             expect_text="failed to spawn code-mode host",
+            # The refusal comes from Codex's startup item and names the cause.
+            expect_error="host unavailable",
         )
-    # The refusal comes from Codex's startup item and names the cause.
-    outcome = json.loads((scratch / "missing-host/out/findings/codex.json").read_text())
-    if "host unavailable" not in outcome.get("error_message_redacted", ""):
-        raise AssertionError(f"missing-host: wrong error: {outcome.get('error_message_redacted')}")
 
 
 def run_cases(
@@ -696,7 +688,6 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         directory = scratch / str(index)
         add(directory, "read", model, steps=[read], sentinel=secrets.token_hex(24))
         # Model metadata shapes Codex's tool surface, so pin it per model.
-        directory.mkdir(parents=True, exist_ok=True)
         run = partial(containment_case, install, directory, model)
         cases.append((f"{directory.name}/containment", run))
     # Empty reviews and tool-free critiques need only one model.
