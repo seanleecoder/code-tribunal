@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 import urllib.error
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -268,16 +269,29 @@ class CanaryCliTests(unittest.TestCase):
 class CandidateCanaryValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.validator = load_repository_script("validate_candidate_canary", VALIDATOR)
+        self.manifest = {"run_id": "run-1", "effective_config_sha256": "a" * 64}
+        self.reviewer_image = "reviewer@sha256:" + "c" * 64
+        self.witness = {
+            **self.manifest,
+            "platform": "github",
+            "reviewer": "codex",
+            "reviewer_image": self.reviewer_image,
+            "fixture": "demo-access-policy",
+            "observed": True,
+        }
 
     def _artifact(self, path: Path, _schema: str):
         name = path.name
         if path.parent.name == "findings":
+            findings = (
+                [{"title": "model finding visible in the diff"}] if path.stem == "codex" else []
+            )
             return {
                 "reviewer": path.stem,
                 "model": f"model-for-{path.stem}",
                 "adapter_status": "success",
-                "findings": [],
-                "raw_finding_count": 0,
+                "findings": findings,
+                "raw_finding_count": len(findings),
                 "dropped_finding_count": 0,
                 "effective_config_sha256": "a" * 64,
                 "run_id": "run-1",
@@ -302,12 +316,12 @@ class CandidateCanaryValidationTests(unittest.TestCase):
             }
         return {}
 
-    def _validate(self):
+    def _validate(self, *, missing: bool = False):
         with (
             mock.patch.object(
                 self.validator,
                 "load_json_file",
-                return_value={"run_id": "run-1", "effective_config_sha256": "a" * 64},
+                side_effect=[self.manifest, FileNotFoundError() if missing else self.witness],
             ),
             mock.patch.object(self.validator, "_load", side_effect=self._artifact),
         ):
@@ -317,7 +331,7 @@ class CandidateCanaryValidationTests(unittest.TestCase):
                 output=Path("out"),
                 runtime_source="a" * 40,
                 base_image="base@sha256:" + "b" * 64,
-                reviewer_image="reviewer@sha256:" + "c" * 64,
+                reviewer_image=self.reviewer_image,
                 external_run_url="https://example.test/run/1",
                 change_url="https://example.test/pr/2",
                 cleanup_status="success",
@@ -328,7 +342,24 @@ class CandidateCanaryValidationTests(unittest.TestCase):
         self.assertEqual(set(summary["seats"]), set(REVIEWERS))
         self.assertEqual(summary["posting"]["posted_thread_count"], 1)
         self.assertEqual(summary["cleanup"], "success")
+        self.assertIs(summary["seats"]["codex"]["review"]["repository_read"], True)
         self.assertNotIn("redacted-by-summary", repr(summary))
+        self.assertNotIn("model finding visible in the diff", repr(summary))
+
+    def test_healthy_panel_with_findings_fails_without_a_bound_repository_read(self) -> None:
+        with self.assertRaisesRegex(
+            self.validator.CanaryValidationError, "read evidence is missing"
+        ):
+            self._validate(missing=True)
+        for field in self.witness:
+            with (
+                self.subTest(field=field),
+                mock.patch.dict(self.witness, {field: "wrong"}),
+                self.assertRaisesRegex(
+                    self.validator.CanaryValidationError, "read was not verified"
+                ),
+            ):
+                self._validate()
 
     def test_incomplete_summary_has_one_redacted_shape(self) -> None:
         summary = self.validator.build_incomplete_summary(
@@ -641,6 +672,75 @@ class CandidateCollectionTests(unittest.TestCase):
             self.assertEqual(discovery_requests, 1)
             self.assertEqual(result["external_run_url"], "pipeline")
 
+    def test_github_takes_witness_only_from_codex_review_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.json"
+            state.write_text('{"branch":"candidate"}', encoding="utf-8")
+            artifacts = root / "artifacts"
+            for name in (
+                "ai-review-inputs",
+                "ai-review-consensus",
+                "ai-review-post",
+                *(
+                    f"ai-review-{stage}-{seat}"
+                    for seat in REVIEWERS
+                    for stage in ("review", "critique")
+                ),
+            ):
+                (artifacts / name).mkdir(parents=True)
+            path = self.github.WITNESS_PATH
+            for job, value in (("review-codex", "expected"), ("critique-codex", "wrong job")):
+                witness = artifacts / f"ai-review-{job}" / path
+                witness.parent.mkdir()
+                witness.write_text(value, encoding="utf-8")
+            args = argparse.Namespace(
+                state=state, destination=root / "collected", timeout_seconds=10
+            )
+            with (
+                mock.patch.object(self.github, "await_new_run", return_value=12),
+                mock.patch.object(self.github, "await_success", return_value={"url": "run"}),
+                mock.patch.object(self.github, "download_run", return_value=artifacts),
+            ):
+                self.github.collect_campaign(args)
+            self.assertEqual((args.destination / "out" / path).read_text(), "expected")
+
+    def test_gitlab_takes_witness_only_from_codex_review_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.json"
+            state.write_text('{"mr_iid":"7"}', encoding="utf-8")
+            jobs = [
+                {
+                    "id": job_id,
+                    "name": name,
+                    "status": "success",
+                    "artifacts_file": {"filename": "artifacts.zip"},
+                }
+                for job_id, name in enumerate(("AI review: [codex]", "AI critique: [codex]"), 1)
+            ]
+            path = self.gitlab.WITNESS_PATH
+
+            def artifact(job):
+                content = io.BytesIO()
+                with zipfile.ZipFile(content, "w") as archive:
+                    archive.writestr(f"out/{path}", str(job["id"]))
+                return content.getvalue()
+
+            args = argparse.Namespace(
+                state=state, destination=root / "collected", timeout_seconds=10
+            )
+            with (
+                mock.patch.object(self.gitlab, "_first_pipeline", return_value=12),
+                mock.patch.object(
+                    self.gitlab, "_succeeded", return_value={"id": 12, "web_url": "run"}
+                ),
+                mock.patch.object(self.gitlab, "_jobs", return_value=jobs),
+                mock.patch.object(self.gitlab, "_artifacts", side_effect=artifact),
+            ):
+                self.gitlab.collect_campaign(args)
+            self.assertEqual((args.destination / "out" / path).read_text(), "1")
+
 
 class CandidateCanaryCleanupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -739,7 +839,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                     "add",
                     self.github.GITHUB_CALLER,
                     self.github.GITHUB_WORKFLOW,
-                    "src/access.py",
+                    "src/gateway_access.py",
                 ),
                 commands,
             )

@@ -20,25 +20,32 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 from ai_review.schema import load_json_file
+from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
     DEMO_REPOSITORY,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    PANEL_CALLER,
+    PANEL_CALLER_PATH,
+    REVIEW_COMMAND,
     Lifecycle,
     LifecycleFailure,
     LifecycleStep,
     candidate_identity,
+    copy_codex_witness,
     effort_variables,
     expect,
-    inject_demo_defect,
     lifecycle_reviewer_results,
+    panel_review_command,
     poll,
     post_counts,
     post_mutated,
     read_state,
+    require_demo_access,
     reviewer_ids,
     run_lifecycle_steps,
     saved_disposition,
@@ -194,14 +201,17 @@ def candidate_files(args: argparse.Namespace) -> tuple[str, str]:
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     workflow, caller = candidate_files(args)
+    review_line = f"        run: {REVIEW_COMMAND}\n"
+    if workflow.count(review_line) != 1:
+        raise GitHubCanaryError("candidate workflow no longer exposes the review command")
+    command = indent(panel_review_command("github", args.reviewer_image), "          ")
+    workflow = workflow.replace(review_line, f"        run: |\n{command}\n", 1)
 
     def inject_defect(demo: Path) -> list[str]:
-        access_path = demo / "src/access.py"
-        access_path.write_text(
-            inject_demo_defect(access_path.read_text(encoding="utf-8"), GitHubCanaryError),
-            encoding="utf-8",
-        )
-        return ["src/access.py"]
+        require_demo_access((demo / FIXTURE_PATH).read_text(encoding="utf-8"), GitHubCanaryError)
+        with (demo / PANEL_CALLER_PATH).open("x", encoding="utf-8") as fixture:
+            fixture.write(PANEL_CALLER)
+        return [PANEL_CALLER_PATH]
 
     return push_candidate_branch(
         args,
@@ -294,9 +304,19 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     inputs = destination / "inputs"
     output = destination / "out"
     shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
+    (output / WITNESS_PATH).unlink(missing_ok=True)
+    ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
     for reviewer in reviewer_ids():
-        shutil.copytree(artifacts / f"ai-review-review-{reviewer}", output, dirs_exist_ok=True)
-        shutil.copytree(artifacts / f"ai-review-critique-{reviewer}", output, dirs_exist_ok=True)
+        review = artifacts / f"ai-review-review-{reviewer}"
+        if reviewer == "codex":
+            copy_codex_witness(review, output)
+        shutil.copytree(review, output, dirs_exist_ok=True, ignore=ignore_canary)
+        shutil.copytree(
+            artifacts / f"ai-review-critique-{reviewer}",
+            output,
+            dirs_exist_ok=True,
+            ignore=ignore_canary,
+        )
     shutil.copytree(artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True)
     shutil.copytree(artifacts / "ai-review-post", output / "post", dirs_exist_ok=True)
     state.update({"run_id": str(run_id), "external_run_url": run["url"]})

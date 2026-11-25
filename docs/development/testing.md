@@ -76,8 +76,18 @@ already knows the tool names. A
 [paid real-model check](https://github.com/seanleecoder/code-tribunal/actions/runs/44086897649)
 before release established that the configured default model discovers the
 deferred tools: it called `grep` and `read_file`, read an unchanged file the diff
-called into, and completed without command execution. Release canaries repeat
-that evidence per platform.
+called into, and completed without command execution.
+
+The Candidate Canary panel adds a gateway caller that references the unchanged
+demo access helper on GitHub and GitLab. The generated panel workflows capture
+the Codex execution stream in memory in the trusted runner process. A completed
+`read_file` or `grep` result must contain content from the helper, and the review
+must pass normal adapter admission. The panel validator checks the read result
+against the run, effective configuration, platform, fixture, and reviewer image.
+The canary artifact contains only the bound verdict. The panel summary identifies
+the tested model and reports `repository_read: true` when the proof succeeds.
+This requirement applies to the release fixture. Ordinary reviews may complete
+with no findings or tool calls.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review

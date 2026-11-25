@@ -14,6 +14,7 @@ from ai_review.schema import (
     validate_artifact,
     write_canonical_json,
 )
+from canary_codex_repo_read import WITNESS_PATH, read_witness
 from candidate_canary_common import read_state
 
 CLEANUP_STATUSES = ("success", "failure", "cancelled", "skipped")
@@ -135,6 +136,20 @@ def validate_run(
         raise CanaryValidationError(f"{platform} posting did not succeed")
     if not post.get("posted_discussions"):
         raise CanaryValidationError(f"{platform} posted no finding thread")
+
+    try:
+        witness = load_json_file(output / WITNESS_PATH)
+    except OSError, ValueError:
+        raise CanaryValidationError(
+            f"{platform} Codex repository read evidence is missing or invalid"
+        ) from None
+    if (
+        not isinstance(witness, dict)
+        or witness.get("observed") is not True
+        or witness != read_witness(platform, reviewer_image, manifest, observed=True)
+    ):
+        raise CanaryValidationError(f"{platform} Codex repository read was not verified")
+    seats["codex"]["review"]["repository_read"] = True
 
     return {
         **_summary_base(

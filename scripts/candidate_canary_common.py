@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import shutil
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -19,6 +21,7 @@ from ai_review.schema import (
     validate_outcome,
     write_canonical_json,
 )
+from canary_codex_repo_read import WITNESS_PATH
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
@@ -30,14 +33,26 @@ REVIEWER_CREDENTIALS = tuple(
 GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
 GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
-DEMO_CANARY_DEFECT = (
-    "# Candidate-canary defect: prefix membership grants unintended users.\n"
-    "    return any(\n"
-    "        normalize_username(username).startswith(candidate)\n"
-    "        for candidate in normalized_allowed\n"
-    "    )"
-)
 DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
+PANEL_CALLER_PATH = "src/gateway_access.py"
+PANEL_CALLER = '''"""Access check for the gateway."""
+
+from src.access import is_allowed, normalize_username
+
+
+def gateway_allows(username: str, allowed_users: set[str]) -> bool:
+    """Permit the shared access check or a gateway-specific fallback."""
+    if is_allowed(username, allowed_users):
+        return True
+    # Keep the gateway fallback consistent with the shared policy in src/access.py.
+    normalized_allowed = {normalize_username(item) for item in allowed_users}
+    return any(
+        normalize_username(username).startswith(candidate)
+        for candidate in normalized_allowed
+    )
+'''
+
+REVIEW_COMMAND = '/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review'
 
 # The mock-lifecycle fixture adds one file whose `records[0]` line is the mock
 # reviewer's preferred anchor, so the finding's identity does not depend on any
@@ -103,10 +118,33 @@ def write_state(path: str | Path, state: dict[str, Any]) -> None:
     Path(path).write_bytes(canonical_json_bytes(state))
 
 
-def inject_demo_defect(source: str, error_type: type[RuntimeError]) -> str:
+def require_demo_access(source: str, error_type: type[RuntimeError]) -> None:
     if DEMO_SAFE_MEMBERSHIP not in source:
         raise error_type(DEMO_FIXTURE_GUARD)
-    return source.replace(DEMO_SAFE_MEMBERSHIP, DEMO_CANARY_DEFECT, 1)
+
+
+def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = "") -> str:
+    # Inline trusted source in the generated workflow/template. Python -P keeps
+    # the demo worktree out of module resolution, as the canonical launcher does.
+    script = Path(__file__).with_name("canary_codex_repo_read.py").read_text(encoding="utf-8")
+    return (
+        'if [ "$REVIEWER" = codex ]; then\n'
+        f'  {prefix}"${{PYTHON:-python3}}" -P - {platform} {shlex.quote(reviewer_image)} '
+        "<<'CODEX_READ_PY'\n"
+        f"{script}"
+        "CODEX_READ_PY\n"
+        "else\n"
+        f"  {prefix}{REVIEW_COMMAND}\n"
+        "fi"
+    )
+
+
+def copy_codex_witness(source: Path, output: Path) -> None:
+    witness = source / WITNESS_PATH
+    if witness.is_file():
+        target = output / WITNESS_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(witness, target)
 
 
 def reviewer_ids() -> tuple[str, ...]:

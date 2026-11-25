@@ -50,6 +50,9 @@ row whose target has arrived, and remove completed spec files from the active
    probe needs no credentials or external network; it proves no-shell repository
    reads through code mode, containment and the pinned tool set, and rejects
    operational failures hidden by valid final JSON.
+   When a CLI pin or packaging change affects a required capability, exercise
+   that capability with a representative operation in the built image.
+   Version and feature listings establish executable presence and defaults.
 
 2. **Run the canary.** Run the read-only `make demo-preflight`, which catches demo
    drift before tokens are spent. Then dispatch the protected
@@ -65,8 +68,10 @@ row whose target has arrived, and remove completed spec files from the active
      -f campaigns=panel,lifecycle,hostile
    ```
 
-   `panel` and `lifecycle` are required on every release. Include `hostile` when the
-   [checklist](#release-pull-request-checklist) says it applies. Publication
+   `panel` and `lifecycle` are required on every release. The panel must record
+   a successful Codex read of the unchanged demo access helper on GitHub and
+   GitLab. Include `hostile` when the [checklist](#release-pull-request-checklist)
+   says it applies. Publication
    accepts only a run whose first attempt succeeded, so after a failure fix forward
    and dispatch a fresh run rather than re-running jobs. A red run blocks the
    release; it does not gate ordinary pull requests.
@@ -164,7 +169,8 @@ applied, and the review checks the evidence it cites.
   code-mode sentinel retrieval, negative execution controls, and both OpenCode
   probes. CLI upgrades must pass the same gates before the runtime is frozen.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
-  pinned references.
+  pinned references. Both panel summaries must record `repository_read: true`
+  for Codex and identify the model used.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`
   touches `ai-review/ci/review.gitlab-ci.yml`, `scripts/pipeline_trust.py`, or how
   prepare obtains credentials (`ai-review/src/ai_review/input_bundle.py` prepare,

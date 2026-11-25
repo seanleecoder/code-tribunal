@@ -28,23 +28,30 @@ from collections.abc import Callable, Iterator
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import yaml
+from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
     DEMO_PROJECT,
     GITLAB_SECRETS,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    PANEL_CALLER,
+    PANEL_CALLER_PATH,
+    REVIEW_COMMAND,
     Lifecycle,
     LifecycleFailure,
     canary_stage_environment,
     candidate_identity,
+    copy_codex_witness,
     expect,
-    inject_demo_defect,
     lifecycle_reviewer_results,
+    panel_review_command,
     poll,
     read_state,
+    require_demo_access,
     run_lifecycle_steps,
     saved_disposition,
     write_state,
@@ -353,11 +360,19 @@ def _artifacts(job: dict[str, Any], *, allow_missing: bool = False) -> bytes | N
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
-    access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
+    prefix = canary_stage_environment() + " "
+    review_line = f"    - {prefix}{REVIEW_COMMAND}\n"
+    review_paths = "      - out/findings/\n      - out/status/\n"
+    if template.count(review_line) != 1 or template.count(review_paths) != 1:
+        raise GitLabCanaryError("candidate template no longer exposes the review command and paths")
+    command = indent(panel_review_command("gitlab", args.reviewer_image, prefix=prefix), "      ")
+    template = template.replace(review_line, f"    - |\n{command}\n", 1)
+    template = template.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
+    require_demo_access(_raw_file(DEMO_PROJECT, str(FIXTURE_PATH)), GitLabCanaryError)
     return push_candidate_change(
         args,
         template=template,
-        fixture=[{"action": "update", "file_path": "src/access.py", "content": access}],
+        fixture=[{"action": "create", "file_path": PANEL_CALLER_PATH, "content": PANEL_CALLER}],
         message="candidate canary fixture",
         title=f"Candidate canary {args.runtime_source[:12]}",
     )
@@ -373,6 +388,8 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
+    (output / WITNESS_PATH).unlink(missing_ok=True)
+    ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
     for job in _jobs(pipeline["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
@@ -381,10 +398,17 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
+        if job.get("name") == "AI review: [codex]":
+            copy_codex_witness(extracted / "out", output)
         for name, target in (("inputs", inputs), ("out", output)):
             source = extracted / name
             if source.is_dir():
-                shutil.copytree(source, target, dirs_exist_ok=True)
+                shutil.copytree(
+                    source,
+                    target,
+                    dirs_exist_ok=True,
+                    ignore=ignore_canary if name == "out" else None,
+                )
     state["pipeline_id"] = str(pipeline["id"])
     state["external_run_url"] = str(pipeline["web_url"])
     write_state(args.state, state)
