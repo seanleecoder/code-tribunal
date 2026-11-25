@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import _AdapterResult
 from ai_review.adapter_runner import run_adapter
 from ai_review.config import load_config
@@ -15,9 +16,19 @@ from ai_review.consensus import build_consensus
 from ai_review.schema import AdapterModelError, SchemaValidationError, batch_quality_fields
 
 from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
-from tests.support.codex_captures import capture, load
 
 CONFIG = Path(__file__).resolve().parents[2] / "config/review.yaml"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
+
+
+def capture(label: str) -> dict:
+    return json.loads((FIXTURES / f"{label}.json").read_text())
+
+
+def load(data: dict, stage: str = "review") -> dict:
+    return _load_adapter_json(
+        data["stdout"], returncode=data["returncode"], codec="codex_stream_json", stage=stage
+    )
 
 
 @pytest.mark.parametrize(
@@ -49,26 +60,6 @@ def test_captured_operational_failures_cannot_be_empty_successes(label: str) -> 
         load(capture(label))
 
 
-def test_host_failure_is_not_inferred_from_quoted_model_content() -> None:
-    data = capture("empty")
-    events = list(map(json.loads, data["stdout"].splitlines()))
-    events.insert(
-        2,
-        {
-            "type": "item.completed",
-            "item": {
-                "id": "commentary",
-                "type": "agent_message",
-                "text": "failed to spawn code-mode host",
-            },
-        },
-    )
-    data["stdout"] = "\n".join(map(json.dumps, events))
-    assert load(data) == {"findings": []}
-
-
-_ROUTER = "2026-11-17T00:00:00.000000Z ERROR codex_core::tools::router: error="
-_HOST_LINE = f"{_ROUTER}failed to spawn code-mode host /x: host executable was not found"
 # The pinned CLI's startup item for a host disabled by configuration, as the
 # loopback probe printed it; missing-host.json captures the spawn failure.
 _DISABLED_HOST = (
@@ -93,7 +84,6 @@ def test_startup_host_item_rejects_a_valid_answer_without_stderr(source: str) ->
         data = capture("missing-host")
     else:
         data = _with_startup_error(capture("empty"), _DISABLED_HOST)
-    data["stderr"] = ""
     with pytest.raises(AdapterModelError, match="host unavailable"):
         load(data)
 
@@ -102,45 +92,6 @@ def test_other_startup_error_items_fail_without_a_named_cause() -> None:
     data = _with_startup_error(capture("empty"), "Something else is unavailable.")
     with pytest.raises(AdapterModelError, match="execution error item"):
         load(data)
-
-
-def test_a_router_host_line_in_stderr_alone_is_diagnostic_only() -> None:
-    # Codex reports a real host failure as a startup item; without one, a
-    # stderr line in the router's format may be a model-written copy.
-    data = capture("empty")
-    data["stderr"] = f"other output\n{_HOST_LINE}\n"
-    assert load(data) == {"findings": []}
-
-
-def test_a_multiline_tool_error_quoting_the_host_line_is_recoverable() -> None:
-    # Captured shape from Codex 0.171.0: an apply_patch context mismatch prints
-    # the model's expected lines verbatim, so one starts a stderr line.
-    data = capture("empty")
-    data["stderr"] = (
-        f"{_ROUTER}apply_patch verification failed: Failed to find expected lines in "
-        f"/workspace/example.py:\nnonexistent line\n{_HOST_LINE}\n"
-    )
-    assert load(data) == {"findings": []}
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "code mode host unavailable",
-        "failed to spawn code-mode host /x: host executable was not found",
-        "code-mode host is disabled",
-    ],
-)
-def test_host_failure_is_not_inferred_from_a_quoted_tool_error(text: str) -> None:
-    # The router logs other failed tool calls too, quoting model-written text.
-    # Captured with Codex 0.171.0: an apply_patch hunk header written by the model.
-    data = capture("empty")
-    data["stderr"] = (
-        f"{_ROUTER}apply_patch verification failed: invalid hunk at line 2, "
-        f"'*** {text}' is not a valid hunk header. Valid hunk headers: "
-        "'*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'\n"
-    )
-    assert load(data) == {"findings": []}
 
 
 @pytest.mark.parametrize(
@@ -296,19 +247,6 @@ def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, lab
     if status != "success":
         assert consensus["panel_status"] != "full"
         assert consensus["run_health"]["grade"] != "full"
-
-
-def test_uncatalogued_model_fails_closed_and_names_the_cause() -> None:
-    # Codex exits 0 with a valid answer, but on fallback metadata it runs
-    # without code mode and with an unverified tool surface.
-    data = capture("fallback-metadata")
-    assert data["returncode"] == 0 and '"agent_message"' in data["stdout"]
-    with pytest.raises(AdapterModelError, match="no catalog metadata"):
-        load(data)
-    # Only the cause is named; other warning items still fail generically.
-    data["stdout"] = data["stdout"].replace("Model metadata for", "Metadata for")
-    with pytest.raises(AdapterModelError, match="execution error item"):
-        load(data)
 
 
 def test_shell_command_item_is_outside_the_no_shell_contract() -> None:

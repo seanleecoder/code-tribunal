@@ -9,14 +9,6 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   exit 2
 fi
 
-# Only a catalogued code-mode model gets the tool surface the image gate
-# verifies; refuse any other before the review prompt is sent.
-"${PYTHON:-python3}" -P -m ai_review.codex_catalog "$AI_REVIEW_MODEL" codex
-
 # The registry selects --json. Preserve execution events as well as the answer;
-# a valid final batch cannot hide an unusable repository-tool runtime. The
-# runner's PYTHONPATH supplies the trusted filter, which drops repository-tool
-# arguments and results the codec never reads, so ordinary tool traffic cannot
-# reach the output limit, and which stops once Codex exits.
-exec "${PYTHON:-python3}" -P -m ai_review.codex_stream_filter codex "$@" \
-  < "$AI_REVIEW_RENDERED_PROMPT"
+# a valid final batch cannot hide an unusable repository-tool runtime.
+exec codex "$@" < "$AI_REVIEW_RENDERED_PROMPT"

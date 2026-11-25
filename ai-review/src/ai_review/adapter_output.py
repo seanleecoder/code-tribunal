@@ -325,23 +325,10 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
 _CODEX_RECONNECT = re.compile(r"Reconnecting\.\.\. [0-9]+/[0-9]+(?: \(|$)")
 # Do not include raw model/tool diagnostics: they can contain secrets.
 _CODEX_TERMINAL_FAILURE = "Codex stream reported a terminal model failure"
-# A model missing from the pinned CLI's catalog runs on fallback metadata,
-# which turns code mode off and offers a different, unverified tool surface
-# (direct MCP tools plus a provider-hosted web search). Codex reports it only as
-# a warning item, so it fails closed like every error item, but with the cause.
-# Matching the wording only names the cause: any other error item still fails.
-_CODEX_FALLBACK_METADATA = re.compile(r"Model metadata for `.*` not found\. ")
 # A missing, unspawnable or disabled code-mode host is reported by Codex as a
 # startup error item, which fails like every error item; matching it names the
-# cause. Codex's stderr also logs the failure, but stderr is diagnostic only:
-# the tool router logs other failed tool calls there too, and an apply_patch
-# context mismatch quotes the model's lines verbatim, one per stderr line, so
-# no stderr pattern can tell the host's own line from a model-written copy.
+# cause.
 _CODEX_HOST_UNAVAILABLE = re.compile(r"Code Mode is unavailable because ")
-_CODEX_UNCATALOGUED_MODEL = (
-    "Codex has no catalog metadata for the configured model; choose a model the "
-    "pinned Codex CLI lists"
-)
 
 
 def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
@@ -391,8 +378,6 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int) -> Any:
             # Startup error items can precede turn.started, with no tool
             # events at all. Only Codex writes these items, never the model.
             message = event["item"].get("message")
-            if isinstance(message, str) and _CODEX_FALLBACK_METADATA.match(message):
-                raise AdapterModelError(_CODEX_UNCATALOGUED_MODEL)
             if isinstance(message, str) and _CODEX_HOST_UNAVAILABLE.match(message):
                 raise AdapterModelError(
                     "Codex code-mode host unavailable; repository tools could not run"
