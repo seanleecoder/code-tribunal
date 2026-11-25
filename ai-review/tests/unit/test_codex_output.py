@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -349,6 +350,36 @@ def test_builtin_resource_tools_are_admitted_without_counting_as_attempts() -> N
     # A resource call cannot stand in for a repository call that failed.
     with pytest.raises(AdapterModelError, match="all failed operationally"):
         load(with_events(data, with_failed_repository_call(events)))
+
+
+def test_host_session_failure_is_detected_beyond_the_stderr_tail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    inputs, output = tmp_path / "inputs", tmp_path / "out"
+    write_adapter_input_bundle(inputs)
+    bind_manifest_to_config(inputs, CONFIG)
+    monkeypatch.setenv("AI_REVIEW_INPUT_DIR", str(inputs))
+    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(output))
+    failure = capture("host-session-failure")
+    # Later ordinary diagnostics push the failure line out of the 4,000-character tail.
+    stderr = failure["stderr"] + "ordinary diagnostic line\n" * 400
+    stream = tmp_path / "stream.json"
+    stream.write_text(json.dumps({"stdout": failure["stdout"], "stderr": stderr}))
+    child = (
+        "import json, sys; d = json.load(open(sys.argv[1])); "
+        "sys.stdout.write(d['stdout']); sys.stderr.write(d['stderr'])"
+    )
+    with (
+        mock.patch(
+            "ai_review.adapter_runner.adapter_command",
+            return_value=[sys.executable, "-I", "-c", child, str(stream)],
+        ),
+        mock.patch("ai_review.adapter_runner.prepare_shell_adapter", return_value=([], None)),
+    ):
+        assert run_adapter("codex", "review") == 1
+    outcome = json.loads((output / "findings/codex.json").read_text())
+    assert outcome["adapter_status"] == "model_error"
+    assert "host transport failed" in outcome["error_message_redacted"]
 
 
 def test_only_codex_host_session_line_rejects_a_valid_answer() -> None:

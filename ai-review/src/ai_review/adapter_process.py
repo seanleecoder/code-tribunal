@@ -10,6 +10,7 @@ adapter_artifacts.
 from __future__ import annotations
 
 import contextlib
+import mmap
 import os
 import re
 import signal
@@ -139,12 +140,17 @@ def _model_id_validation_error(model: str) -> str | None:
 
 
 class _AdapterResult:
-    __slots__ = ("returncode", "stdout", "stderr")
+    __slots__ = ("returncode", "stdout", "stderr", "stderr_matched")
 
-    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+    def __init__(
+        self, returncode: int, stdout: str, stderr: str, stderr_matched: bool = False
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        # Whether the caller's pattern matched anywhere in the full stderr
+        # capture; ``stderr`` keeps only the redacted diagnostic tail.
+        self.stderr_matched = stderr_matched
 
 
 # Polling bounds temporary disk use in practice; reads are capped independently
@@ -186,6 +192,7 @@ def _run_adapter_process(
     timeout_seconds: int,
     *,
     cwd: Path | None = None,
+    stderr_pattern: re.Pattern[bytes] | None = None,
 ) -> _AdapterResult:
     # Anonymous, private files never enter the output/artifact directory. Unlike
     # pipes, reading them cannot wait on EOF from a surviving CLI descendant.
@@ -230,7 +237,13 @@ def _run_adapter_process(
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=captured_stdout, stderr=captured_stderr
             )
-        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr)
+        matched = False
+        if stderr_pattern is not None and os.fstat(stderr.fileno()).st_size:
+            # The capture is already bounded; only the boolean leaves this
+            # function, so unredacted stderr is never returned or echoed.
+            with mmap.mmap(stderr.fileno(), 0, access=mmap.ACCESS_READ) as capture:
+                matched = stderr_pattern.search(capture) is not None
+        return _AdapterResult(proc.returncode, captured_stdout, captured_stderr, matched)
 
 
 def _effective_adapter_timeout_seconds(reviewer_config: ReviewerConfig, stage: str) -> int:

@@ -339,6 +339,11 @@ _CODEX_HOST_SESSION_FAILED = re.compile(
     r"ERROR codex_core::tools::router: error=gRPC code-mode session opening failed: ",
     re.MULTILINE,
 )
+# The same line, matched over the runner's whole stderr capture before it is
+# clipped to the redacted diagnostic tail.
+_CODEX_HOST_SESSION_FAILED_BYTES = re.compile(
+    _CODEX_HOST_SESSION_FAILED.pattern.encode("ascii"), re.MULTILINE
+)
 # Codex's own MCP resource tools stay on the pinned code-mode surface. They read
 # no repository content, so they are admitted without counting as attempts.
 _CODEX_BUILTIN_SERVER = "codex"
@@ -354,7 +359,19 @@ def _is_codex_builtin_call(item: dict[str, Any]) -> bool:
     )
 
 
-def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str) -> Any:
+def _stderr_failure_pattern(codec: OutputCodec) -> re.Pattern[bytes] | None:
+    """The stderr line the runner must detect in full capture for this codec."""
+    return _CODEX_HOST_SESSION_FAILED_BYTES if codec == "codex_stream_json" else None
+
+
+def _load_codex_stream(
+    stdout: str,
+    *,
+    stage: str,
+    returncode: int,
+    stderr: str,
+    stderr_host_session_failed: bool = False,
+) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
     Codex runs without a shell, so a command item is outside the contract.
@@ -364,10 +381,12 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
     resource-tool call is neither. A repository call still open at
     ``turn.completed`` was abandoned by a failed code-mode cell; it counts as an
     operationally failed attempt. Only one anchored stderr line, a failed
-    code-mode session, is read from stderr. A top-level ``error`` event is fatal unless it is a
-    stream reconnect notice before ``turn.completed``, which Codex reports that
-    way and recovers from. No-tool reviews and critiques remain valid. See the
-    captured fixtures in tests/fixtures/codex and the real-CLI image gate in
+    code-mode session, is read from stderr; the runner matches it over the
+    whole capture before clipping and passes ``stderr_host_session_failed``.
+    A top-level ``error`` event is fatal unless it is a stream reconnect notice
+    before ``turn.completed``, which Codex reports that way and recovers from.
+    No-tool reviews and critiques remain valid. See the captured fixtures in
+    tests/fixtures/codex and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
     if returncode:
@@ -466,7 +485,7 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
             raise SchemaValidationError(incomplete)
     if attempts and attempts == operational_failures:
         raise AdapterModelError("Codex repository-tool attempts all failed operationally")
-    if _CODEX_HOST_SESSION_FAILED.search(stderr):
+    if stderr_host_session_failed or _CODEX_HOST_SESSION_FAILED.search(stderr):
         # Never echo stderr: it can carry model or tool text.
         raise AdapterModelError(
             "Codex code-mode host transport failed; repository tools could not run"
@@ -475,7 +494,13 @@ def _load_codex_stream(stdout: str, *, stage: str, returncode: int, stderr: str)
 
 
 def _load_adapter_json(
-    stdout: str, *, codec: OutputCodec, stage: str, returncode: int = 0, stderr: str = ""
+    stdout: str,
+    *,
+    codec: OutputCodec,
+    stage: str,
+    returncode: int = 0,
+    stderr: str = "",
+    stderr_host_session_failed: bool = False,
 ) -> dict[str, Any]:
     """Extract the registry-selected transport, then normalize once for the stage."""
     if codec == "batch_json":
@@ -483,7 +508,13 @@ def _load_adapter_json(
     elif codec == "claude_stream_json":
         raw = _load_claude_stream(stdout, stage=stage)
     elif codec == "codex_stream_json":
-        raw = _load_codex_stream(stdout, stage=stage, returncode=returncode, stderr=stderr)
+        raw = _load_codex_stream(
+            stdout,
+            stage=stage,
+            returncode=returncode,
+            stderr=stderr,
+            stderr_host_session_failed=stderr_host_session_failed,
+        )
     else:
         raise SchemaValidationError(f"unsupported adapter output codec: {codec}")
     return _coerce_adapter_root(raw, stage=stage)
