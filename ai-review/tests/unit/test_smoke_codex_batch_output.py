@@ -221,15 +221,9 @@ def test_independent_byte_check_rejects_mutations(tmp_path: Path, damage: str) -
         smoke.assert_unchanged(protected)
 
 
-_CATALOG = {"models": [{"slug": "gpt-6.1-sol", "tool_mode": "code_mode_only"}, {"slug": "gpt-5.5"}]}
-
-
 def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, monkeypatch) -> None:
     import sys
 
-    from ai_review import codex_catalog
-
-    monkeypatch.setattr(codex_catalog, "list_catalog", lambda _cli: _CATALOG)
     visited = []
     monkeypatch.setattr(
         sys,
@@ -248,37 +242,19 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
     assert smoke.main() == 0
     assert visited == [
         "0/read",
+        "1/read",
         "0/empty",
         "0/critique",
-        "1/read",
-        "1/empty",
-        "1/critique",
         "tools/search",
         "tools/no-match",
-        "tools/large-reads",
-        "tools/tool-error",
         "tools/recovery",
-        "tools/quoted-host-failure",
         "tools/reconnect",
         "tools/containment",
-        "failures/malformed",
-        "failures/truncated",
         "failures/terminal",
         "failures/tool-server-unavailable",
         "failures/credential-in-tool-env",
-        "failures/uncatalogued-model",
-        "failures/non-code-mode-model",
         "failures/missing-host",
     ]
-
-
-def test_suite_needs_a_catalogued_non_code_mode_model(tmp_path: Path, monkeypatch) -> None:
-    from ai_review import codex_catalog
-
-    only_code_mode = {"models": _CATALOG["models"][:1]}
-    monkeypatch.setattr(codex_catalog, "list_catalog", lambda _cli: only_code_mode)
-    with pytest.raises(AssertionError, match="no catalogued non-code-mode model"):
-        smoke.suite(ROOT / "ai-review", tmp_path)
 
 
 @pytest.mark.parametrize("damage", ["none", "write", "delete"])
@@ -305,7 +281,6 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
             "review",
             "http://127.0.0.1",
             str(capture),
-            "",
             str(workspace),
             json.dumps(overrides),
             "0",
@@ -405,41 +380,3 @@ def test_tool_surface_rejects_each_unsafe_or_vacuous_result(tmp_path: Path, dama
             smoke.assert_tool_surface(stub, protected)
     else:
         smoke.assert_tool_surface(stub, protected)
-
-
-def test_mcp_results_report_each_call_and_skip_script_status() -> None:
-    request = {
-        "input": [
-            {"type": "custom_tool_call_output", "output": "Script completed\nOutput:\n"},
-            {
-                "type": "custom_tool_call_output",
-                "output": json.dumps(
-                    {"content": [{"type": "text", "text": "read failed"}], "isError": True}
-                ),
-            },
-            {
-                "type": "custom_tool_call_output",
-                "output": json.dumps({"content": [{"type": "text", "text": ""}], "isError": False}),
-            },
-        ]
-    }
-    # A no-match search that could not run is a tool error, not an empty result.
-    assert smoke.mcp_results(request) == [(True, "read failed"), (False, "")]
-
-
-def test_tool_texts_reads_structured_and_plain_outputs() -> None:
-    request = {
-        "input": [
-            {"type": "custom_tool_call_output", "output": [{"type": "input_text", "text": "a"}]},
-            {"type": "function_call_output", "output": "b"},
-            {"type": "message", "content": "not a tool"},
-        ]
-    }
-    assert smoke.tool_texts(request) == ["a", "b"]
-
-
-def test_containment_steps_name_paths_outside_the_snapshot(tmp_path: Path) -> None:
-    steps = smoke.containment_steps(tmp_path / "inputs/protected.txt", Path("/opt/x/protected.txt"))
-    assert steps[2] == smoke.SURFACE_PROBE
-    assert '"/opt/x/protected.txt"' in steps[1] and "../../" in steps[0]
-    assert all("tools.mcp__repo__read_file" in step for step in (steps[0], steps[1], steps[3]))

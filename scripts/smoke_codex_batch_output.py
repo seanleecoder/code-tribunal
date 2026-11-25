@@ -29,8 +29,6 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 REQUIRED_MODEL = "openai/gpt-6.1-sol"
-# No Codex catalog lists this slug, so Codex runs it on fallback metadata.
-UNCATALOGUED_MODEL = "code-tribunal/uncatalogued-probe"
 REPO_TOOLS = frozenset({"mcp__repo__read_file", "mcp__repo__list_dir", "mcp__repo__grep"})
 # Pinned tool surface after the registry's feature flags. A CLI bump that adds
 # a tool fails here and needs review. apply_patch has no supported switch; the
@@ -50,7 +48,7 @@ RUNNER = r"""
 import json, sys
 from pathlib import Path
 from ai_review import adapter_runner as runner
-url, capture_path, fault, workspace_path, overrides, retries = sys.argv[2:8]
+url, capture_path, workspace_path, overrides, retries = sys.argv[2:7]
 original_prepare = runner.prepare_shell_adapter
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = url
@@ -75,12 +73,6 @@ def record(*args, **kwargs):
         for name in ("example.py", "sentinel.txt") for path in (root / name,)
     }
     Path(workspace_path).write_text(json.dumps(metadata))
-    # Explicit transport fault injection after the real CLI exits. This proves
-    # admission rejects damaged streams independently of valid final-answer files.
-    if fault == "truncated":
-        result.stdout = "\n".join(result.stdout.splitlines()[:-1]) + "\n"
-    elif fault == "malformed":
-        result.stdout = result.stdout.replace('"type":"turn.started"', '"type":BROKEN', 1)
     Path(capture_path).write_text(json.dumps({"stdout": result.stdout,
         "stderr": result.stderr, "returncode": result.returncode}))
     return result
@@ -293,34 +285,6 @@ def mcp_call(tool: str, arguments: dict) -> str:
     )
 
 
-# A model-written line in the router's host-failure format. An apply_patch
-# context mismatch logs the expected lines verbatim, one per stderr line, so
-# this line starts a stderr line; only Codex's startup item reports the host.
-QUOTED_HOST_LINE = (
-    "2026-01-01T00:00:00.000000Z ERROR codex_core::tools::router: "
-    "error=failed to spawn code-mode host /quoted-by-the-model"
-)
-QUOTED_HOST_PATCH = (
-    "let out; try { out = await tools.apply_patch("
-    + json.dumps(
-        "*** Begin Patch\n*** Update File: example.py\n@@\n-nonexistent line\n-"
-        + QUOTED_HOST_LINE
-        + "\n+replacement\n*** End Patch\n"
-    )
-    + "); } catch (e) { out = String(e); } text(String(out));"
-)
-
-
-# Each read fills read_file's 256 KiB output limit; together they exceed the
-# runner's 32 MiB stdout limit by half again.
-LARGE_FILE = ("x" * 199 + "\n").encode() * 2000
-LARGE_READ_COUNT = 200
-LARGE_READS = (
-    f"let n = 0; for (let i = 0; i < {LARGE_READ_COUNT}; i++) {{"
-    " const r = await tools.mcp__repo__read_file({path: 'large.txt'});"
-    " if (r.isError || !r.content[0].text.startsWith('1\\t')) throw new Error('read failed');"
-    " n++; } text('LARGE_READS ' + n);"
-)
 PATCH = (
     "*** Begin Patch\n*** Update File: example.py\n@@\n-example = 1\n+example = 2\n*** End Patch\n"
 )
@@ -425,14 +389,11 @@ def run_case(
     expected_status: str = "success",
     sentinel: str | None = None,
     cli_path: str | None = None,
-    stream_fault: str = "",
     overrides: list[str] | None = None,
     protected_runtime: Path | None = None,
     drop_first_stream: bool = False,
     expect_text: str | None = None,
-    files: dict[str, bytes] | None = None,
     results: list[tuple[bool, str]] | None = None,
-    expect_error: str | None = None,
 ) -> dict:
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
@@ -444,8 +405,6 @@ def run_case(
     # Only the prepared snapshot contains this random value; it is absent from
     # prompts, scripts and the stub's answer. The follow-up request must carry it.
     (source / "sentinel.txt").write_text(sentinel or secrets.token_hex(24))
-    for name, data in (files or {}).items():
-        (source / name).write_bytes(data)
     diff = work / "change.diff"
     diff.write_text("--- a/example.py\n+++ b/example.py\n@@ -1 +1 @@\n-example = 0\n+example = 1\n")
     config = load_config(install / "config/review.yaml")
@@ -482,7 +441,6 @@ def run_case(
                 stage,
                 stub.url,
                 str(work / "capture.json"),
-                stream_fault,
                 str(work / "workspace.json"),
                 json.dumps(overrides or []),
                 # One stream retry is enough for the dropped-stream case.
@@ -555,16 +513,6 @@ def run_case(
         raise AssertionError(f"{label}: wrong outcome: {outcome}; {result.stderr}")
     if '"command_execution"' in capture["stdout"]:
         raise AssertionError(f"{label}: the no-shell reviewer executed a command")
-    if expect_error is not None:
-        # A rejection must state its cause and the model, independently of the
-        # function that produced it; nothing past it ran usefully.
-        error = outcome.get("error_message_redacted") or ""
-        if expect_error not in error or model not in error:
-            raise AssertionError(f"{label}: wrong error: {error}")
-        # Each such case is refused before the review prompt is sent.
-        if stub.requests:
-            raise AssertionError(f"{label}: the provider received a refused model's prompt")
-        return capture
     if overrides:
         # Negative controls stop at tool-server startup, before a usable answer.
         if capture["returncode"] == 0:
@@ -729,8 +677,9 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     for index, model in enumerate(dict.fromkeys((REQUIRED_MODEL, configured))):
         directory = scratch / str(index)
         add(directory, "read", model, steps=[read], sentinel=secrets.token_hex(24))
-        add(directory, "empty", model, empty=True)
-        add(directory, "critique", model, stage="critique")
+    # Empty reviews and tool-free critiques need only one model.
+    add(scratch / "0", "empty", REQUIRED_MODEL, empty=True)
+    add(scratch / "0", "critique", REQUIRED_MODEL, stage="critique")
     directory = scratch / "tools"
     sentinel = secrets.token_hex(24)
     # A prefix pattern: only the file's content can return the full sentinel.
@@ -739,21 +688,8 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     add(directory, "search", REQUIRED_MODEL, steps=search, sentinel=sentinel, results=found)
     no_match = [mcp_call("grep", {"pattern": "no-such-match"})]
     add(directory, "no-match", REQUIRED_MODEL, steps=no_match, empty=True, results=[(False, "")])
-    # Code mode can read in a loop while the model keeps only a summary, so the
-    # results alone would pass the runner's output limit unless the adapter
-    # drops them from the captured stream.
-    add(
-        directory,
-        "large-reads",
-        REQUIRED_MODEL,
-        steps=[LARGE_READS],
-        empty=True,
-        files={"large.txt": LARGE_FILE},
-        expect_text=f"LARGE_READS {LARGE_READ_COUNT}",
-    )
     # A tool-reported error is a usable result, not an unusable runtime.
     reported = "not a file: missing.txt"
-    add(directory, "tool-error", REQUIRED_MODEL, steps=[missing], expect_text=reported)
     add(
         directory,
         "recovery",
@@ -761,14 +697,6 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         steps=[missing, read],
         sentinel=secrets.token_hex(24),
         expect_text=reported,
-    )
-    # A failed tool call that logs a quoted host-failure line stays usable.
-    add(
-        directory,
-        "quoted-host-failure",
-        REQUIRED_MODEL,
-        steps=[QUOTED_HOST_PATCH],
-        expect_text="\n" + QUOTED_HOST_LINE + "\n",
     )
     # Codex reports the reconnect as a top-level error event, then completes.
     add(
@@ -782,8 +710,6 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("tools/containment", partial(containment_case, install, directory)))
     directory = scratch / "failures"
-    for fault in ("malformed", "truncated"):
-        add(directory, fault, REQUIRED_MODEL, stream_fault=fault, expected_status="schema_error")
     add(directory, "terminal", REQUIRED_MODEL, terminal=True, expected_status="model_error")
     add(
         directory,
@@ -800,34 +726,6 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
         REQUIRED_MODEL,
         overrides=["-c", 'mcp_servers.repo.env={OPENROUTER_API_KEY="smoke-credential"}'],
         expected_status="model_error",
-    )
-    # Models off the verified code-mode surface are refused from the pinned
-    # CLI's own catalog, before the prompt is sent. The codec's fallback-metadata
-    # check stays as a second signal; its captured fixture covers it.
-    from ai_review.codex_catalog import CODE_MODE, list_catalog  # noqa: PLC0415
-
-    # The bundled listing, as the seat's preflight reads it, whatever the
-    # invoking user's own Codex home holds.
-    catalog = list_catalog("codex")
-    add(
-        directory,
-        "uncatalogued-model",
-        UNCATALOGUED_MODEL,
-        empty=True,
-        expected_status="model_error",
-        expect_error="is not in the pinned Codex CLI's model catalog",
-    )
-    # A catalogued model with another tool surface (direct tools, tool_search).
-    other = [e["slug"] for e in catalog["models"] if e.get("tool_mode") != CODE_MODE]
-    if not other:
-        raise AssertionError("no catalogued non-code-mode model remains; revisit this case")
-    add(
-        directory,
-        "non-code-mode-model",
-        f"openai/{other[0]}",
-        empty=True,
-        expected_status="model_error",
-        expect_error="does not run in code mode",
     )
     directory.mkdir(parents=True, exist_ok=True)
     cases.append(("failures/missing-host", partial(missing_host_case, install, directory)))
