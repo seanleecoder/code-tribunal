@@ -157,37 +157,21 @@ which Codex starts outside any sandbox. That server therefore enforces the
 boundary itself: it resolves every requested path, symlinks included, inside the
 snapshot, rejects absolute paths, bounds file, listing and search output, runs
 grep through the image's pinned `rg` with fixed arguments and a timeout, and has
-no write operation. Repository file names are untrusted too: grep reads `rg`'s
-JSON events rather than its text output, and a name that could pass for another
-entry, a tool note or a `path:line` prefix is shown as a JSON string (non-UTF-8
-names are also marked as unopenable), so no file can be shown under another
-file's name. A read or matched line holding a control or line-separator
-character is shown as the body of a JSON string, and its line number is marked
-in the tool-written prefix; other lines are shown exactly. A grep match cut at
-its length limit is marked in that prefix too, never by a note beside the text.
-File content therefore cannot pose as another line or match, and no two
-different lines are shown alike. It runs in isolated Python
+no write operation. It runs in isolated Python
 mode and refuses to start if its environment carries anything beyond plain
 process variables, so a provider credential cannot reach model-driven tool
 calls; Codex then fails the review
 instead of continuing without tools. Codex's remaining `apply_patch` tool is
 rejected by its read-only policy and writes only to the disposable copy. The
 [image gate](development/testing.md#codex-image-gate) checks containment,
-credential refusal, the pinned tool set and unchanged bytes. That tool set is
-the code-mode surface. Codex selects it from the pinned CLI's model catalog, so
-before the review prompt is sent the adapter's
-[`codex_catalog`](../ai-review/src/ai_review/codex_catalog.py) check admits only a
-model whose catalog entry is `code_mode_only` and refuses any other as
-`model_error`. That covers a catalogued model with direct tools, a model Codex
-would run on fallback metadata, and an OpenRouter variant suffix such as
-`:online`. The registry also disables Codex's provider-hosted web search
-outright, and a fallback-metadata warning still fails the review. Codex starts
-the server in its own process group, outside the runner's stage teardown, so the
-server ends itself, and kills a running search, once Codex has exited.
+credential refusal, the pinned tool set and unchanged bytes. The registry also
+disables Codex's provider-hosted web search.
 
-Residual risk: code-mode models can differ in the experimental tools their
-catalog entries add; the image gate pins the tool set only for the configured
-default and `openai/gpt-6.1-sol`. Intentionally tracked symlinks are unsupported. Hard links to
+Residual risk: the image gate pins the tool set only for the configured default
+and `openai/gpt-6.1-sol`; other models can offer other tools, still without a
+shell. Repository names and file text reach the model as they are, so crafted
+content can look like other entries; model output is untrusted either way.
+Intentionally tracked symlinks are unsupported. Hard links to
 outside same-filesystem content are not explicitly checked, although ordinary
 Git checkouts cannot create them.
 

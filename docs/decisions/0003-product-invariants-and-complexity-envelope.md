@@ -66,13 +66,8 @@ bounds output, writes nothing, and refuses to start if its environment carries
 anything beyond plain process variables. Critique has no repository tools. The
 registry disables other optional Codex tools that have feature flags;
 `apply_patch` has no supported switch and stays subject to Codex's read-only
-policy. The image gate pins the remaining tool set, which code mode selects.
-Codex chooses code mode from the pinned CLI's model catalog: only a model whose
-entry sets `tool_mode` to `code_mode_only` is admitted. Before the prompt is
-sent, the adapter refuses any other model, catalogued or not, rather than run
-it on a different, unverified tool surface, and the registry disables Codex's
-provider-hosted web search outright. A fallback-metadata warning still fails
-the review closed.
+policy. The image gate pins the remaining tool set, which code mode selects,
+and the registry disables Codex's provider-hosted web search.
 
 This is a fixed part of one reviewer's trusted invocation, not a plugin
 mechanism: the server is not configurable, discoverable or replaceable by

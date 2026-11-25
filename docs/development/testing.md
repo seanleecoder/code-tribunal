@@ -45,15 +45,12 @@ The gate collects every case under an overall bound and reports setup and
 transport failures as failures:
 
 - Both configured models read a random snapshot-only sentinel through
-  `mcp__repo__read_file`; empty reviews and tool-free critiques stay usable,
+  `mcp__repo__read_file`; an empty review and a tool-free critique stay usable,
   and critiques are offered no repository tool.
 - Listing and grep find the sentinel, and each call's own result is checked, so a
   failed listing or search cannot hide behind a later success; a no-match search
   returns a successful empty result. A tool-reported missing file and recovery
-  after one stay usable. Two hundred full-size reads in one code-mode cell stay
-  usable too: the adapter drops tool arguments and results the parser never
-  reads, so they cannot reach the runner's output limit. So does a provider
-  stream dropped before completion: Codex reports the reconnect as a top-level
+  after one stay usable, and so does a provider stream dropped before completion: Codex reports the reconnect as a top-level
   `error` event, retries once, and completes. That notice is the only top-level
   error the parser admits, so a reworded notice fails this case.
 - Containment: traversal and absolute paths are refused, and protected bytes
@@ -62,15 +59,10 @@ transport failures as failures:
   snapshot bytes are unchanged, checked independently by the trusted parent.
   The code-mode and direct tool sets are pinned, and `ALL_TOOLS` must list the
   repository tools, because Codex defers MCP tools in code mode.
-- Negative controls: malformed and truncated streams, a terminal provider
-  failure, a missing code-mode host (named from Codex's startup item), an
-  unavailable tool server, and a credential in the tool server's environment
-  all yield unusable outcomes. A failed `apply_patch` whose logged error starts
-  a stderr line with a quoted host-failure line stays usable. A
-  model outside the pinned CLI's catalog, and a catalogued model that does not
-  run in code mode (chosen from the pinned catalog; the case fails if none
-  remains), are refused with the error that names the cause, and the provider
-  never receives their prompt.
+- Negative controls: a terminal provider failure, a missing code-mode host
+  (named from Codex's startup item), an unavailable tool server, and a
+  credential in the tool server's environment all yield unusable outcomes.
+  Malformed and truncated streams are covered by the codec's unit tests.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that
