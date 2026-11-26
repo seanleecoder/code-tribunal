@@ -621,6 +621,7 @@ def tool(status: str, *, name: str = "grep", call: str = "call_1", **state: obje
 
 RG_FAILED = {"type": "unknown", "message": "ripgrep execution failed"}
 SCOPE_REFUSED = {"type": "permission.rejected", "message": "Permission denied: external_directory"}
+MISSING_FILE = {"type": "tool.execution", "message": "File not found: missing.py"}
 
 
 def calls(*parts: dict, message: str = "msg_calls") -> dict:
@@ -639,12 +640,13 @@ def admit(*pages: dict) -> dict:
     [
         [tool("completed", content=[{"type": "text", "text": "Found 1 matches"}])],
         [tool("error", name="read", error=SCOPE_REFUSED)],
+        [tool("error", name="read", error=MISSING_FILE)],
         [tool("error", error=RG_FAILED), tool("completed", name="read", call="call_2")],
         # Not a repository tool: the server already refuses it.
         [tool("error", name="edit", error={"type": "tool.execution", "message": "No tool"})],
         [],
     ],
-    ids=["completed", "scope-refusal", "recovered", "non-repository", "tool-free"],
+    ids=["completed", "scope-refusal", "missing-file", "recovered", "non-repository", "tool-free"],
 )
 def test_healthy_or_benign_repository_tool_runs_are_admitted(parts: list[dict]) -> None:
     assert admit(page(IDLE, answer(), calls(*parts), USER)) == {"findings": []}
@@ -664,8 +666,17 @@ def test_healthy_or_benign_repository_tool_runs_are_admitted(parts: list[dict]) 
         ),
         tool("error", name="read"),
         tool("running", name="read"),
+        # Same error type as a missing file, but not a lookup: never benign.
+        tool("error", name="read", error={"type": "tool.execution", "message": "Read crashed"}),
     ],
-    ids=["rg-failed", "in-root-denial", "unrecognized", "no-error-detail", "unresolved"],
+    ids=[
+        "rg-failed",
+        "in-root-denial",
+        "unrecognized",
+        "no-error-detail",
+        "unresolved",
+        "other-execution-error",
+    ],
 )
 def test_a_run_whose_repository_tools_all_failed_is_unusable(part: dict) -> None:
     with pytest.raises(AdapterModelError, match="OpenCode repository-tool attempts all failed"):

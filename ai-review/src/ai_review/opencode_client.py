@@ -60,6 +60,8 @@ _CONFIG_PERMISSIONS = [
 _BENIGN_TOOL_ERRORS = (
     # A path outside the snapshot, refused by our external_directory deny rule.
     ("permission.rejected", "Permission denied: external_directory"),
+    # A missing in-root file (`File not found: missing.py`).
+    ("tool.execution", "File not found: "),
 )
 
 
