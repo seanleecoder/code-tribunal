@@ -278,7 +278,9 @@ def item_errors(stdout: str) -> list[dict]:
             event = json.loads(line)
         except ValueError:
             continue
-        item = event.get("item") if isinstance(event, dict) else None
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
         if (
             event.get("type") == "item.completed"
             and isinstance(item, dict)

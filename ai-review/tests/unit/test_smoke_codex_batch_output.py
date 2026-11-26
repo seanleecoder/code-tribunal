@@ -561,6 +561,8 @@ def test_item_errors_counts_only_failed_repository_calls() -> None:
             item(error=None, result={"isError": True}),
             item(server="codex", error={"message": "x"}),
             "not json",
+            "[]",
+            "null",
         ]
     )
     assert len(smoke.item_errors(stdout)) == 1
