@@ -224,3 +224,12 @@ def test_gate_is_unconditional_and_precedes_image_save() -> None:
     assert "set -- --cap-drop DAC_OVERRIDE --cap-drop DAC_READ_SEARCH\n" in wrapper
     assert "--cap-add" not in wrapper and "--privileged" not in wrapper
     assert "run_profile stock || status=1\nrun_profile faults || status=1\n" in wrapper
+
+
+def test_wrapper_scratch_stays_inside_the_container() -> None:
+    # A writable host bind mount would leave root-owned files under rootful Docker.
+    wrapper = (ROOT / "scripts/smoke_claude_batch_output.sh").read_text()
+    assert '--mount "type=tmpfs,dst=/smoke,tmpfs-mode=1777"' in wrapper
+    assert "mktemp" not in wrapper and "src=$smoke_dir" not in wrapper
+    mounts = [line for line in wrapper.splitlines() if "type=bind" in line]
+    assert mounts and all(line.rstrip(" \\").endswith('readonly"') for line in mounts)
