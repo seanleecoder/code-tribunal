@@ -187,6 +187,21 @@ def test_tool_health_cases_run_in_order_and_faults_in_their_own_container() -> N
     assert wrapper.rstrip().endswith("run_driver suite\nrun_driver faults")
 
 
+def test_read_control_without_its_tool_result_fails_with_a_diagnostic() -> None:
+    # The client answered, but the provider never received the read's result.
+    stub = mock.MagicMock()
+    stub.__enter__.return_value = stub
+    stub.requests = [{"model": smoke.PROBE_MODEL}]
+    with (
+        mock.patch.object(smoke, "_StubProvider", return_value=stub),
+        mock.patch.object(
+            smoke, "_run_client", return_value=(0, json.dumps(smoke.probe_batch("review")), "")
+        ),
+        pytest.raises(SystemExit, match="capability-matched read control failed"),
+    ):
+        smoke._prove_operational_tool_failure_is_rejected()
+
+
 def test_fault_precondition_is_read_from_the_client_process() -> None:
     stderr = "noise\nOPENCODE_FAULT " + json.dumps(
         {"mode": 0, "dac_override": False, "dac_read_search": False}

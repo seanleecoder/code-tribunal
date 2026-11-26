@@ -546,7 +546,12 @@ def _prove_operational_tool_failure_is_rejected() -> None:
     read = ("read", {"path": "example.py"})
     with _StubProvider(batch, steps=[read]) as stub:
         code, stdout, stderr = _run_client(stub.base_url, "read-control")
-    if code or json.loads(stdout) != batch or GREP_MARKER not in tool_result_text(stub.requests[1]):
+    if (
+        code
+        or json.loads(stdout) != batch
+        or len(stub.requests) < 2
+        or GREP_MARKER not in tool_result_text(stub.requests[1])
+    ):
         fail(f"the capability-matched read control failed: {stderr}")
     with _StubProvider(batch, steps=[read]) as stub:
         code, stdout, stderr = _run_client(stub.base_url, "read-fault", fault="example.py")
