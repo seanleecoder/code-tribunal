@@ -5,19 +5,18 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from unittest import mock
 
 import pytest
 from ai_review.adapter_output import _load_adapter_json
 from ai_review.adapter_process import _AdapterResult
-from ai_review.adapter_runner import run_adapter
 from ai_review.config import load_config
 from ai_review.consensus import build_consensus
+from ai_review.reviewers import CLAUDE_REPOSITORY_TOOLS
 from ai_review.schema import AdapterModelError, batch_quality_fields
 
-from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
+from tests.support.adapter_inputs import run_captured_adapter
+from tests.support.config_yaml import SHIPPED_CONFIG_PATH
 
-CONFIG = Path(__file__).resolve().parents[2] / "config/review.yaml"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/claude"
 FAILED = "Claude repository-tool attempts all failed operationally"
 
@@ -44,7 +43,7 @@ def call_ids(items: list[dict]) -> list[str]:
         for item in items
         if item["type"] == "assistant"
         for part in item["message"]["content"]
-        if part.get("type") == "tool_use" and part.get("name") in {"Read", "Grep", "Glob"}
+        if part.get("type") == "tool_use" and part.get("name") in CLAUDE_REPOSITORY_TOOLS
     ]
 
 
@@ -163,24 +162,18 @@ def test_a_tool_free_review_stays_valid() -> None:
     ],
 )
 def test_runner_outcome_and_reducer_eligibility(tmp_path: Path, monkeypatch, label, status) -> None:
-    inputs, output = tmp_path / "inputs", tmp_path / "out"
-    write_adapter_input_bundle(inputs)
-    bind_manifest_to_config(inputs, CONFIG)
-    monkeypatch.setenv("AI_REVIEW_INPUT_DIR", str(inputs))
-    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(output))
     data = capture(label)
-    with mock.patch(
-        "ai_review.adapter_runner._run_adapter_process",
-        return_value=_AdapterResult(data["returncode"], data["stdout"], data["stderr"]),
-    ):
-        assert run_adapter("claude", "review") == (0 if status == "success" else 1)
-    outcome = json.loads((output / "findings/claude.json").read_text())
+    result = _AdapterResult(data["returncode"], data["stdout"], data["stderr"])
+    code, outcome = run_captured_adapter(
+        tmp_path, monkeypatch, "claude", result, SHIPPED_CONFIG_PATH
+    )
+    assert code == (0 if status == "success" else 1)
     assert outcome["adapter_status"] == status
     assert batch_quality_fields(outcome)["usable_for_resolution"] == (status == "success")
     batch = copy.deepcopy(outcome)
     batch.update(run_id="run", model="model")
     manifest = {"run_id": "run", "project_id": "1", "merge_request_iid": "2", "head_sha": "h" * 40}
-    consensus = build_consensus(manifest, [batch], load_config(CONFIG))
+    consensus = build_consensus(manifest, [batch], load_config(SHIPPED_CONFIG_PATH))
     expected = ["claude"] if status == "success" else []
     assert consensus["successful_reviewers"] == expected
 

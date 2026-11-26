@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
 
@@ -39,6 +40,7 @@ MAX_MATCH_CHARS = 500
 MAX_MATCHES_PER_FILE = 50
 GREP_TIMEOUT_SECONDS = 20
 INCOMPLETE_SEARCH_NOTE = "[search incomplete: some paths could not be read]"
+VANISHED = "read failed: no such file or directory"
 RG = "/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
 # Codex forwards DEFAULT_ENV_VARS and CUSTOM_CA_ENV_KEYS to local stdio MCP.
@@ -145,7 +147,17 @@ def _stat(path: Path) -> os.stat_result | None:
         raise
 
 
-VANISHED = "read failed: no such file or directory"
+def _open_lookup[T](open_entry: Callable[[], T]) -> T:
+    """Open a checked entry; one removed since its check is an ordinary lookup.
+
+    Any other failure is the server's and reaches call_tool as a server error.
+    """
+    try:
+        return open_entry()
+    except OSError as exc:
+        if exc.errno not in _LOOKUP_ERRNOS:
+            raise
+        raise ToolError(VANISHED) from exc
 
 
 def contained(root: Path, requested: Any) -> Path:
@@ -193,15 +205,7 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError(f"not a file: {_relative(root, path)}")
     start = _positive(arguments, "start_line", 1)
     count = _positive(arguments, "max_lines", DEFAULT_MAX_LINES)
-    try:
-        handle = path.open("rb")
-    except OSError as exc:
-        # Removed between its check and its use: an ordinary lookup. Any other
-        # failure is the server's and reaches call_tool as a server error.
-        if exc.errno not in _LOOKUP_ERRNOS:
-            raise
-        raise ToolError(VANISHED) from exc
-    with handle:
+    with _open_lookup(lambda: path.open("rb")) as handle:
         data = handle.read(min(8192, MAX_FILE_BYTES + 1))
         if b"\x00" in data:
             raise ToolError(f"binary file: {_relative(root, path)}")
@@ -251,13 +255,7 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
     status = _stat(path)
     if status is None or not stat.S_ISDIR(status.st_mode):
         raise ToolError(f"not a directory: {_relative(root, path)}")
-    try:
-        listing = os.scandir(path)
-    except OSError as exc:
-        if exc.errno not in _LOOKUP_ERRNOS:
-            raise
-        raise ToolError(VANISHED) from exc
-    with listing as entries:
+    with _open_lookup(lambda: os.scandir(path)) as entries:
         names = sorted(
             _text(e.name) + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries
         )
@@ -335,7 +333,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
     if data:
         # Real matches were found, so the call succeeded, but its coverage is
         # partial. A capped search keeps its truncation marker before the notice.
-        return f"{text.removesuffix(chr(10))}\n{INCOMPLETE_SEARCH_NOTE}"
+        return text.removesuffix("\n") + "\n" + INCOMPLETE_SEARCH_NOTE
     if not _pattern_compiles(pattern):
         raise ToolError("invalid search pattern")
     # Never echo rg's stderr: it names repository paths.

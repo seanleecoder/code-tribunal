@@ -113,15 +113,6 @@ def blocks(request: dict[str, Any], role: str, kind: str) -> list[dict[str, Any]
     return found
 
 
-def result_text(block: dict[str, Any]) -> str:
-    content = block.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
-    return ""
-
-
 class StubProvider:
     """Scripted Messages API: each call only after the previous call's result.
 
@@ -328,15 +319,8 @@ def check(case: Case, evidence: dict[str, Any]) -> list[str]:
             problems.append(f"step {index} did not report {text!r}")
     if case.fault_step is not None:
         launch = evidence["launch"]
-        if (
-            launch.get("sentinel_mode"),
-            launch.get("dac_override"),
-            launch.get("dac_read_search"),
-        ) != (
-            0,
-            False,
-            False,
-        ):
+        precondition = ("sentinel_mode", "dac_override", "dac_read_search")
+        if tuple(launch.get(key) for key in precondition) != (0, False, False):
             problems.append(f"fault precondition not met: {launch}")
         result = results.get(step_id(case.fault_step), {})
         path = f"{launch.get('root')}/sentinel.txt"
@@ -348,9 +332,10 @@ def check(case: Case, evidence: dict[str, Any]) -> list[str]:
     return problems
 
 
-def run_case(install: Path, scratch: Path, case: Case, *, fault: bool) -> dict[str, Any]:
+def run_case(install: Path, scratch: Path, case: Case) -> dict[str, Any]:
     # Deferred: main() puts the install root's package on sys.path first.
     from ai_review.adapter_artifacts import _output_file  # noqa: PLC0415
+    from ai_review.adapter_output import _claude_tool_result_text  # noqa: PLC0415
     from ai_review.config import load_config  # noqa: PLC0415
     from ai_review.input_bundle import prepare_local_bundle  # noqa: PLC0415
 
@@ -386,7 +371,16 @@ def run_case(install: Path, scratch: Path, case: Case, *, fault: bool) -> dict[s
     started = time.monotonic()
     with StubProvider(steps, BATCHES[case.stage]) as stub:
         result = subprocess.run(
-            [sys.executable, "-P", "-c", RUNNER, case.stage, stub.url, str(work), str(int(fault))],
+            [
+                sys.executable,
+                "-P",
+                "-c",
+                RUNNER,
+                case.stage,
+                stub.url,
+                str(work),
+                str(int(case.fault_step is not None)),
+            ],
             env={
                 **{
                     name: os.environ[name]
@@ -428,7 +422,10 @@ def run_case(install: Path, scratch: Path, case: Case, *, fault: bool) -> dict[s
         "offered_tools": tool_names(main_requests[0]) if main_requests else [],
         "sentinel": sentinel,
         "results": {
-            call: {"is_error": block.get("is_error"), "text": result_text(block)[:2000]}
+            call: {
+                "is_error": block.get("is_error"),
+                "text": _claude_tool_result_text(block)[:2000],
+            }
             for call, block in stream_results(stdout).items()
         },
         "structured_output": "structured_output" in terminal_result(stdout),
@@ -506,9 +503,8 @@ def main() -> int:
     scratch.mkdir(parents=True, exist_ok=True)
     summary = []
     for case in cases(args.profile):
-        fault = case.fault_step is not None
         try:
-            evidence = run_case(args.install_root, scratch, case, fault=fault)
+            evidence = run_case(args.install_root, scratch, case)
             problems = check(case, evidence)
         except Exception as exc:
             # Setup and transport failures are failures; never a partial pass.

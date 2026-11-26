@@ -26,7 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
-from .adapter_output import _require_repository_tool_health, extract_json_text
+from .adapter_output import extract_json_text, require_repository_tool_health
 from .adapter_process import _OPENROUTER_BASE_URL
 from .canonical import json_loads_no_duplicates
 from .config import EFFORT_LEVELS
@@ -72,12 +72,14 @@ class OpenCodeClientError(RuntimeError):
 def _repository_tool_failed(part: dict[str, Any]) -> bool:
     """Whether one repository tool part failed, ended unresolved, or is unrecognized."""
     state = part.get("state")
-    status = state.get("status") if isinstance(state, dict) else None
+    if not isinstance(state, dict):
+        return True
+    status = state.get("status")
     if status == "completed":
         return False
     if status != "error":
         return True  # never reached a terminal state
-    error = state.get("error") if isinstance(state, dict) else None
+    error = state.get("error")
     if not isinstance(error, dict) or not isinstance(error.get("message"), str):
         return True
     return not any(
@@ -449,9 +451,9 @@ def _session_answer(
     # Every repository tool part between the prompt and the answer is collected
     # on the way; execution health precedes the answer (SPEC-69).
     prefix = f"api/session/{session_id}"
-    tool_parts: dict[tuple[str, str], dict[str, Any]] = {}
-    # Parts without both ids cannot be deduplicated, so each one counts.
-    unkeyed_parts: list[dict[str, Any]] = []
+    # Keyed by (message id, part id); a part without both ids cannot be
+    # deduplicated, so it gets a key of its own and always counts.
+    tool_parts: dict[object, dict[str, Any]] = {}
     cursor: str | None = None
     seen: set[str] = set()
     answer: dict[str, Any] | None = None
@@ -484,16 +486,9 @@ def _session_answer(
                         or part.get("name") not in _REPOSITORY_TOOLS
                     ):
                         continue
-                    message_id, part_id = message.get("id"), part.get("id")
-                    if (
-                        isinstance(message_id, str)
-                        and message_id
-                        and isinstance(part_id, str)
-                        and part_id
-                    ):
-                        tool_parts.setdefault((message_id, part_id), part)
-                    else:
-                        unkeyed_parts.append(part)
+                    ids = (message.get("id"), part.get("id"))
+                    key = ids if all(isinstance(i, str) and i for i in ids) else object()
+                    tool_parts.setdefault(key, part)
             if kind == "idle":
                 if message.get("outcome") != "succeeded":
                     raise OpenCodeClientError("OpenCode session failed or was interrupted")
@@ -509,11 +504,10 @@ def _session_answer(
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
-                parts = [*tool_parts.values(), *unkeyed_parts]
-                _require_repository_tool_health(
+                require_repository_tool_health(
                     "OpenCode",
-                    attempts=len(parts),
-                    failed=sum(_repository_tool_failed(part) for part in parts),
+                    attempts=len(tool_parts),
+                    failed=sum(map(_repository_tool_failed, tool_parts.values())),
                 )
                 return _normalize_message(answer, stage=stage)
         cursor = cursors.get("next")

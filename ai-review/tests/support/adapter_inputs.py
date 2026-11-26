@@ -7,13 +7,19 @@ shape, so it lives here and none of them owns it.
 
 ``run_prepared_adapter`` is shared more widely: every adapter-runner suite that
 writes its own manifest needs prepare's effective-config binding in it.
+``run_captured_adapter`` replays one captured CLI result through the runner.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
+import pytest
+from ai_review.adapter_process import _AdapterResult
 from ai_review.adapter_runner import run_adapter
 from ai_review.config import ConfigError, effective_config_binding, load_config
 from ai_review.schema import load_json_file, write_canonical_json
@@ -53,6 +59,24 @@ def run_prepared_adapter(reviewer: str, stage: str) -> int:
         Path(os.environ.get("AI_REVIEW_CONFIG", "config/review.yaml")),
     )
     return run_adapter(reviewer, stage)
+
+
+def run_captured_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reviewer: str,
+    result: _AdapterResult,
+    config_path: Path,
+) -> tuple[int, dict[str, Any]]:
+    """Run a review on a fresh bundle with ``result`` as the CLI's; return exit and outcome."""
+    inputs, output = tmp_path / "inputs", tmp_path / "out"
+    write_adapter_input_bundle(inputs)
+    bind_manifest_to_config(inputs, config_path)
+    monkeypatch.setenv("AI_REVIEW_INPUT_DIR", str(inputs))
+    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(output))
+    with mock.patch("ai_review.adapter_runner._run_adapter_process", return_value=result):
+        code = run_adapter(reviewer, "review")
+    return code, json.loads((output / f"findings/{reviewer}.json").read_text())
 
 
 def write_adapter_input_bundle(input_dir: Path) -> None:

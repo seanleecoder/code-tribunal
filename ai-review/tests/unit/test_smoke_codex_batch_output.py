@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import Request, urlopen
@@ -223,8 +225,6 @@ def test_independent_byte_check_rejects_mutations(tmp_path: Path, damage: str) -
 
 
 def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, monkeypatch) -> None:
-    import sys
-
     from ai_review.config import load_config
 
     visited = []
@@ -284,7 +284,6 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
     tmp_path: Path, monkeypatch, damage: str, overrides: list[str]
 ) -> None:
     import shutil
-    import sys
 
     from ai_review import adapter_runner as runner
 
@@ -461,8 +460,6 @@ def test_a_negative_control_must_fail_for_its_own_cause(
 
 
 def test_fault_suite_runs_only_verified_filesystem_faults(tmp_path: Path, monkeypatch) -> None:
-    import sys
-
     monkeypatch.setattr(
         sys,
         "argv",
@@ -497,13 +494,11 @@ def test_fault_wrapper_drops_only_the_dac_bypass_capabilities() -> None:
 
 
 @pytest.mark.skipif(
-    __import__("os").geteuid() == 0, reason="file modes do not restrict root with DAC capabilities"
+    os.geteuid() == 0, reason="file modes do not restrict root with DAC capabilities"
 )
 def test_fault_runner_records_its_precondition_and_survives_the_unreadable_file(
     tmp_path: Path, monkeypatch
 ) -> None:
-    import sys
-
     from ai_review import adapter_runner as runner
 
     root = tmp_path / "workspace"

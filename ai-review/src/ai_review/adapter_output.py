@@ -24,7 +24,7 @@ from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import CODEX_REPO_SERVER, OutputCodec, get_reviewer_definition
+from .reviewers import CLAUDE_REPOSITORY_TOOLS, CODEX_REPO_SERVER, OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -234,7 +234,7 @@ def _load_answer_json(text: str, *, stage: str) -> Any:
         ) from exc
 
 
-def _require_repository_tool_health(seat: str, *, attempts: int, failed: int) -> None:
+def require_repository_tool_health(seat: str, *, attempts: int, failed: int) -> None:
     """Reject a run whose repository-tool attempts all failed (SPEC-69).
 
     ``failed`` counts attempts that failed operationally, ended without a
@@ -246,13 +246,6 @@ def _require_repository_tool_health(seat: str, *, attempts: int, failed: int) ->
         raise AdapterModelError(f"{seat} repository-tool attempts all failed operationally")
 
 
-def _claude_review_tools() -> frozenset[str]:
-    """The repository tools the registry grants a Claude review."""
-    arguments = get_reviewer_definition("claude").review_arguments
-    return frozenset(arguments[arguments.index("--tools") + 1].split(","))
-
-
-_CLAUDE_REPOSITORY_TOOLS = _claude_review_tools()
 # Error results the pinned CLI returns for an ordinary lookup, from captured
 # traces (tests/fixtures/claude): a missing file for Read, a missing path for
 # Grep and a missing directory for Glob. Every other error result counts as failed.
@@ -324,14 +317,15 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
             content = event["message"].get("content")
             if isinstance(content, list):
                 for part in content:
+                    if not isinstance(part, dict):
+                        continue
                     if (
-                        isinstance(part, dict)
-                        and part.get("type") == "tool_use"
-                        and part.get("name") in _CLAUDE_REPOSITORY_TOOLS
+                        part.get("type") == "tool_use"
+                        and part.get("name") in CLAUDE_REPOSITORY_TOOLS
                         and isinstance(part.get("id"), str)
                     ):
                         repository_calls.add(part["id"])
-                    if not isinstance(part, dict) or not isinstance(part.get("text"), str):
+                    if not isinstance(part.get("text"), str):
                         continue
                     if part.get("type") == "text":
                         assistant_parts.append(part["text"])
@@ -368,10 +362,10 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     if (
         stage == "review"
         and init_tools is not None
-        and not {tool for tool in init_tools if isinstance(tool, str)} >= _CLAUDE_REPOSITORY_TOOLS
+        and not all(tool in init_tools for tool in CLAUDE_REPOSITORY_TOOLS)
     ):
         raise AdapterModelError("Claude review started without its repository tools")
-    _require_repository_tool_health(
+    require_repository_tool_health(
         "Claude",
         attempts=len(repository_calls),
         failed=sum(call in denied or call_failed.get(call, True) for call in repository_calls),
@@ -577,7 +571,7 @@ def _load_codex_stream(
             operational_failures += 1
         elif not _is_codex_builtin_call(item):
             raise SchemaValidationError(incomplete)
-    _require_repository_tool_health("Codex", attempts=attempts, failed=operational_failures)
+    require_repository_tool_health("Codex", attempts=attempts, failed=operational_failures)
     if stderr_host_session_failed or _CODEX_HOST_SESSION_FAILED.search(stderr):
         # Never echo stderr: it can carry model or tool text.
         raise AdapterModelError(

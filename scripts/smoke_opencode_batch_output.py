@@ -532,11 +532,11 @@ def _prove_operational_tool_failure_is_rejected() -> None:
     found" grep, indistinguishable from an empty search.
     """
     batch = probe_batch("review")
-    with _StubProvider(batch, steps=[("read", {"path": "example.py"})]) as stub:
+    read = ("read", {"path": "example.py"})
+    with _StubProvider(batch, steps=[read]) as stub:
         code, stdout, stderr = _run_client(stub.base_url, "read-control")
     if code or json.loads(stdout) != batch or GREP_MARKER not in tool_result_text(stub.requests[1]):
         fail(f"the capability-matched read control failed: {stderr}")
-    read = ("read", {"path": "example.py"})
     with _StubProvider(batch, steps=[read]) as stub:
         code, stdout, stderr = _run_client(stub.base_url, "read-fault", fault="example.py")
     parts = _tool_parts(stderr)
