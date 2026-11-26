@@ -143,6 +143,13 @@ row whose target has arrived, and remove completed spec files from the active
    gh workflow run publish-release.yml --ref main -f tag="v$V"
    ```
 
+   The signed tag's cited run must satisfy the current evidence requirements.
+   Before a cutover that adds evidence requirements, inventory pending signed
+   tags and finish eligible publication under the current procedure. If a
+   pending tag's evidence is incompatible after the cutover, keep its signed
+   record and prepare a fresh release version with a fresh first-attempt canary
+   on compatible, exact candidate images.
+
    A stable release becomes GitHub's latest. For a backport to an older series,
    publish by dispatch with `-f latest=false`. If the tag push publishes it first,
    restore latest with `gh release edit v<newest> --latest`. Existing releases are
