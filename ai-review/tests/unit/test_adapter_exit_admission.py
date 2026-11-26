@@ -63,7 +63,9 @@ def test_valid_answer_is_admitted_only_at_exit_zero(
     assert rejected["code"] == 1
     assert outcome["adapter_status"] == "model_error"
     assert outcome["error_class"] == "AdapterExit"
-    assert "launcher diagnostic" in outcome["error_message_redacted"]
+    # Codex stderr can carry model or tool text once its stream has started.
+    expected = "Codex exited 3;" if reviewer == "codex" else "launcher diagnostic"
+    assert expected in outcome["error_message_redacted"]
     assert batch_quality_fields(outcome)["usable_for_resolution"] is False
     # The rejected output stays available for diagnosis, never for admission.
     assert (rejected["status_dir"] / f"{reviewer}-exit-raw-stdout.txt").is_file()
@@ -78,3 +80,33 @@ def test_nonzero_exit_without_stderr_names_the_exit_code(
     assert code == 1
     assert outcome["adapter_status"] == "model_error"
     assert outcome["error_message_redacted"] == "adapter exited 5"
+
+
+def test_claude_nonzero_exit_names_its_terminal_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude reports provider and auth failures in the terminal result, not stderr.
+    terminal = {"type": "result", "subtype": "success", "is_error": True, "result": "401 auth"}
+    stdout = CLAUDE_STREAM + "\nnot json\n" + json.dumps(terminal)
+    code, outcome = run_captured_adapter(
+        tmp_path, monkeypatch, "claude", _AdapterResult(1, stdout, ""), SHIPPED_CONFIG_PATH
+    )
+    assert code == 1
+    assert outcome["adapter_status"] == "model_error"
+    assert outcome["error_message_redacted"] == "adapter exited 1: 401 auth"
+
+
+def test_codex_stderr_is_published_only_before_its_stream_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stream = _AdapterResult(1, _stdout("codex"), "router echoed tool text\n")
+    _code, outcome = run_captured_adapter(
+        tmp_path / "stream", monkeypatch, "codex", stream, SHIPPED_CONFIG_PATH
+    )
+    assert outcome["error_message_redacted"] == "Codex exited 1; reviewer output is not usable"
+    # Before any output, stderr is the launcher's own prerequisite diagnostic.
+    launcher = _AdapterResult(2, "", "OPENROUTER_API_KEY is required\n")
+    _code, outcome = run_captured_adapter(
+        tmp_path / "launcher", monkeypatch, "codex", launcher, SHIPPED_CONFIG_PATH
+    )
+    assert outcome["error_message_redacted"] == "OPENROUTER_API_KEY is required"

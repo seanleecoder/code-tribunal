@@ -630,6 +630,36 @@ def _load_codex_stream(
     return _load_answer_json(answer, stage=stage)
 
 
+def _last_claude_result(stdout: str) -> dict[str, Any] | None:
+    """The stream's last terminal result event; malformed lines are skipped."""
+    for line in reversed(stdout.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            return event
+    return None
+
+
+def adapter_exit_message(codec: OutputCodec, *, returncode: int, stdout: str, stderr: str) -> str:
+    """The published diagnostic for a nonzero launcher exit; never an admission path.
+
+    Claude reports provider, auth and credit failures in its terminal
+    ``is_error`` result, usually with empty stderr. Once a Codex stream has
+    started, its stderr can carry model or tool text, so it gets a fixed
+    message; before any output, stderr is the launcher's own diagnostic.
+    """
+    if codec == "claude_stream_json":
+        terminal = _last_claude_result(stdout)
+        if terminal is not None and terminal.get("is_error") is True:
+            detail = _json_preview(_terminal_error_detail(terminal))
+            return f"adapter exited {returncode}: {detail}"
+    elif codec == "codex_stream_json" and stdout.strip():
+        return f"Codex exited {returncode}; reviewer output is not usable"
+    return stderr or f"adapter exited {returncode}"
+
+
 def _load_adapter_json(
     stdout: str,
     *,

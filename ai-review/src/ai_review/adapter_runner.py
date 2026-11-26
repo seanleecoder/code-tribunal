@@ -18,6 +18,7 @@ from .adapter_artifacts import (
 from .adapter_output import (
     _load_adapter_json,
     _stderr_failure_pattern,
+    adapter_exit_message,
 )
 from .adapter_process import (
     AdapterOutputLimitError,
@@ -229,11 +230,15 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 _write_parse_debug(
                     output_dir, reviewer, stage, result.stdout, result.stderr, kind="exit"
                 )
-            stderr_text = result.stderr or f"adapter exited {result.returncode}"
             return _fail(
                 "model_error",
                 error_class="AdapterExit",
-                error_message=stderr_text,
+                error_message=adapter_exit_message(
+                    reviewer_definition.output_codec,
+                    returncode=result.returncode,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                ),
             )
 
         try:
