@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import anchor_location, finding_sort_key
-from .canary_codex_repo_read import FIXTURE_PATH
+from .canary_repo_read import FIXTURE_PATH
 from .canonical import canonical_json_text
 from .config import ReviewConfig
 from .outcomes import load_outcomes

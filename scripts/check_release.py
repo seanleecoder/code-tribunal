@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from ai_review.canary_repo_read import WITNESSED_REVIEWERS
 from ai_review.canonical import json_loads_no_duplicates
 from check_supply_chain_pins import gitlab_image_pins, image_pin_issues
 from release_common import (
@@ -230,17 +231,18 @@ def _verdict(campaign: str, platform: str, summary: dict[str, Any]) -> str:
             raise ReleaseValidationError(f"panel/{platform} summary is incomplete")
         if summary.get("cleanup") != "success":
             raise ReleaseValidationError(f"panel/{platform} cleanup was {summary.get('cleanup')}")
-        review: Any = summary
-        for key in ("seats", "codex", "review"):
-            review = review.get(key) if isinstance(review, dict) else None
-        if not isinstance(review, dict) or review.get("repository_read") is not True:
-            raise ReleaseValidationError(
-                f"panel/{platform} did not record Codex repository_read: true"
-            )
+        for reviewer in WITNESSED_REVIEWERS:
+            review: Any = summary
+            for key in ("seats", reviewer, "review"):
+                review = review.get(key) if isinstance(review, dict) else None
+            if not isinstance(review, dict) or review.get("repository_read") is not True:
+                raise ReleaseValidationError(
+                    f"panel/{platform} did not record {reviewer} repository_read: true"
+                )
         return (
             f"panel / {platform}: {summary['consensus']['panel_status']} panel, "
             f"{summary['posting']['posted_thread_count']} threads posted, "
-            "Codex repository read verified, cleanup succeeded"
+            f"repository reads verified for {', '.join(WITNESSED_REVIEWERS)}, cleanup succeeded"
         )
     steps = summary.get("steps")
     if summary.get("passed") is not True or not isinstance(steps, list):

@@ -727,3 +727,97 @@ def test_tool_parts_inside_the_final_answer_message_are_counted() -> None:
     )
     with pytest.raises(AdapterModelError, match="all failed"):
         admit(page(IDLE, final, USER))
+
+
+@pytest.mark.parametrize("observed", [True, False])
+def test_a_canary_review_reports_its_fixture_read_only_after_success(
+    tmp_path: Path, observed: bool
+) -> None:
+    from ai_review.canary_repo_read import OPENCODE_OBSERVATION_ENV
+
+    (tmp_path / "inputs" / "repo_snapshot").mkdir(parents=True)
+    prompt = tmp_path / "prompt"
+    prompt.write_text("trusted stage prompt")
+    observation = tmp_path / "observation"
+    observation.write_text("")
+    read = {
+        "type": "tool",
+        "id": "call_1",
+        "name": "read",
+        "state": {
+            "status": "completed",
+            "input": {"path": "src/access.py" if observed else "src/other.py"},
+            "content": [{"type": "text", "text": "Read file src/access.py\n1: def is_allowed():"}],
+        },
+    }
+    server_envs = []
+
+    def start(_root, _executable, env, _log):
+        server_envs.append(env)
+        return fake_process(""), "http://127.0.0.1:1/", ()
+
+    responses = [
+        {"data": {"id": "ses_test"}},
+        {"data": {"id": "msg_input", "sessionID": "ses_test"}},
+        {},
+        page(IDLE, answer(), calls(read), USER),
+    ]
+    env = {
+        "AI_REVIEW_STAGE": "review",
+        "PATH": os.environ.get("PATH", ""),
+        "AI_REVIEW_MODEL": "google/test",
+        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+        "OPENROUTER_API_KEY": "selected-key",
+        "AI_REVIEW_INPUT_DIR": str(tmp_path / "inputs"),
+        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / "out"),
+        OPENCODE_OBSERVATION_ENV: str(observation),
+    }
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(client, "_resolve_opencode_executable", return_value="/pinned"),
+        mock.patch.object(client, "_start_server", side_effect=start),
+        mock.patch.object(client, "_request_json", side_effect=responses),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
+        assert client.run() == 0
+    assert observation.read_text() == ("true" if observed else "false")
+    # The scratch path is the runner's channel to this trusted client only.
+    assert OPENCODE_OBSERVATION_ENV not in server_envs[0]
+
+
+def test_a_failed_canary_review_reports_nothing(tmp_path: Path) -> None:
+    from ai_review.canary_repo_read import OPENCODE_OBSERVATION_ENV
+
+    (tmp_path / "inputs" / "repo_snapshot").mkdir(parents=True)
+    prompt = tmp_path / "prompt"
+    prompt.write_text("trusted stage prompt")
+    observation = tmp_path / "observation"
+    observation.write_text("")
+    responses = [
+        {"data": {"id": "ses_test"}},
+        {"data": {"id": "msg_input", "sessionID": "ses_test"}},
+        {},
+        page(IDLE, answer(), calls(tool("error", error=RG_FAILED)), USER),
+    ]
+    env = {
+        "AI_REVIEW_STAGE": "review",
+        "PATH": os.environ.get("PATH", ""),
+        "AI_REVIEW_MODEL": "google/test",
+        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+        "OPENROUTER_API_KEY": "selected-key",
+        "AI_REVIEW_INPUT_DIR": str(tmp_path / "inputs"),
+        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / "out"),
+        OPENCODE_OBSERVATION_ENV: str(observation),
+    }
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(client, "_resolve_opencode_executable", return_value="/pinned"),
+        mock.patch.object(
+            client, "_start_server", return_value=(fake_process(""), "http://127.0.0.1:1/", ())
+        ),
+        mock.patch.object(client, "_request_json", side_effect=responses),
+        pytest.raises(client.OpenCodeClientError, match="all failed"),
+    ):
+        client.run()
+    assert observation.read_text() == ""

@@ -14,10 +14,10 @@ from unittest.mock import patch
 import pytest
 import yaml
 from ai_review import adapter_runner
-from ai_review import canary_codex_repo_read as probe
+from ai_review import canary_repo_read as probe
 from ai_review.config import load_config
 from ai_review.input_bundle import prepare_local_bundle
-from ai_review.reviewers import CODEX_REPO_SERVER
+from ai_review.reviewers import CLAUDE_REPOSITORY_TOOLS, CODEX_REPO_SERVER
 
 from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
 from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
@@ -77,7 +77,7 @@ def _event(tool: str = "read_file", **overrides: object) -> dict:
     ],
 )
 def test_fixture_requires_an_actual_content_bearing_result(event: dict, observed: bool) -> None:
-    assert probe.fixture_read_observed(json.dumps(event)) is observed
+    assert probe.codex_fixture_read_observed(json.dumps(event)) is observed
 
 
 @pytest.fixture
@@ -108,7 +108,7 @@ def review_output(tmp_path, monkeypatch):
 def test_bad_canary_controls_clear_stale_evidence(review_output, monkeypatch, settings):
     for name, value in settings.items():
         monkeypatch.setenv(name, value)
-    witness = review_output / probe.WITNESS_PATH
+    witness = review_output / probe.witness_path("codex")
     witness.parent.mkdir(parents=True)
     witness.write_text("stale witness", encoding="utf-8")
     with (
@@ -126,7 +126,7 @@ def test_bad_canary_controls_clear_stale_evidence(review_output, monkeypatch, se
 
 @pytest.mark.parametrize("canary", [False, True])
 def test_failed_review_writes_no_canary_evidence(review_output, monkeypatch, canary):
-    witness = review_output / probe.WITNESS_PATH
+    witness = review_output / probe.witness_path("codex")
     if canary:
         monkeypatch.setenv(probe.PLATFORM_ENV, "github")
         monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
@@ -181,7 +181,7 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         [command] = template[".review_template"]["script"]
         assert template[".review_template"]["image"] == args.reviewer_image
         assert template[".critique_template"]["image"] == "$AI_REVIEW_REVIEWER_IMAGE"
-        assert f"out/{probe.WITNESS_PATH}" in template[".review_template"]["artifacts"]["paths"]
+        assert f"out/{probe.WITNESS_DIR}/" in template[".review_template"]["artifacts"]["paths"]
         [caller] = push.call_args.kwargs["fixture"]
         assert caller["action"] == "create"
         caller_path = caller["file_path"]
@@ -256,7 +256,7 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
-    witness = json.loads((output / probe.WITNESS_PATH).read_text(encoding="utf-8"))
+    witness = json.loads((output / probe.witness_path("codex")).read_text(encoding="utf-8"))
     manifest = json.loads((inputs / "manifest.json").read_text(encoding="utf-8"))
     assert witness == {
         "platform": platform,
@@ -267,3 +267,212 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         "effective_config_sha256": manifest["effective_config_sha256"],
         "observed": observed,
     }
+
+
+ROOT_DIR = "/w/out/.tmp/claude-review-root.7"
+
+
+def _claude_stream(name: str, arguments: dict, text: str, *, is_error: bool = False) -> str:
+    result: dict = {"type": "tool_result", "tool_use_id": "toolu_1", "content": text}
+    if is_error:
+        result["is_error"] = True
+    call = {"type": "tool_use", "id": "toolu_1", "name": name, "input": arguments}
+    return "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "assistant", "message": {"content": [call]}},
+            {"type": "user", "message": {"content": [result]}},
+        )
+    )
+
+
+READ = {"file_path": f"{ROOT_DIR}/src/access.py"}
+
+
+@pytest.mark.parametrize(
+    ("stdout", "observed"),
+    [
+        (_claude_stream("Read", READ, "1\tdef is_allowed(user, allowed):"), True),
+        (_claude_stream("Read", READ, "     7\t    return user == allowed"), True),
+        (_claude_stream("Read", READ, "1\tdef is_allowed():", is_error=True), False),
+        (_claude_stream("Read", READ, "File does not exist."), False),
+        (_claude_stream("Read", READ, "1\t"), False),
+        (_claude_stream("Read", {"file_path": f"{ROOT_DIR}/src/other.py"}, "1\tx = 1"), False),
+        # An absolute path counts only beneath the reviewed snapshot.
+        (_claude_stream("Read", {"file_path": "/elsewhere/src/access.py"}, "1\tx = 1"), False),
+        (_claude_stream("Grep", {"pattern": "def"}, "src/access.py:1:def is_allowed():"), True),
+        (
+            _claude_stream("Grep", {"pattern": "def"}, f"{ROOT_DIR}/src/access.py:3:def f():"),
+            True,
+        ),
+        (_claude_stream("Grep", {"pattern": "def"}, "No matches found"), False),
+        (_claude_stream("Glob", {"pattern": "**"}, "src/access.py"), False),
+        # The model's own text naming the helper is not a read.
+        (
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "src/access.py:1:def"}]},
+                }
+            ),
+            False,
+        ),
+    ],
+)
+def test_claude_witness_requires_a_successful_correlated_result(stdout: str, observed: bool):
+    assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is observed
+
+
+def test_claude_witness_ignores_a_result_without_its_call():
+    stdout = _claude_stream("Read", READ, "1\tdef is_allowed():").split("\n")[1]
+    assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is False
+
+
+def _part(name: str, text: str, *, status: str = "completed", **inputs: str) -> dict:
+    state = {"status": status, "input": inputs, "content": [{"type": "text", "text": text}]}
+    return {"type": "tool", "id": "call_1", "name": name, "state": state}
+
+
+OPENCODE_ROOT = "/w/out/.tmp/opencode-home/opencode-review-root.9"
+
+
+@pytest.mark.parametrize(
+    ("part", "observed"),
+    [
+        (
+            _part(
+                "read",
+                "Read file src/access.py, lines 1-2\n1: def is_allowed():",
+                path="src/access.py",
+            ),
+            True,
+        ),
+        (_part("read", "1: def is_allowed():", path=f"{OPENCODE_ROOT}/src/access.py"), True),
+        (_part("read", "1: def is_allowed():", path="src/other.py"), False),
+        (_part("read", "Read file src/access.py, lines 1-0", path="src/access.py"), False),
+        (_part("read", "1: def is_allowed():", status="error", path="src/access.py"), False),
+        (
+            _part(
+                "grep",
+                f"Found 1 matches\n{OPENCODE_ROOT}/src/access.py:\n  Line 3: return x\n",
+                pattern="x",
+            ),
+            True,
+        ),
+        (
+            _part(
+                "grep",
+                f"Found 1 matches\n{OPENCODE_ROOT}/src/other.py:\n  Line 3: return x\n",
+                pattern="x",
+            ),
+            False,
+        ),
+        (_part("grep", "No matches found", pattern="x"), False),
+        (_part("glob", f"{OPENCODE_ROOT}/src/access.py", pattern="**"), False),
+    ],
+)
+def test_opencode_witness_requires_a_completed_content_bearing_part(part: dict, observed: bool):
+    assert probe.opencode_fixture_read_observed([part], OPENCODE_ROOT) is observed
+
+
+def _canary(monkeypatch, platform: str = "gitlab") -> None:
+    monkeypatch.setenv(probe.PLATFORM_ENV, platform)
+    monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
+
+
+def test_a_claude_canary_review_writes_its_own_bound_witness(review_output, monkeypatch):
+    _canary(monkeypatch)
+    stale = review_output / probe.witness_path("claude")
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale witness", encoding="utf-8")
+
+    def run(_command, env, *_args, cwd, **_kwargs):
+        assert not probe.CANARY_REVIEW_ENV.intersection(env)
+        assert probe.OPENCODE_OBSERVATION_ENV not in env
+        assert not stale.exists()
+        read = {"file_path": f"{cwd}/src/access.py"}
+        init = {"type": "system", "subtype": "init", "tools": sorted(CLAUDE_REPOSITORY_TOOLS)}
+        stream = (
+            json.dumps(init)
+            + "\n"
+            + _claude_stream("Read", read, "1\tdef is_allowed():")
+            + "\n"
+            + json.dumps(
+                {"type": "result", "subtype": "success", "structured_output": {"findings": []}}
+            )
+        )
+        return SimpleNamespace(returncode=0, stdout=stream, stderr="", stderr_matched=False)
+
+    with patch.object(adapter_runner, "_run_adapter_process", side_effect=run):
+        assert adapter_runner.run_adapter("claude", "review") == 0
+    witness = json.loads(stale.read_text(encoding="utf-8"))
+    assert witness["reviewer"] == "claude" and witness["observed"] is True
+    assert not (review_output / probe.witness_path("codex")).exists()
+
+
+@pytest.mark.parametrize("reported", ["true", "false", ""])
+def test_an_opencode_canary_review_reads_only_its_private_observation(
+    review_output, monkeypatch, reported
+):
+    _canary(monkeypatch)
+    seen = {}
+
+    def run(_command, env, *_args, **_kwargs):
+        assert not probe.CANARY_REVIEW_ENV.intersection(env)
+        observation = Path(env[probe.OPENCODE_OBSERVATION_ENV])
+        # Outside the reviewed snapshot and the uploaded artifacts.
+        assert review_output not in observation.parents
+        assert observation.read_text(encoding="utf-8") == ""
+        seen["path"] = observation
+        observation.write_text(reported, encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0, stdout='{"findings":[]}', stderr="", stderr_matched=False
+        )
+
+    with patch.object(adapter_runner, "_run_adapter_process", side_effect=run):
+        assert adapter_runner.run_adapter("opencode", "review") == 0
+    witness = json.loads((review_output / probe.witness_path("opencode")).read_text())
+    assert witness["reviewer"] == "opencode"
+    assert witness["observed"] is (reported == "true")
+    assert not seen["path"].exists()
+
+
+def test_a_failed_opencode_canary_review_removes_its_observation(review_output, monkeypatch):
+    _canary(monkeypatch)
+    seen = {}
+
+    def run(_command, env, *_args, **_kwargs):
+        seen["path"] = Path(env[probe.OPENCODE_OBSERVATION_ENV])
+        seen["path"].write_text("true", encoding="utf-8")
+        return SimpleNamespace(returncode=1, stdout="", stderr="failed", stderr_matched=False)
+
+    with patch.object(adapter_runner, "_run_adapter_process", side_effect=run):
+        assert adapter_runner.run_adapter("opencode", "review") == 1
+    assert not (review_output / probe.witness_path("opencode")).exists()
+    assert not seen["path"].exists()
+
+
+@pytest.mark.parametrize("reviewer", ["claude", "codex", "opencode", "cursor"])
+def test_the_generated_step_gives_canary_controls_only_to_witnessed_seats(tmp_path, reviewer):
+    common = load_repository_script(
+        "candidate_canary_common", ROOT / "scripts/candidate_canary_common.py"
+    )
+    launcher = tmp_path / "run_reviewer.sh"
+    launcher.write_text(
+        "#!/bin/sh\n"
+        + "".join(f'echo "{name}=${{{name}-unset}}"\n' for name in sorted(probe.CANARY_REVIEW_ENV))
+    )
+    launcher.chmod(0o755)
+    command = common.panel_review_command("github", "image@sha256:x").replace(
+        "/opt/ai-review/adapters/run_reviewer.sh", str(launcher)
+    )
+    result = subprocess.run(
+        ["sh", "-ec", command],
+        env={"PATH": os.environ["PATH"], "REVIEWER": reviewer},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    witnessed = reviewer in probe.WITNESSED_REVIEWERS
+    assert (f"{probe.PLATFORM_ENV}=github" in result.stdout) is witnessed
+    assert (f"{probe.PLATFORM_ENV}=unset" in result.stdout) is not witnessed
