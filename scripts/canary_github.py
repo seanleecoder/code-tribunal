@@ -28,7 +28,6 @@ from ai_review.schema import load_json_file
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_REPOSITORY,
-    LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
     PANEL_CALLER,
     PANEL_CALLER_PATH,
@@ -36,6 +35,7 @@ from candidate_canary_common import (
     Lifecycle,
     LifecycleFailure,
     LifecycleStep,
+    append_lifecycle_fixture,
     candidate_identity,
     effort_variables,
     expect,
@@ -415,7 +415,9 @@ def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     workflow, caller = candidate_files(args)
 
     def add_fixture(demo: Path) -> list[str]:
-        (demo / LIFECYCLE_FIXTURE_PATH).write_text(LIFECYCLE_FIXTURE, encoding="utf-8")
+        fixture = demo / LIFECYCLE_FIXTURE_PATH
+        source = fixture.read_text(encoding="utf-8")
+        fixture.write_text(append_lifecycle_fixture(source, GitHubCanaryError), encoding="utf-8")
         return [LIFECYCLE_FIXTURE_PATH]
 
     state = push_candidate_branch(

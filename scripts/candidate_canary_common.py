@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ai_review.canary_codex_repo_read import IMAGE_ENV, PLATFORM_ENV
+from ai_review.canary_codex_repo_read import FIXTURE_PATH, IMAGE_ENV, PLATFORM_ENV
 from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
@@ -48,15 +48,12 @@ def gateway_allows(username: str, allowed_user: str) -> bool:
 
 REVIEW_COMMAND = '/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review'
 
-# The mock-lifecycle fixture adds one file whose `records[0]` line is the mock
+# The mock-lifecycle fixture adds a hunk whose `records[0]` line is the mock
 # reviewer's preferred anchor, so the finding's identity does not depend on any
 # other change on the branch (the pinned workflow or CI include) and is the same
 # on both platforms.
-LIFECYCLE_FIXTURE_PATH = "src/audit.py"
+LIFECYCLE_FIXTURE_PATH = FIXTURE_PATH.as_posix()
 LIFECYCLE_FIXTURE = (
-    '"""Audit trail helpers for the demo consumer."""\n'
-    "\n"
-    "\n"
     "def first_actor(records):\n"
     '    """Return the first actor without validating the payload."""\n'
     '    return records[0]["actor"]\n'
@@ -133,6 +130,12 @@ def require_demo_access(source: str, error_type: type[RuntimeError]) -> None:
     normalize = functions.get("normalize_username")
     if normalize is None or len(normalize.args.posonlyargs + normalize.args.args) != 1:
         raise error_type(DEMO_FIXTURE_GUARD)
+
+
+def append_lifecycle_fixture(source: str, error_type: type[RuntimeError]) -> str:
+    if "first_actor" in _demo_functions(source, error_type):
+        raise error_type(f"demo fixture {LIFECYCLE_FIXTURE_PATH} already defines first_actor")
+    return source.rstrip("\n") + "\n\n\n" + LIFECYCLE_FIXTURE
 
 
 def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = "") -> str:
@@ -407,7 +410,7 @@ class Lifecycle:
         expect(post.get("created_discussions") == 1, "expected one created discussion")
         threads = self.threads()
         expect(len(threads) == 1, f"expected one finding thread, found {len(threads)}")
-        expect(threads[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
+        expect(threads[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the modified file")
         self.root = threads[0]
         return {
             self.run_key: run,

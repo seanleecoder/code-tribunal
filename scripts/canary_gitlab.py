@@ -37,13 +37,13 @@ from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
     GITLAB_SECRETS,
-    LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
     PANEL_CALLER,
     PANEL_CALLER_PATH,
     REVIEW_COMMAND,
     Lifecycle,
     LifecycleFailure,
+    append_lifecycle_fixture,
     canary_stage_environment,
     candidate_identity,
     expect,
@@ -489,14 +489,14 @@ def set_scenario(scenario: str) -> None:
 
 def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args, mock=True)
+    source = _raw_file(DEMO_PROJECT, LIFECYCLE_FIXTURE_PATH)
+    updated = append_lifecycle_fixture(source, GitLabCanaryError)
     # Opening the MR starts the first pipeline, so the scenario must exist first.
     set_scenario("blocking")
     state = push_candidate_change(
         args,
         template=template,
-        fixture=[
-            {"action": "create", "file_path": LIFECYCLE_FIXTURE_PATH, "content": LIFECYCLE_FIXTURE}
-        ],
+        fixture=[{"action": "update", "file_path": LIFECYCLE_FIXTURE_PATH, "content": updated}],
         message="candidate canary lifecycle fixture",
         title=f"Candidate canary lifecycle {args.runtime_source[:12]}",
     )

@@ -103,7 +103,7 @@ The `campaigns` input selects what runs. It defaults to `panel,lifecycle,hostile
     The reusable workflow runs every seat in mock mode; a `mock_scenario` input
     passes from caller dispatch into `workflow_call`, so each step re-runs the
     same head without a commit.
-  - The steps are create on an added file, unchanged rerun, changed body in place,
+  - The steps are create on a modified file, unchanged rerun, changed body in place,
     `wontfix` (a `post_result` warning fails the step, which catches an expired
     resolve token), reopen, `refuted` with an unchanged rerun, reopen again,
     a stale-head no-op, and a `blocker` thread that leaves the pull request
