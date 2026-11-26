@@ -33,6 +33,8 @@ credentials or sensitive model content into issues.
 - `model_error`: provider/CLI call failed, credential is absent, or endpoint/model
   validation rejected input. A reviewer launcher that exits nonzero is
   `model_error` with `AdapterExit` even when its stdout holds a valid batch.
+  For Claude the message names the CLI's terminal error. For Codex after its
+  stream started it is a fixed message; read the `exit` debug pair for stderr.
 - `schema_error`: model output could not satisfy the structured contract.
 - `timeout`: the complete process group exceeded the stage-specific timeout:
   `reviewers.<name>.timeout_seconds` for review or

@@ -91,11 +91,17 @@ The image workflow runs the gate unconditionally before image handoff.
 - A second container drops only `DAC_OVERRIDE` and `DAC_READ_SEARCH`.
   - A matched `Read` control must still succeed.
   - The fault case reads the copied sentinel at mode 000. The CLI must report
-    `EACCES: permission denied, open '<path>'` and still supply its answer.
-    The runner must record `model_error`. Each fault case first proves its
-    precondition from the runner process.
-  - A missing file, a no-match search, and a fault followed by a successful read
-    stay `success`.
+    `EACCES: permission denied, open '<path>'` and still supply the scripted
+    answer in a non-error terminal result. The runner must record
+    `model_error` with its repository-tool health diagnostic. Each fault case
+    first proves its precondition from the runner process.
+  - These stay `success`:
+    - a missing file, a no-match search, and `Grep` or `Glob` on a missing path;
+    - an outside-root `Read` refusal;
+    - an invalid `Grep` pattern and an invalid `Read` input;
+    - a fault followed by a successful read.
+- The wrapper's scratch is a container-local tmpfs, so a rootful daemon leaves
+  nothing on the host.
 
 The [captured streams](../../ai-review/tests/fixtures/claude/README.md) behind
 the codec's benign allowlist came from the same harness.
