@@ -61,7 +61,9 @@ versioning.
   and the answer, across pages. It fails without emitting a batch when they all
   failed, ended unresolved, or reported an unrecognized error. Completed calls,
   refused outside paths and captured benign lookups stay usable. The OpenCode
-  image gate adds benign cases and a failing-rg fault that the session survives.
+  image gate adds benign cases and a verified unreadable-file fault that the
+  session survives. OpenCode reports a failing rg as an empty grep, so that case
+  stays covered by the existing rg-execution gate rather than by tool health.
 
 ### Changed
 

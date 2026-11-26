@@ -170,13 +170,30 @@ def test_tool_parts_are_collected_once_across_recorded_pages(capsys) -> None:
     assert "OPENCODE_TOOL_PARTS" in capsys.readouterr().out
 
 
-def test_tool_health_cases_run_before_the_rg_audit_restores_the_binary() -> None:
+def test_tool_health_cases_run_in_order_and_faults_in_their_own_container() -> None:
     source = SCRIPT.read_text()
     main = source[source.index("def main() -> int:") :]
+    faults = main.index("_prove_operational_tool_failure_is_rejected()")
     order = [
         "_prove_external_and_mutation_denial()",
         "_prove_benign_tool_outcomes()",
-        "_prove_operational_tool_failure_is_rejected()",
         "_prove_rg_execution_and_credential_scrubbing()",
     ]
     assert [main.index(call) for call in order] == sorted(main.index(call) for call in order)
+    # The fault case runs only under --faults, which returns before the suite.
+    assert main.index('if sys.argv[1:] == ["--faults"]:') < faults < main.index(order[0])
+    wrapper = (ROOT / "scripts" / "smoke_opencode_batch_output.sh").read_text()
+    assert "set -- --cap-drop DAC_OVERRIDE --cap-drop DAC_READ_SEARCH\n" in wrapper
+    assert wrapper.rstrip().endswith("run_driver suite\nrun_driver faults")
+
+
+def test_fault_precondition_is_read_from_the_client_process() -> None:
+    stderr = "noise\nOPENCODE_FAULT " + json.dumps(
+        {"mode": 0, "dac_override": False, "dac_read_search": False}
+    )
+    assert smoke._fault_precondition(stderr) == {
+        "mode": 0,
+        "dac_override": False,
+        "dac_read_search": False,
+    }
+    assert smoke._fault_precondition("noise") == {}

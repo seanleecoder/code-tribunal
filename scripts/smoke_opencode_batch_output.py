@@ -83,6 +83,22 @@ def checked_stop(*args):
             agent.get("id") == "ai-reviewer" for agent in agents["data"])):
         raise RuntimeError("AGENT_CATALOG_VIOLATION: ancestor agent loaded or ai-reviewer absent")
 client._stop_server = checked_stop
+fault = sys.argv[2] if len(sys.argv) > 2 else ""
+original_git_root = client._initialize_git_root
+def faulted_git_root(root, env):
+    original_git_root(root, env)
+    if fault:
+        # The fault case only: after the client copied and moved its snapshot,
+        # make one file unreadable, and record the precondition in this process.
+        target = root / fault
+        target.chmod(0)
+        caps = next(int(line.split()[1], 16) for line in
+                    Path("/proc/self/status").read_text().splitlines()
+                    if line.startswith("CapEff:"))
+        print("OPENCODE_FAULT " + json.dumps({"mode": target.stat().st_mode & 0o7777,
+              "dac_override": bool(caps >> 1 & 1), "dac_read_search": bool(caps >> 2 & 1)}),
+              file=sys.stderr)
+client._initialize_git_root = faulted_git_root
 raise SystemExit(client.main())
 """
 
@@ -279,6 +295,7 @@ def _run_client(
     effort: str | None = None,
     *,
     inject_agent: bool = False,
+    fault: str = "",
 ) -> tuple[int, str, str]:
     config = patch_provider_base_url(_client_config(effort), provider_url)
     if inject_agent:
@@ -337,7 +354,7 @@ def _run_client(
         env["AI_REVIEW_EFFORT"] = effort
     try:
         result = subprocess.run(
-            [sys.executable, "-P", "-c", CLIENT_WITH_CONFIG, config],
+            [sys.executable, "-P", "-c", CLIENT_WITH_CONFIG, config, fault],
             env=env,
             cwd=work,
             capture_output=True,
@@ -348,7 +365,7 @@ def _run_client(
     except subprocess.TimeoutExpired:
         fail(f"client did not finish within {CLIENT_TIMEOUT_SECONDS}s ({label})")
     for line in result.stderr.splitlines():
-        if line.startswith("OPENCODE_V2_EVIDENCE "):
+        if line.startswith(("OPENCODE_V2_EVIDENCE ", "OPENCODE_FAULT ")):
             print(line, flush=True)
     # Checked here, for every case: the controls that expect a failing client
     # would otherwise accept a catalog violation as their expected failure.
@@ -498,40 +515,46 @@ def _prove_benign_tool_outcomes() -> None:
             fail(f"benign {label} was not admitted: {stderr}")
 
 
+def _fault_precondition(stderr: str) -> dict[str, Any]:
+    for line in stderr.splitlines():
+        if line.startswith("OPENCODE_FAULT "):
+            return json.loads(line.removeprefix("OPENCODE_FAULT "))
+    return {}
+
+
 def _prove_operational_tool_failure_is_rejected() -> None:
-    # A real in-root failure that the session survives: the pinned rg is present
-    # but fails, so neither the download guard nor a provider error can explain
-    # the rejection. A later successful read recovers the run.
-    rg = Path("/usr/local/bin/rg")
-    saved = rg.with_name("rg-fault-saved")
-    log = SMOKE_DIR / "rg-fault.log"
+    """Run as uid 0 without DAC_OVERRIDE and DAC_READ_SEARCH (``--faults``).
+
+    A real in-root read failure that the session survives: the client's copied
+    file is mode 000, so neither the download guard nor a provider error can
+    explain the rejection. A later successful read recovers the run. A failing
+    rg is not used: the pinned server reports it as a completed "No matches
+    found" grep, indistinguishable from an empty search.
+    """
     batch = probe_batch("review")
-    rg.rename(saved)
-    try:
-        rg.write_text(
-            f"#!/bin/sh\necho \"$*\" >> {log}\necho 'rg: probe-induced failure' >&2\nexit 2\n"
-        )
-        rg.chmod(0o755)
-        grep = ("grep", {"pattern": GREP_MARKER})
-        with _StubProvider(batch, steps=[grep]) as stub:
-            code, stdout, stderr = _run_client(stub.base_url, "rg-fault")
-        parts = _tool_parts(stderr)
-        if not log.is_file() or GREP_MARKER not in log.read_text():
-            fail("the failing rg was never invoked by grep")
-        if len(stub.requests) < 2 or not parts:
-            fail(f"the failed grep never returned to the provider: {stderr}")
-        if code == 0 or stdout.strip() or TOOL_HEALTH_FAILURE not in stderr:
-            fail(f"a wholly failed repository run was admitted (exit={code}): {stderr}")
-        if "downloaded ripgrep" in stderr:
-            fail("the download guard, not tool health, rejected the fault")
-        with _StubProvider(batch, steps=[grep, ("read", {"path": "example.py"})]) as stub:
-            code, stdout, stderr = _run_client(stub.base_url, "rg-fault-recovered")
-        _tool_parts(stderr)
-        if code or json.loads(stdout) != batch:
-            fail(f"a successful read did not recover the failed grep: {stderr}")
-    finally:
-        rg.unlink(missing_ok=True)
-        saved.rename(rg)
+    with _StubProvider(batch, steps=[("read", {"path": "example.py"})]) as stub:
+        code, stdout, stderr = _run_client(stub.base_url, "read-control")
+    if code or json.loads(stdout) != batch or GREP_MARKER not in tool_result_text(stub.requests[1]):
+        fail(f"the capability-matched read control failed: {stderr}")
+    read = ("read", {"path": "example.py"})
+    with _StubProvider(batch, steps=[read]) as stub:
+        code, stdout, stderr = _run_client(stub.base_url, "read-fault", fault="example.py")
+    parts = _tool_parts(stderr)
+    precondition = _fault_precondition(stderr)
+    if precondition != {"mode": 0, "dac_override": False, "dac_read_search": False}:
+        fail(f"read-fault precondition not met: {precondition}")
+    if len(stub.requests) < 2 or not parts or GREP_MARKER in tool_result_text(stub.requests[1]):
+        fail(f"the unreadable file was read or never returned to the provider: {stderr}")
+    if code == 0 or stdout.strip() or TOOL_HEALTH_FAILURE not in stderr:
+        fail(f"a wholly failed repository run was admitted (exit={code}): {stderr}")
+    if "downloaded ripgrep" in stderr:
+        fail("the download guard, not tool health, rejected the fault")
+    recovered = [read, ("read", {"path": "nested/ignored.py"})]
+    with _StubProvider(batch, steps=recovered) as stub:
+        code, stdout, stderr = _run_client(stub.base_url, "read-recovered", fault="example.py")
+    _tool_parts(stderr)
+    if code or json.loads(stdout) != batch:
+        fail(f"a successful read did not recover the failed one: {stderr}")
 
 
 def _prove_rg_execution_and_credential_scrubbing() -> None:
@@ -597,6 +620,10 @@ def _prove_rg_absent_is_a_client_failure() -> None:
 def main() -> int:
     os.environ["PATH"] = FIXED_PATH
     shipped_client()
+    if sys.argv[1:] == ["--faults"]:
+        _prove_operational_tool_failure_is_rejected()
+        print("opencode tool-fault preflight smoke passed")
+        return 0
     _prove_batch("review")
     _prove_batch("critique")
     for effort in sorted(shipped_client().EFFORT_LEVELS):
@@ -605,7 +632,6 @@ def main() -> int:
     _prove_agent_catalog_check_fires()
     _prove_external_and_mutation_denial()
     _prove_benign_tool_outcomes()
-    _prove_operational_tool_failure_is_rejected()
     _prove_rg_execution_and_credential_scrubbing()
     _prove_rg_absent_is_a_client_failure()
     print("opencode batch-output preflight smoke passed")
