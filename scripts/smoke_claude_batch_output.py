@@ -13,10 +13,10 @@ tool_result came back, then the same valid answer through StructuredOutput.
   snapshot-only sentinel, and a critique is offered no repository tool.
 - ``faults`` profile (uid 0 without DAC_OVERRIDE and DAC_READ_SEARCH): a matched
   Read control, then a Read of the copied sentinel at mode 000. The CLI must
-  report the path-specific EACCES and still supply the answer, and the runner
-  must record ``model_error``. Missing-file, no-match, missing-path Grep and
-  Glob, outside-root refusal, invalid-pattern, invalid-input and recovered runs
-  stay ``success``.
+  report the path-specific EACCES and still supply the scripted answer, and the
+  runner must record ``model_error`` for repository-tool health. Missing-file,
+  no-match, missing-path Grep and Glob, outside-root refusal, invalid-pattern,
+  invalid-input and recovered runs stay ``success``.
 
 A stub failure, a missing fault signal or any unexpected outcome fails the gate.
 """
@@ -86,6 +86,8 @@ CASE_TIMEOUT_SECONDS = 240
 REVIEW_TIMEOUT_SECONDS = 180
 # The stub's final answer for each stage, identical in every case.
 BATCHES: dict[str, dict[str, Any]] = {"review": {"findings": []}, "critique": {"critiques": []}}
+# The runner's diagnostic when every repository attempt failed: the fault's cause.
+TOOL_HEALTH_FAILURE = "Claude repository-tool attempts all failed operationally"
 # Resolved against the copied root after the runner creates it.
 Arguments = Callable[[str, str], dict[str, Any]]
 
@@ -327,9 +329,16 @@ def check(case: Case, evidence: dict[str, Any]) -> list[str]:
         path = f"{launch.get('root')}/sentinel.txt"
         if result.get("is_error") is not True or not eacces_witness(result.get("text", ""), path):
             problems.append("the fault produced no path-specific EACCES witness")
-        if evidence["cli_exit"] != 0 or not evidence["structured_output"]:
+        if (
+            evidence["cli_exit"] != 0
+            or evidence["terminal_is_error"] is not False
+            or evidence["structured_output"] != BATCHES[case.stage]
+        ):
             # The CLI must still supply the answer, so only admission rejects it.
             problems.append("the CLI did not supply its answer after the fault")
+        reason = evidence["error_message"]
+        if case.expected_status == "model_error" and reason != TOOL_HEALTH_FAILURE:
+            problems.append(f"the fault was rejected for another reason: {reason!r}")
     return problems
 
 
@@ -409,6 +418,7 @@ def run_case(install: Path, scratch: Path, case: Case) -> dict[str, Any]:
     stdout = capture.get("stdout") or ""
     outcome = load(f"out/{_output_file(case.stage, 'claude')}")
     main_requests = [r for r in stub.requests if tool_names(r)]
+    terminal = terminal_result(stdout)
     evidence = {
         "case": case.label,
         "elapsed_seconds": round(time.monotonic() - started, 1),
@@ -429,7 +439,8 @@ def run_case(install: Path, scratch: Path, case: Case) -> dict[str, Any]:
             }
             for call, block in stream_results(stdout).items()
         },
-        "structured_output": "structured_output" in terminal_result(stdout),
+        "terminal_is_error": terminal.get("is_error"),
+        "structured_output": terminal.get("structured_output"),
     }
     (work / "raw-stdout.ndjson").write_text(stdout)
     return evidence

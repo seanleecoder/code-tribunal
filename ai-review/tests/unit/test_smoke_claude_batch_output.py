@@ -104,7 +104,9 @@ def evidence(**overrides) -> dict:
         "results": {smoke.step_id(0): {"is_error": None, "text": "1\t" + "s" * 48}},
         "launch": {"root": "/r", "sentinel_mode": 0o644, "dac_override": True},
         "cli_exit": 0,
-        "structured_output": True,
+        "terminal_is_error": False,
+        "structured_output": {"findings": []},
+        "error_message": None,
     }
     return {**base, **overrides}
 
@@ -129,7 +131,10 @@ def test_check_requires_a_verified_fault_and_the_clis_answer() -> None:
     launch = {"root": "/r", "sentinel_mode": 0, "dac_override": False, "dac_read_search": False}
     witness = {"is_error": True, "text": "EACCES: permission denied, open '/r/sentinel.txt'"}
     good = evidence(
-        adapter_status="model_error", launch=launch, results={smoke.step_id(0): witness}
+        adapter_status="model_error",
+        launch=launch,
+        results={smoke.step_id(0): witness},
+        error_message=smoke.TOOL_HEALTH_FAILURE,
     )
     assert smoke.check(fault, good) == []
     assert any(
@@ -139,12 +144,44 @@ def test_check_requires_a_verified_fault_and_the_clis_answer() -> None:
     generic = {smoke.step_id(0): {"is_error": True, "text": "Permission denied"}}
     assert any("EACCES witness" in p for p in smoke.check(fault, {**good, "results": generic}))
     assert any(
-        "supply its answer" in p for p in smoke.check(fault, {**good, "structured_output": False})
+        "supply its answer" in p for p in smoke.check(fault, {**good, "structured_output": None})
     )
     # An admitted fault is exactly the regression the gate exists to catch.
     assert any(
         "status success" in p for p in smoke.check(fault, {**good, "adapter_status": "success"})
     )
+
+
+def test_fault_check_requires_the_scripted_answer_and_the_health_reason() -> None:
+    # A null payload and an unrelated model error must not stand in for the
+    # tool-health rejection: together they would mask a broken health check.
+    cases = {c.label: c for c in smoke.cases("faults")}
+    launch = {"root": "/r", "sentinel_mode": 0, "dac_override": False, "dac_read_search": False}
+    witness = {"is_error": True, "text": "EACCES: permission denied, open '/r/sentinel.txt'"}
+    fault = evidence(
+        adapter_status="model_error",
+        launch=launch,
+        results={smoke.step_id(0): witness},
+        error_message=smoke.TOOL_HEALTH_FAILURE,
+    )
+    unrelated = "adapter run ended in a model error before emitting reviewer output: '{}'"
+    for change in (
+        {"structured_output": None},
+        {"structured_output": {"findings": [{}]}},
+        {"terminal_is_error": True},
+        {"error_message": unrelated},
+    ):
+        assert smoke.check(cases["read-fault"], {**fault, **change}), change
+    recovered = {
+        **fault,
+        "adapter_status": "success",
+        "error_message": None,
+        "results": {
+            smoke.step_id(0): witness,
+            smoke.step_id(1): {"is_error": None, "text": "1\texample = 1"},
+        },
+    }
+    assert smoke.check(cases["recovered"], recovered) == []
 
 
 def test_critique_must_not_be_offered_repository_tools() -> None:
