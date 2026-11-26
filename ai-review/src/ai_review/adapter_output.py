@@ -24,7 +24,7 @@ from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import CODEX_REPO_SERVER, OutputCodec
+from .reviewers import CODEX_REPO_SERVER, OutputCodec, get_reviewer_definition
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -234,6 +234,49 @@ def _load_answer_json(text: str, *, stage: str) -> Any:
         ) from exc
 
 
+def _require_repository_tool_health(seat: str, *, attempts: int, failed: int) -> None:
+    """Reject a run whose repository-tool attempts all failed (SPEC-69).
+
+    ``failed`` counts attempts that failed operationally, ended without a
+    result, or returned an error the pinned transport cannot classify. Any
+    success or recognized benign lookup keeps the run usable, and a run with no
+    attempt is a valid tool-free review.
+    """
+    if attempts and failed >= attempts:
+        raise AdapterModelError(f"{seat} repository-tool attempts all failed operationally")
+
+
+def _claude_review_tools() -> frozenset[str]:
+    """The repository tools the registry grants a Claude review."""
+    arguments = get_reviewer_definition("claude").review_arguments
+    return frozenset(arguments[arguments.index("--tools") + 1].split(","))
+
+
+_CLAUDE_REPOSITORY_TOOLS = _claude_review_tools()
+# Error results the pinned CLI returns for an ordinary lookup, from captured
+# traces (tests/fixtures/claude). Every other error result counts as failed.
+_CLAUDE_BENIGN_ERRORS = ("File does not exist.",)
+
+
+def _claude_tool_result_text(block: dict[str, Any]) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            part["text"]
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
+def _claude_tool_failed(block: dict[str, Any]) -> bool:
+    if block.get("is_error") is not True:
+        return False
+    return not _claude_tool_result_text(block).startswith(_CLAUDE_BENIGN_ERRORS)
+
+
 def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     """Read the pinned Claude stream, including its observed answer fallbacks.
 
@@ -241,6 +284,13 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     and assistant text fallbacks, including an answer preceding a terminal model
     error. Only Claude's assistant content and terminal result carry answers;
     OpenCode's retired message/part/text event forms are deliberately absent.
+
+    Execution health precedes the answer (SPEC-69). Repository calls are
+    correlated by id with the CLI's own tool results and terminal
+    ``permission_denials``. A review whose init inventory lacks its repository
+    tools, or whose repository attempts all failed, is unusable. Only a result
+    without ``is_error`` or a captured benign lookup counts as healthy. Tool
+    output and answer text are never classified.
     """
     assistant_parts: list[str] = []
     result_text = ""
@@ -248,6 +298,10 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
     nonanswer_types: set[str] = set()
+    repository_calls: set[str] = set()
+    call_failed: dict[str, bool] = {}
+    denied: set[str] = set()
+    init_tools: list[Any] | None = None
     for line in stdout.splitlines():
         if not line.strip():
             continue
@@ -264,14 +318,39 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
             content = event["message"].get("content")
             if isinstance(content, list):
                 for part in content:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "tool_use"
+                        and part.get("name") in _CLAUDE_REPOSITORY_TOOLS
+                        and isinstance(part.get("id"), str)
+                    ):
+                        repository_calls.add(part["id"])
                     if not isinstance(part, dict) or not isinstance(part.get("text"), str):
                         continue
                     if part.get("type") == "text":
                         assistant_parts.append(part["text"])
                     else:
                         nonanswer_types.add(str(part.get("type")))
+        if event["type"] == "user" and isinstance(event.get("message"), dict):
+            content = event["message"].get("content")
+            for block in content if isinstance(content, list) else ():
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                    and isinstance(block.get("tool_use_id"), str)
+                ):
+                    call_failed.setdefault(block["tool_use_id"], _claude_tool_failed(block))
+        if (
+            event["type"] == "system"
+            and event.get("subtype") == "init"
+            and isinstance(event.get("tools"), list)
+        ):
+            init_tools = event["tools"]
         if event["type"] != "result":
             continue
+        for denial in event.get("permission_denials") or ():
+            if isinstance(denial, dict) and isinstance(denial.get("tool_use_id"), str):
+                denied.add(denial["tool_use_id"])
         if event.get("is_error") is True:
             stream_error = _json_preview(_terminal_error_detail(event))
             continue
@@ -280,6 +359,17 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = event["result"]
 
+    if (
+        stage == "review"
+        and init_tools is not None
+        and not {tool for tool in init_tools if isinstance(tool, str)} >= _CLAUDE_REPOSITORY_TOOLS
+    ):
+        raise AdapterModelError("Claude review started without its repository tools")
+    _require_repository_tool_health(
+        "Claude",
+        attempts=len(repository_calls),
+        failed=sum(call in denied or call_failed.get(call, True) for call in repository_calls),
+    )
     if structured_result is not None:
         sys.stderr.write(redact_text(f"ai-review: {stage} adapter used structured_output\n"))
         return structured_result
@@ -481,8 +571,7 @@ def _load_codex_stream(
             operational_failures += 1
         elif not _is_codex_builtin_call(item):
             raise SchemaValidationError(incomplete)
-    if attempts and attempts == operational_failures:
-        raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    _require_repository_tool_health("Codex", attempts=attempts, failed=operational_failures)
     if stderr_host_session_failed or _CODEX_HOST_SESSION_FAILED.search(stderr):
         # Never echo stderr: it can carry model or tool text.
         raise AdapterModelError(

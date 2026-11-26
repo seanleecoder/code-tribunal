@@ -44,6 +44,17 @@ versioning.
   `[search incomplete: some paths could not be read]` notice. An invalid pattern
   is reported as `invalid search pattern`. The Codex image gate adds verified
   read and search faults.
+- A Claude review whose repository reads all failed was admitted. A `Read` that
+  hit `EACCES` returned `is_error: true` to the model, the CLI still exited 0
+  with a valid answer, and the runner recorded `success`. The Claude codec now
+  matches each `Read`, `Grep` and `Glob` call to the CLI's own result and its
+  terminal `permission_denials`. A run whose repository calls all failed, ended
+  without a result, or returned an unrecognized error is `model_error`. A
+  missing file or a no-match search stays usable, as does one successful call
+  among failures. A review whose init inventory lacks its repository tools is
+  `model_error`. Codex and Claude share the threshold. A new unconditional
+  network-disabled Claude image gate checks reads, the verified fault and the
+  benign cases on every CLI pin bump.
 
 ### Changed
 

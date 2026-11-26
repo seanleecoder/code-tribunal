@@ -77,6 +77,29 @@ transport failures as failures:
   and searches that all time out are covered by the codec's and tool server's
   unit tests.
 
+## Claude image gate
+
+`scripts/smoke_claude_batch_output.sh <reviewer-image>` runs the real pinned
+Claude CLI through the image's own runner, registry argv and admission with
+`--network none`. Only `ANTHROPIC_BASE_URL` is redirected, to a scripted
+loopback Messages provider; no credential or paid provider is used. The stub
+sends each repository call only after the previous call's result comes back.
+The image workflow runs the gate unconditionally before image handoff.
+
+- The stock container covers `Read`, `Grep` and `Glob`. Each must return the
+  snapshot-only sentinel or file. A critique must be offered no repository tool.
+- A second container drops only `DAC_OVERRIDE` and `DAC_READ_SEARCH`.
+  - A matched `Read` control must still succeed.
+  - The fault case reads the copied sentinel at mode 000. The CLI must report
+    `EACCES: permission denied, open '<path>'` and still supply its answer.
+    The runner must record `model_error`. Each fault case first proves its
+    precondition from the runner process.
+  - A missing file, a no-match search, and a fault followed by a successful read
+    stay `success`.
+
+The [captured streams](../../ai-review/tests/fixtures/claude/README.md) behind
+the codec's benign allowlist came from the same harness.
+
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that
 already knows the tool names. A

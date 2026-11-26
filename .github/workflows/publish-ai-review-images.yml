@@ -197,6 +197,14 @@ jobs:
         shell: bash
         run: scripts/smoke_codex_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
 
+      - name: Verify Claude repository tools and execution outcomes
+        # Unconditional on PRs, including CLI pin bumps. Real pinned CLI and runner,
+        # a scripted loopback Messages provider, no secrets, --network none. A
+        # verified Read EACCES (uid 0 without DAC bypass capabilities) must leave
+        # the CLI's answer unadmitted; benign lookups and recovery stay usable.
+        shell: bash
+        run: scripts/smoke_claude_batch_output.sh "$AI_REVIEW_REVIEWER_TAG"
+
       - name: Save preflighted image artifact
         if: github.event_name != 'pull_request'
         shell: bash
