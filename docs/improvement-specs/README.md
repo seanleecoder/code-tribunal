@@ -18,7 +18,9 @@ sequence.
 
 ## Open specifications
 
-None.
+- [SPEC-69](spec-69-repository-tool-health.md): reject a review whose
+  repository-read tools all failed, uniformly across seats, and require a Candidate
+  Canary read witness from Claude, Codex and OpenCode. Five pull requests, none merged.
 
 ## Open follow-ups
 
@@ -62,6 +64,15 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | State overflow (2026-10-16) | Fix the causes; do not shed | The SPEC-52 draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | Marker `source=` (2026-10-19) | Permanently optional in the marker grammar | No longer written since 3.0.0. Threads that are never refreshed keep it indefinitely, so the reader stays. |
 | Dependency release age (2026-10-19) | No minimum release age | Renovate opens an update as soon as it is released, and manual refreshes take the latest release, including the `.pin` files. |
+
+## Repository-tool health decisions (2026-11-26)
+
+| Question | Decision | Consequence |
+|---|---|---|
+| Rejection threshold | Reject when every attempted repository call failed, had no result, or returned an unclassified error | This matches Codex's existing recovery rule. Unknown error shapes fail closed, and the image gates catch wording drift on CLI bumps. |
+| Nonzero exit | Reject every seat's nonzero exit, even with valid stdout | Claude's preceding-answer fallback applies only at exit 0. |
+| Canary witness | Blocking for Claude, Codex and OpenCode | A live model that skips the fixture read fails the panel campaign. Ordinary zero-tool reviews stay valid. |
+| Cursor coverage | Documented gap | Cursor stays opt-in with the exit rule only, and its repository reads are reported as `unverified`. |
 
 ## Maintainer scope decisions (2026-11-01)
 
