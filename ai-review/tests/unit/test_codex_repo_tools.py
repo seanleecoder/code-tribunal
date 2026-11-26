@@ -26,6 +26,11 @@ needs_non_utf8_names = pytest.mark.skipif(
 )
 
 
+needs_unprivileged = pytest.mark.skipif(
+    os.geteuid() == 0, reason="file modes do not restrict root with DAC capabilities"
+)
+
+
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch) -> Path:
     if RG is not None:
@@ -132,10 +137,7 @@ def test_grep_bounds_long_lines_and_reports_failure(repo: Path) -> None:
     (repo / "min.js").write_text("x" * 600 + "hit\n")
     text, is_error = call(repo, "grep", pattern="hit", path="min.js")
     assert not is_error and text.startswith("min.js:1:") and len(text) < 600
-    assert call(repo, "grep", pattern="value", path="missing") == (
-        "search failed; check the pattern and path",
-        True,
-    )
+    assert call(repo, "grep", pattern="value", path="missing") == ("not found: missing", True)
 
 
 @pytest.mark.parametrize(
@@ -450,3 +452,201 @@ def test_registry_renders_parseable_no_shell_configuration(tmp_path: Path, stage
     assert server["args"] == ["-I", tools.__file__, "--root", str(root)]
     assert server["required"] is True and server["default_tools_approval_mode"] == "approve"
     assert "env" not in server
+
+
+# SPEC-69: an unreadable snapshot is the server failing, not a tool-reported
+# result. Codex records a JSON-RPC error as a failed call, so a review whose
+# repository attempts all failed this way is unusable.
+
+
+def server_error(root: Path, name: str, **arguments) -> str:
+    reply = rpc(root, name, **arguments)
+    assert "result" not in reply, reply
+    assert reply["error"]["code"] == -32603
+    return reply["error"]["message"]
+
+
+@needs_unprivileged
+def test_an_unreadable_file_is_a_server_error(repo: Path) -> None:
+    (repo / "sentinel.txt").chmod(0)
+    try:
+        assert server_error(repo, "read_file", path="sentinel.txt").startswith("read failed: ")
+    finally:
+        (repo / "sentinel.txt").chmod(0o644)
+
+
+@needs_unprivileged
+@pytest.mark.parametrize("name,path", [("read_file", "pkg/module.py"), ("list_dir", "pkg")])
+def test_an_untraversable_directory_is_a_server_error(repo: Path, name: str, path: str) -> None:
+    # stat itself fails here, where is_file()/is_dir() would have reported a
+    # benign "not a file"/"not a directory".
+    (repo / "pkg").chmod(0)
+    try:
+        assert server_error(repo, name, path=path).startswith("read failed: ")
+    finally:
+        (repo / "pkg").chmod(0o755)
+
+
+@pytest.mark.parametrize("name", ["read_file", "list_dir", "grep"])
+def test_a_permission_error_at_stat_is_a_server_error(repo: Path, monkeypatch, name: str) -> None:
+    original = Path.stat
+
+    def stat(path: Path, *args, **kwargs):
+        if path.name in {"sentinel.txt", "pkg"}:
+            raise PermissionError(13, "Permission denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    target = "pkg" if name == "list_dir" else "sentinel.txt"
+    arguments = {"pattern": "x"} if name == "grep" else {}
+    assert server_error(repo, name, path=target, **arguments).startswith("read failed: ")
+
+
+def test_missing_paths_stay_tool_reported_results(repo: Path) -> None:
+    assert call(repo, "read_file", path="missing.txt") == ("not a file: missing.txt", True)
+    assert call(repo, "list_dir", path="missing") == ("not a directory: missing", True)
+    assert call(repo, "grep", pattern="x", path="missing") == ("not found: missing", True)
+
+
+def test_a_path_removed_after_its_check_stays_a_lookup_result(repo: Path, monkeypatch) -> None:
+    def vanished(*_args, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "open", vanished)
+    assert call(repo, "read_file", path="sentinel.txt") == (
+        "read failed: no such file or directory",
+        True,
+    )
+
+
+def test_overlong_and_looping_paths_stay_lookup_results(repo: Path) -> None:
+    # Both describe the requested path, not a failure to read the snapshot.
+    (repo / "loop").symlink_to("loop")
+    long_name = "x" * 300
+    assert call(repo, "read_file", path=long_name) == (f"not a file: {long_name}", True)
+    assert call(repo, "read_file", path="loop") == ("not a file: loop", True)
+
+
+def test_an_unusable_temporary_directory_is_a_server_error(repo: Path, monkeypatch) -> None:
+    # tempfile reports this as FileNotFoundError, which is not a missing path.
+    def unusable(*_args, **_kwargs):
+        raise FileNotFoundError(2, "No usable temporary directory found in ['/nonexistent']")
+
+    monkeypatch.setattr(tools.tempfile, "TemporaryFile", unusable)
+    message = server_error(repo, "grep", pattern="value")
+    assert message == "search could not create temporary file"
+
+
+def fake_rg(tmp_path: Path, monkeypatch, *, stdout: str, stderr: str, code: int) -> None:
+    script = tmp_path / "fake-rg"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"printf '%b' {json.dumps(stdout)}\n"
+        f"printf '%s\\n' {json.dumps(stderr)} >&2\n"
+        f"exit {code}\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setattr(tools, "RG", str(script))
+
+
+def test_a_no_match_search_after_an_io_error_is_a_server_error(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    fake_rg(
+        tmp_path, monkeypatch, stdout="", stderr="rg: pkg: Permission denied (os error 13)", code=2
+    )
+    message = server_error(repo, "grep", pattern="value")
+    assert message == "search found no matches but could not read some paths"
+    assert "pkg" not in message  # rg's stderr names repository paths
+
+
+def test_a_partial_search_returns_its_matches_with_a_notice(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    fake_rg(
+        tmp_path,
+        monkeypatch,
+        stdout="sentinel.txt:1:snapshot-only-value\n",
+        stderr="rg: pkg: Permission denied (os error 13)",
+        code=2,
+    )
+    text, is_error = call(repo, "grep", pattern="snapshot")
+    assert not is_error
+    assert text == f"sentinel.txt:1:snapshot-only-value\n{tools.INCOMPLETE_SEARCH_NOTE}"
+
+
+def test_an_unclassified_search_failure_without_output_fails_closed(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    fake_rg(tmp_path, monkeypatch, stdout="", stderr="rg: something unexpected", code=2)
+    assert (
+        server_error(repo, "grep", pattern="value")
+        == "search found no matches but could not read some paths"
+    )
+
+
+@needs_rg
+def test_an_invalid_pattern_stays_a_tool_reported_result(repo: Path) -> None:
+    # The pinned rg's own wording, so a rewording on a pin bump fails here.
+    assert call(repo, "grep", pattern="(") == ("invalid search pattern", True)
+
+
+@needs_rg
+@pytest.mark.parametrize("pattern", [r"value\nother", r"\w{100000}"])
+def test_every_rg_compile_error_is_an_invalid_pattern(repo: Path, pattern: str) -> None:
+    # A literal newline and the regex size limit are reported without the
+    # words "regex parse error".
+    assert call(repo, "grep", pattern=pattern) == ("invalid search pattern", True)
+
+
+@needs_rg
+@needs_unprivileged
+def test_a_path_named_like_a_pattern_error_cannot_hide_a_read_failure(repo: Path) -> None:
+    # rg's stderr names the unreadable path; it must never decide the class.
+    named = repo / "regex parse error.txt"
+    named.write_text("unrelated\n")
+    named.chmod(0)
+    try:
+        assert server_error(repo, "grep", pattern="no-such-value") == (
+            "search found no matches but could not read some paths"
+        )
+    finally:
+        named.chmod(0o644)
+
+
+def test_a_capped_search_keeps_the_incomplete_notice(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    search = tmp_path / "rg-capped"
+    search.write_text(
+        "#!/bin/sh\n"
+        "printf 'rg: pkg: Permission denied (os error 13)\\n' >&2\n"
+        "printf '123456789'\n"
+        "exec sleep 30\n"
+    )
+    search.chmod(0o755)
+    monkeypatch.setattr(tools, "RG", str(search))
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
+    monkeypatch.setattr(tools, "GREP_TIMEOUT_SECONDS", 2)
+    assert call(repo, "grep", pattern="x") == (
+        f"12345678\n[output truncated at 8 bytes]\n{tools.INCOMPLETE_SEARCH_NOTE}",
+        False,
+    )
+
+
+@needs_rg
+@needs_unprivileged
+def test_real_rg_classifies_unreadable_subtrees(repo: Path) -> None:
+    (repo / "pkg").chmod(0)
+    try:
+        text, is_error = call(repo, "grep", pattern="snapshot-only")
+        assert not is_error
+        assert text.splitlines() == [
+            "sentinel.txt:1:snapshot-only-value",
+            tools.INCOMPLETE_SEARCH_NOTE,
+        ]
+        assert server_error(repo, "grep", pattern="value = 1") == (
+            "search found no matches but could not read some paths"
+        )
+    finally:
+        (repo / "pkg").chmod(0o755)

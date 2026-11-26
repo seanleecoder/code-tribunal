@@ -18,13 +18,14 @@ Deliberately free of filesystem I/O: status and debug artifact writing lives in
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import sys
 from typing import Any
 
 from .canonical import json_loads_no_duplicates
 from .redact import redact_text
-from .reviewers import CODEX_REPO_SERVER, OutputCodec
+from .reviewers import CLAUDE_REPOSITORY_TOOLS, CODEX_REPO_SERVER, OutputCodec
 from .schema import AdapterModelError, SchemaValidationError
 
 _JSON_OPENERS = "{["
@@ -234,13 +235,91 @@ def _load_answer_json(text: str, *, stage: str) -> Any:
         ) from exc
 
 
+def require_repository_tool_health(seat: str, *, attempts: int, failed: int) -> None:
+    """Reject a run whose repository-tool attempts all failed (SPEC-69).
+
+    ``failed`` counts attempts that failed operationally, ended without a
+    result, or returned an error the pinned transport cannot classify. Any
+    success or recognized benign lookup keeps the run usable, and a run with no
+    attempt is a valid tool-free review.
+    """
+    if attempts and failed >= attempts:
+        raise AdapterModelError(f"{seat} repository-tool attempts all failed operationally")
+
+
+# Error results the pinned CLI returns for an ordinary lookup or a model's own
+# argument mistake, from captured traces (tests/fixtures/claude): a missing file
+# for Read, a missing path for Grep, a missing directory for Glob, a pattern rg
+# rejected before searching, and schema validation that runs before any I/O.
+# Every other error result counts as failed.
+_CLAUDE_BENIGN_ERRORS = (
+    "File does not exist.",
+    "Path does not exist: ",
+    "Directory does not exist: ",
+    "Search failed \u2014 ripgrep rejected the pattern, glob, or file type without searching:\n",
+    "<tool_use_error>InputValidationError: ",
+)
+
+
+def _claude_tool_result_text(block: dict[str, Any]) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            part["text"]
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
+def _claude_tool_failed(block: dict[str, Any]) -> bool:
+    if block.get("is_error") is not True:
+        return False
+    return not _claude_tool_result_text(block).startswith(_CLAUDE_BENIGN_ERRORS)
+
+
+# The pinned CLI's refusal of a path outside the directories it was granted
+# (tests/fixtures/claude/read-outside.json). It is benign only for a denied call
+# whose path lies outside the review root, which is the CLI's working directory.
+_CLAUDE_REFUSAL_PREFIX = "Claude requested permissions to read from "
+_CLAUDE_REFUSAL_SUFFIX = ", but you haven't granted it yet."
+
+
+def _claude_refused_path(block: dict[str, Any]) -> str | None:
+    """The absolute path a refusal result names, or None for any other result."""
+    if block.get("is_error") is not True:
+        return None
+    text = _claude_tool_result_text(block)
+    if not (text.startswith(_CLAUDE_REFUSAL_PREFIX) and text.endswith(_CLAUDE_REFUSAL_SUFFIX)):
+        return None
+    path = text[len(_CLAUDE_REFUSAL_PREFIX) : -len(_CLAUDE_REFUSAL_SUFFIX)]
+    return path if path.startswith("/") and "\n" not in path else None
+
+
+def _outside_root(path: str, root: str) -> bool:
+    """Whether ``path`` lies lexically outside ``root``; never for the root ``/``."""
+    root, path = posixpath.normpath(root), posixpath.normpath(path)
+    return root != "/" and path != root and not path.startswith(root + "/")
+
+
 def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     """Read the pinned Claude stream, including its observed answer fallbacks.
 
     Schema steering can omit structured_output. Keep the terminal result text
     and assistant text fallbacks, including an answer preceding a terminal model
-    error. Only Claude's assistant content and terminal result carry answers;
+    error in a stream whose CLI exited 0; the runner rejects a nonzero exit
+    before this codec runs. Only Claude's assistant content and terminal result carry answers;
     OpenCode's retired message/part/text event forms are deliberately absent.
+
+    Execution health precedes the answer (SPEC-69). Repository calls are
+    correlated by id with the CLI's own tool results and terminal
+    ``permission_denials``. A review whose init inventory lacks its repository
+    tools, or whose repository attempts all failed, is unusable. Only a result
+    without ``is_error``, a captured benign lookup, or the captured refusal of a
+    path outside the review root counts as healthy. Tool output and answer text
+    are never classified.
     """
     assistant_parts: list[str] = []
     result_text = ""
@@ -248,6 +327,12 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     stream_error: str | None = None
     structured_result: dict[str, Any] | list[Any] | None = None
     nonanswer_types: set[str] = set()
+    repository_calls: set[str] = set()
+    call_failed: dict[str, bool] = {}
+    refused_paths: dict[str, str | None] = {}
+    denied: dict[str, object] = {}
+    init_tools: list[Any] | None = None
+    init_cwd: str | None = None
     for line in stdout.splitlines():
         if not line.strip():
             continue
@@ -264,14 +349,43 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
             content = event["message"].get("content")
             if isinstance(content, list):
                 for part in content:
-                    if not isinstance(part, dict) or not isinstance(part.get("text"), str):
+                    if not isinstance(part, dict):
+                        continue
+                    if (
+                        part.get("type") == "tool_use"
+                        and part.get("name") in CLAUDE_REPOSITORY_TOOLS
+                        and isinstance(part.get("id"), str)
+                    ):
+                        repository_calls.add(part["id"])
+                    if not isinstance(part.get("text"), str):
                         continue
                     if part.get("type") == "text":
                         assistant_parts.append(part["text"])
                     else:
                         nonanswer_types.add(str(part.get("type")))
+        if event["type"] == "user" and isinstance(event.get("message"), dict):
+            content = event["message"].get("content")
+            for block in content if isinstance(content, list) else ():
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                    and isinstance(block.get("tool_use_id"), str)
+                ):
+                    call_failed.setdefault(block["tool_use_id"], _claude_tool_failed(block))
+                    refused_paths.setdefault(block["tool_use_id"], _claude_refused_path(block))
+        if (
+            event["type"] == "system"
+            and event.get("subtype") == "init"
+            and isinstance(event.get("tools"), list)
+        ):
+            init_tools = event["tools"]
+            cwd = event.get("cwd")
+            init_cwd = cwd if isinstance(cwd, str) and cwd.startswith("/") else None
         if event["type"] != "result":
             continue
+        for denial in event.get("permission_denials") or ():
+            if isinstance(denial, dict) and isinstance(denial.get("tool_use_id"), str):
+                denied.setdefault(denial["tool_use_id"], denial.get("tool_name"))
         if event.get("is_error") is True:
             stream_error = _json_preview(_terminal_error_detail(event))
             continue
@@ -280,6 +394,37 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = event["result"]
 
+    # A review answer needs the CLI's own init inventory with every repository
+    # tool (SPEC-69 rule 2). Answerless streams keep their own errors below.
+    has_answer = structured_result is not None or bool(
+        result_text.strip() or "".join(assistant_parts).strip()
+    )
+    if stage == "review" and (
+        not all(tool in init_tools for tool in CLAUDE_REPOSITORY_TOOLS)
+        if init_tools is not None
+        else has_answer
+    ):
+        raise AdapterModelError("Claude review started without its repository tools")
+
+    def outside_root_refusal(call: str) -> bool:
+        path = refused_paths.get(call)
+        return (
+            denied[call] in CLAUDE_REPOSITORY_TOOLS
+            and path is not None
+            and init_cwd is not None
+            and _outside_root(path, init_cwd)
+        )
+
+    # A denied call fails unless it is the captured refusal of a path outside
+    # the review root; every other denial, including an in-root one, fails.
+    require_repository_tool_health(
+        "Claude",
+        attempts=len(repository_calls),
+        failed=sum(
+            not outside_root_refusal(call) if call in denied else call_failed.get(call, True)
+            for call in repository_calls
+        ),
+    )
     if structured_result is not None:
         sys.stderr.write(redact_text(f"ai-review: {stage} adapter used structured_output\n"))
         return structured_result
@@ -368,13 +513,13 @@ def _load_codex_stream(
     stdout: str,
     *,
     stage: str,
-    returncode: int,
     stderr: str,
     stderr_host_session_failed: bool = False,
 ) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
-    Codex runs without a shell, so a command item is outside the contract.
+    The runner has already rejected a nonzero CLI exit, as it does for every
+    seat. Codex runs without a shell, so a command item is outside the contract.
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
     call itself failed, including a server-side search failure. A built-in
@@ -389,8 +534,6 @@ def _load_codex_stream(
     tests/fixtures/codex and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
-    if returncode:
-        raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
     thread_started = turn_started = turn_completed = reconnected = False
     active: dict[str, dict[str, Any]] = {}
     finished: set[str] = set()
@@ -483,8 +626,7 @@ def _load_codex_stream(
             operational_failures += 1
         elif not _is_codex_builtin_call(item):
             raise SchemaValidationError(incomplete)
-    if attempts and attempts == operational_failures:
-        raise AdapterModelError("Codex repository-tool attempts all failed operationally")
+    require_repository_tool_health("Codex", attempts=attempts, failed=operational_failures)
     if stderr_host_session_failed or _CODEX_HOST_SESSION_FAILED.search(stderr):
         # Never echo stderr: it can carry model or tool text.
         raise AdapterModelError(
@@ -493,12 +635,41 @@ def _load_codex_stream(
     return _load_answer_json(answer, stage=stage)
 
 
+def _last_claude_result(stdout: str) -> dict[str, Any] | None:
+    """The stream's last terminal result event; malformed lines are skipped."""
+    for line in reversed(stdout.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            return event
+    return None
+
+
+def adapter_exit_message(codec: OutputCodec, *, returncode: int, stdout: str, stderr: str) -> str:
+    """The published diagnostic for a nonzero launcher exit; never an admission path.
+
+    Claude reports provider, auth and credit failures in its terminal
+    ``is_error`` result, usually with empty stderr. Once a Codex stream has
+    started, its stderr can carry model or tool text, so it gets a fixed
+    message; before any output, stderr is the launcher's own diagnostic.
+    """
+    if codec == "claude_stream_json":
+        terminal = _last_claude_result(stdout)
+        if terminal is not None and terminal.get("is_error") is True:
+            detail = _json_preview(_terminal_error_detail(terminal))
+            return f"adapter exited {returncode}: {detail}"
+    elif codec == "codex_stream_json" and stdout.strip():
+        return f"Codex exited {returncode}; reviewer output is not usable"
+    return stderr or f"adapter exited {returncode}"
+
+
 def _load_adapter_json(
     stdout: str,
     *,
     codec: OutputCodec,
     stage: str,
-    returncode: int = 0,
     stderr: str = "",
     stderr_host_session_failed: bool = False,
 ) -> dict[str, Any]:
@@ -511,7 +682,6 @@ def _load_adapter_json(
         raw = _load_codex_stream(
             stdout,
             stage=stage,
-            returncode=returncode,
             stderr=stderr,
             stderr_host_session_failed=stderr_host_session_failed,
         )

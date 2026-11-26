@@ -61,6 +61,13 @@ transport failures as failures:
   snapshot bytes are unchanged, checked independently by the trusted parent.
   The code-mode and direct tool sets are pinned, and `ALL_TOOLS` must list the
   repository tools, because Codex defers MCP tools in code mode.
+- Verified filesystem faults run in a second container that drops only
+  `DAC_OVERRIDE` and `DAC_READ_SEARCH`. The copied sentinel is mode 000, and each
+  case first proves that precondition from the runner process. A failed read or
+  search must reach the stream as a failed call (an item `error`, not a
+  tool-reported result). A run whose attempts all failed this way is unusable
+  even though the stub answers. A later successful call recovers the run. An
+  invalid search pattern stays a tool-reported result.
 - Negative controls: a terminal provider failure, a missing code-mode host
   (named from Codex's startup item), an unavailable tool server, and a
   credential in the tool server's environment all yield unusable outcomes. The
@@ -69,6 +76,35 @@ transport failures as failures:
   them. Malformed and truncated streams, a host that fails to open a session,
   and searches that all time out are covered by the codec's and tool server's
   unit tests.
+
+## Claude image gate
+
+`scripts/smoke_claude_batch_output.sh <reviewer-image>` runs the real pinned
+Claude CLI through the image's own runner, registry argv and admission with
+`--network none`. Only `ANTHROPIC_BASE_URL` is redirected, to a scripted
+loopback Messages provider; no credential or paid provider is used. The stub
+sends each repository call only after the previous call's result comes back.
+The image workflow runs the gate unconditionally before image handoff.
+
+- The stock container covers `Read`, `Grep` and `Glob`. Each must return the
+  snapshot-only sentinel or file. A critique must be offered no repository tool.
+- A second container drops only `DAC_OVERRIDE` and `DAC_READ_SEARCH`.
+  - A matched `Read` control must still succeed.
+  - The fault case reads the copied sentinel at mode 000. The CLI must report
+    `EACCES: permission denied, open '<path>'` and still supply the scripted
+    answer in a non-error terminal result. The runner must record
+    `model_error` with its repository-tool health diagnostic. Each fault case
+    first proves its precondition from the runner process.
+  - These stay `success`:
+    - a missing file, a no-match search, and `Grep` or `Glob` on a missing path;
+    - an outside-root `Read` refusal;
+    - an invalid `Grep` pattern and an invalid `Read` input;
+    - a fault followed by a successful read.
+- The wrapper's scratch is a container-local tmpfs, so a rootful daemon leaves
+  nothing on the host.
+
+The [captured streams](../../ai-review/tests/fixtures/claude/README.md) behind
+the codec's benign allowlist came from the same harness.
 
 Local Termux runs exercise the codec and driver logic, not Linux image
 acceptance. The image gate proves the tool path with a scripted model that

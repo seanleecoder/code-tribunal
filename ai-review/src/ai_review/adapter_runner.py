@@ -18,6 +18,7 @@ from .adapter_artifacts import (
 from .adapter_output import (
     _load_adapter_json,
     _stderr_failure_pattern,
+    adapter_exit_message,
 )
 from .adapter_process import (
     AdapterOutputLimitError,
@@ -221,12 +222,23 @@ def run_adapter(reviewer: str, stage: str) -> int:
             sys.stderr.write(result.stderr)
         if prompt_tmp is not None:
             prompt_tmp.unlink(missing_ok=True)
-        if result.returncode != 0 and not result.stdout.strip():
-            stderr_text = result.stderr or f"adapter exited {result.returncode}"
+        if result.returncode != 0:
+            # Execution health precedes content for every seat: a launcher that
+            # exits nonzero is unusable even when its stdout parses as a batch
+            # (SPEC-69). Keep any output for diagnosis, never for admission.
+            if result.stdout.strip():
+                _write_parse_debug(
+                    output_dir, reviewer, stage, result.stdout, result.stderr, kind="exit"
+                )
             return _fail(
                 "model_error",
                 error_class="AdapterExit",
-                error_message=stderr_text,
+                error_message=adapter_exit_message(
+                    reviewer_definition.output_codec,
+                    returncode=result.returncode,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                ),
             )
 
         try:
@@ -234,7 +246,6 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 result.stdout,
                 codec=reviewer_definition.output_codec,
                 stage=stage,
-                returncode=result.returncode,
                 stderr=result.stderr,
                 stderr_host_session_failed=result.stderr_matched,
             )

@@ -16,12 +16,16 @@ It refuses credentials and other unexpected variables at startup.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any
 
@@ -35,6 +39,8 @@ MAX_MATCH_CHARS = 500
 # generated code) does not spend the whole output budget.
 MAX_MATCHES_PER_FILE = 50
 GREP_TIMEOUT_SECONDS = 20
+INCOMPLETE_SEARCH_NOTE = "[search incomplete: some paths could not be read]"
+VANISHED = "read failed: no such file or directory"
 RG = "/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
 # Codex forwards DEFAULT_ENV_VARS and CUSTOM_CA_ENV_KEYS to local stdio MCP.
@@ -116,8 +122,42 @@ class ServerError(Exception):
     """The server could not run a call; returned as a JSON-RPC error.
 
     Codex then records the call itself as failed, so a review whose repository
-    attempts all failed this way is rejected rather than admitted.
+    attempts all failed this way is rejected rather than admitted. Filesystem
+    and search failures take this path; a missing path does not (SPEC-69).
     """
+
+
+# Errors that describe the requested path itself, not the server's ability to
+# read the snapshot: it is missing, crosses a file, is too long, or loops.
+_LOOKUP_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG, errno.ELOOP})
+
+
+def _stat(path: Path) -> os.stat_result | None:
+    """Stat ``path``; None only when the path itself cannot name an entry.
+
+    ``Path.is_file()`` and ``is_dir()`` return False for any OSError, which would
+    report an unreadable path as an ordinary "not a file". Every other failure
+    propagates and becomes a server error.
+    """
+    try:
+        return path.stat()
+    except OSError as exc:
+        if exc.errno in _LOOKUP_ERRNOS:
+            return None
+        raise
+
+
+def _open_lookup[T](open_entry: Callable[[], T]) -> T:
+    """Open a checked entry; one removed since its check is an ordinary lookup.
+
+    Any other failure is the server's and reaches call_tool as a server error.
+    """
+    try:
+        return open_entry()
+    except OSError as exc:
+        if exc.errno not in _LOOKUP_ERRNOS:
+            raise
+        raise ToolError(VANISHED) from exc
 
 
 def contained(root: Path, requested: Any) -> Path:
@@ -160,11 +200,12 @@ def _positive(arguments: dict[str, Any], name: str, default: int) -> int:
 
 def read_file(root: Path, arguments: dict[str, Any]) -> str:
     path = contained(root, arguments.get("path"))
-    if not path.is_file():
+    status = _stat(path)
+    if status is None or not stat.S_ISREG(status.st_mode):
         raise ToolError(f"not a file: {_relative(root, path)}")
     start = _positive(arguments, "start_line", 1)
     count = _positive(arguments, "max_lines", DEFAULT_MAX_LINES)
-    with path.open("rb") as handle:
+    with _open_lookup(lambda: path.open("rb")) as handle:
         data = handle.read(min(8192, MAX_FILE_BYTES + 1))
         if b"\x00" in data:
             raise ToolError(f"binary file: {_relative(root, path)}")
@@ -211,9 +252,10 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
 
 def list_dir(root: Path, arguments: dict[str, Any]) -> str:
     path = contained(root, arguments.get("path"))
-    if not path.is_dir():
+    status = _stat(path)
+    if status is None or not stat.S_ISDIR(status.st_mode):
         raise ToolError(f"not a directory: {_relative(root, path)}")
-    with os.scandir(path) as entries:
+    with _open_lookup(lambda: os.scandir(path)) as entries:
         names = sorted(
             _text(e.name) + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries
         )
@@ -238,7 +280,11 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # A process argument cannot hold NUL; Popen would raise and end the server.
         raise ToolError("pattern must not contain NUL")
     target = contained(root, arguments.get("path"))
-    if target.is_file() and target.stat().st_size > MAX_FILE_BYTES:
+    status = _stat(target)
+    if status is None:
+        raise ToolError(f"not found: {_relative(root, target)}")
+    is_dir = stat.S_ISDIR(status.st_mode)
+    if stat.S_ISREG(status.st_mode) and status.st_size > MAX_FILE_BYTES:
         raise ToolError(
             f"file exceeds {MAX_FILE_BYTES}-byte search limit: {_relative(root, target)}"
         )
@@ -260,7 +306,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         "--max-columns",
         str(MAX_MATCH_CHARS),
         "--max-columns-preview",
-        *(("--max-count", str(MAX_MATCHES_PER_FILE)) if target.is_dir() else ()),
+        *(("--max-count", str(MAX_MATCHES_PER_FILE)) if is_dir else ()),
         "--regexp",
         pattern,
         "--",
@@ -269,13 +315,72 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         operand = target.relative_to(root).as_posix()
         # rg reads stdin for a bare "-" operand, even after "--".
         argv.append("./-" if operand == "-" else operand)
+    # A file, not a pipe: rg can write many errors and must never block on them.
+    # Its text names repository paths, so only whether it is empty is ever used.
+    with _error_file() as errors:
+        data, returncode, stopped_at_cap, timed_out = _run_search(argv, root, errors)
+        reported_errors = errors.seek(0, os.SEEK_END) > 0
+    # The timer can also fire while wait() reaps a search that already exited;
+    # only a search its kill actually ended timed out.
+    if timed_out and returncode == -signal.SIGKILL:
+        raise ServerError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
+    if returncode < 0 and not (stopped_at_cap and returncode == -signal.SIGKILL):
+        raise ServerError(f"search terminated by signal {-returncode}")
+    text = _bounded(data.decode("utf-8", errors="replace"))
+    # rg exits 1 for no match and 2 for an error, possibly after partial results.
+    if returncode in (0, 1) or (stopped_at_cap and not reported_errors):
+        return text
+    if data:
+        # Real matches were found, so the call succeeded, but its coverage is
+        # partial. A capped search keeps its truncation marker before the notice.
+        return text.removesuffix("\n") + "\n" + INCOMPLETE_SEARCH_NOTE
+    if not _pattern_compiles(pattern):
+        raise ToolError("invalid search pattern")
+    # Never echo rg's stderr: it names repository paths.
+    raise ServerError("search found no matches but could not read some paths")
+
+
+def _error_file() -> IO[bytes]:
+    """A temporary file for rg's stderr; failing to create one is the server's fault."""
+    try:
+        return tempfile.TemporaryFile()
+    except OSError as exc:
+        # Never a lookup, and never echo the temporary-directory candidates.
+        raise ServerError("search could not create temporary file") from exc
+
+
+def _pattern_compiles(pattern: str) -> bool:
+    """Whether rg accepts ``pattern``, decided without touching the snapshot.
+
+    rg searches only empty stdin here, so its diagnostics cannot name a
+    repository path. Every rg compile error (parse error, a literal newline, the
+    size limit) mentions ``regex``; any other failure is not a pattern problem.
+    """
+    try:
+        probe = subprocess.run(
+            [RG, "--no-config", "--regexp", pattern, "--", "-"],
+            cwd="/",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout=GREP_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return True  # Not shown to be a pattern error: the search failure stands.
+    return not (probe.returncode == 2 and b"regex" in probe.stderr)
+
+
+def _run_search(argv: list[str], root: Path, errors: IO[bytes]) -> tuple[bytes, int, bool, bool]:
+    """Run one bounded search; return output, exit, whether capped, whether timed out."""
     try:
         process = subprocess.Popen(
             argv,
             cwd=root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=errors,
             env={"PATH": "/usr/bin:/bin"},
         )
     except OSError as exc:
@@ -314,16 +419,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         finally:
             if process.stdout is not None:
                 process.stdout.close()
-    # The timer can also fire while wait() reaps a search that already exited;
-    # only a search its kill actually ended timed out.
-    if timed_out and returncode == -signal.SIGKILL:
-        raise ServerError(f"search timed out after {GREP_TIMEOUT_SECONDS} seconds")
-    if returncode < 0 and not (stopped_at_cap and returncode == -signal.SIGKILL):
-        raise ServerError(f"search terminated by signal {-returncode}")
-    # rg exits 1 for no match; 2 can accompany partial results (unreadable files).
-    if not data and returncode not in (0, 1):
-        raise ToolError("search failed; check the pattern and path")
-    return _bounded(data.decode("utf-8", errors="replace"))
+    return data, returncode, stopped_at_cap, timed_out
 
 
 HANDLERS = {"read_file": read_file, "list_dir": list_dir, "grep": grep}
@@ -341,7 +437,9 @@ def call_tool(root: Path, params: dict[str, Any]) -> dict[str, Any]:
     except ToolError as exc:
         text, is_error = str(exc), True
     except OSError as exc:
-        text, is_error = f"read failed: {exc.strerror or type(exc).__name__}", True
+        # Permission, I/O and resource failures are the server failing to read
+        # the snapshot, not a tool-reported result (SPEC-69).
+        raise ServerError(f"read failed: {exc.strerror or type(exc).__name__}") from exc
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 

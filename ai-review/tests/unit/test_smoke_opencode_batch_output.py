@@ -159,3 +159,56 @@ def test_both_image_gates_are_unconditional_and_network_disabled() -> None:
         start = workflow.rindex("      - name:", 0, workflow.index(marker))
         assert "if:" not in workflow[start : workflow.index(marker)]
         assert workflow.index(marker) < workflow.index("Save preflighted image artifact")
+
+
+def test_tool_parts_are_collected_once_across_recorded_pages(capsys) -> None:
+    part = {"type": "tool", "id": "call_1", "name": "grep", "state": {"status": "error"}}
+    page = {"data": [{"id": "msg_1", "type": "assistant", "content": [part, {"type": "text"}]}]}
+    line = "OPENCODE_V2_EVIDENCE " + json.dumps({"path": "api/session/x/message", "response": page})
+    stderr = "\n".join([line, line, "OPENCODE_V2_EVIDENCE " + json.dumps({"startup": {}}), "noise"])
+    assert smoke._tool_parts(stderr) == [part]
+    assert "OPENCODE_TOOL_PARTS" in capsys.readouterr().out
+
+
+def test_tool_health_cases_run_in_order_and_faults_in_their_own_container() -> None:
+    source = SCRIPT.read_text()
+    main = source[source.index("def main() -> int:") :]
+    faults = main.index("_prove_operational_tool_failure_is_rejected()")
+    order = [
+        "_prove_external_and_mutation_denial()",
+        "_prove_benign_tool_outcomes()",
+        "_prove_rg_execution_and_credential_scrubbing()",
+    ]
+    assert [main.index(call) for call in order] == sorted(main.index(call) for call in order)
+    # The fault case runs only under --faults, which returns before the suite.
+    assert main.index('if sys.argv[1:] == ["--faults"]:') < faults < main.index(order[0])
+    wrapper = (ROOT / "scripts" / "smoke_opencode_batch_output.sh").read_text()
+    assert "set -- --cap-drop DAC_OVERRIDE --cap-drop DAC_READ_SEARCH\n" in wrapper
+    assert wrapper.rstrip().endswith("run_driver suite\nrun_driver faults")
+
+
+def test_read_control_without_its_tool_result_fails_with_a_diagnostic() -> None:
+    # The client answered, but the provider never received the read's result.
+    stub = mock.MagicMock()
+    stub.__enter__.return_value = stub
+    stub.requests = [{"model": smoke.PROBE_MODEL}]
+    with (
+        mock.patch.object(smoke, "_StubProvider", return_value=stub),
+        mock.patch.object(
+            smoke, "_run_client", return_value=(0, json.dumps(smoke.probe_batch("review")), "")
+        ),
+        pytest.raises(SystemExit, match="capability-matched read control failed"),
+    ):
+        smoke._prove_operational_tool_failure_is_rejected()
+
+
+def test_fault_precondition_is_read_from_the_client_process() -> None:
+    stderr = "noise\nOPENCODE_FAULT " + json.dumps(
+        {"mode": 0, "dac_override": False, "dac_read_search": False}
+    )
+    assert smoke._fault_precondition(stderr) == {
+        "mode": 0,
+        "dac_override": False,
+        "dac_read_search": False,
+    }
+    assert smoke._fault_precondition("noise") == {}

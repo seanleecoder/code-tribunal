@@ -48,12 +48,28 @@ RUNNER = r"""
 import json, sys
 from pathlib import Path
 from ai_review import adapter_runner as runner
-url, capture_path, workspace_path, overrides, retries = sys.argv[2:7]
+url, capture_path, workspace_path, overrides, retries, fault = sys.argv[2:8]
 original_prepare = runner.prepare_shell_adapter
 prepared = {}
+def cap_eff():
+    for line in Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("CapEff:"):
+            return int(line.split()[1], 16)
+    return None
 def prepare(definition, stage, env):
     env["OPENROUTER_BASE_URL"] = url
     arguments, prepared["root"] = original_prepare(definition, stage, env)
+    if fault == "1":
+        # Fault cases only: this arm's own copied snapshot, after preparation.
+        # Recorded here, in the process the CLI inherits from, so the case can
+        # prove the file is unreadable rather than assume it.
+        sentinel = Path(prepared["root"]) / "sentinel.txt"
+        sentinel.chmod(0)
+        caps = cap_eff()
+        Path(workspace_path).with_name("fault.json").write_text(json.dumps({
+            "mode": sentinel.stat().st_mode & 0o7777,
+            "dac_override": None if caps is None else bool(caps >> 1 & 1),
+            "dac_read_search": None if caps is None else bool(caps >> 2 & 1)}))
     # Bound retries so a failed stub cannot turn into an unbounded CI job.
     arguments += ["-c", "model_providers.openrouter.request_max_retries=0",
                   "-c", f"model_providers.openrouter.stream_max_retries={retries}"]
@@ -69,7 +85,11 @@ def record(*args, **kwargs):
     files = {}
     for name in ("example.py", "sentinel.txt"):
         path = Path(prepared["root"]) / name
-        files[name] = path.read_bytes().hex() if path.is_file() and not path.is_symlink() else None
+        regular = path.is_file() and not path.is_symlink()
+        try:
+            files[name] = path.read_bytes().hex() if regular else None
+        except PermissionError:
+            files[name] = None  # the fault cases' unreadable sentinel
     Path(workspace_path).write_text(json.dumps({"files_after_cli": files}))
     Path(capture_path).write_text(json.dumps({"stdout": result.stdout,
         "stderr": result.stderr, "returncode": result.returncode}))
@@ -250,6 +270,28 @@ def exec_description(request: dict) -> str:
     )
 
 
+def item_errors(stdout: str) -> list[dict]:
+    """Repository calls the CLI itself recorded as failed (a set ``error``)."""
+    failed = []
+    for line in stdout.split("\n"):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "mcp_tool_call"
+            and item.get("server") == "repo"
+            and item.get("error") is not None
+        ):
+            failed.append(item)
+    return failed
+
+
 def probe_batch(stage: str) -> dict:
     if stage == "critique":
         return {"critiques": []}
@@ -391,6 +433,7 @@ def run_case(
     expect_text: str | None = None,
     expect_error: str | None = None,
     results: list[tuple[bool, str]] | None = None,
+    fault: bool = False,
 ) -> dict:
     # Deferred: main() puts the install root's package on sys.path first.
     from ai_review.adapter_artifacts import _output_file  # noqa: PLC0415
@@ -458,6 +501,7 @@ def run_case(
                 json.dumps(overrides or []),
                 # One stream retry is enough for the dropped-stream case.
                 str(int(drop_first_stream)),
+                str(int(fault)),
             ],
             env={
                 **ca_environment,
@@ -517,6 +561,13 @@ def run_case(
         ),
         flush=True,
     )
+    if fault:
+        precondition = json.loads((work / "fault.json").read_text())
+        if precondition != {"mode": 0, "dac_override": False, "dac_read_search": False}:
+            raise AssertionError(f"{label}: fault precondition not met: {precondition}")
+        if not item_errors(capture["stdout"]):
+            # The server's JSON-RPC error must reach the stream as a failed call.
+            raise AssertionError(f"{label}: the CLI did not expose the read failure")
     if outcome["adapter_status"] != expected_status or (result.returncode == 0) != (
         expected_status == "success"
     ):
@@ -585,7 +636,6 @@ def run_case(
             capture["stdout"],
             codec=get_reviewer_definition("codex").output_codec,
             stage=stage,
-            returncode=capture["returncode"],
             stderr=capture["stderr"],
         )
         if raw != batch:
@@ -701,6 +751,16 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     add(directory, "search", REQUIRED_MODEL, steps=search, sentinel=sentinel, results=found)
     no_match = [mcp_call("grep", {"pattern": "no-such-match"})]
     add(directory, "no-match", REQUIRED_MODEL, steps=no_match, empty=True, results=[(False, "")])
+    # An invalid pattern is the model's mistake, reported by the tool, not a failure.
+    bad_pattern = [mcp_call("grep", {"pattern": "("})]
+    add(
+        directory,
+        "bad-pattern",
+        REQUIRED_MODEL,
+        steps=bad_pattern,
+        empty=True,
+        results=[(True, "invalid search pattern")],
+    )
     # A tool-reported error is a usable result, not an unusable runtime.
     reported = "not a file: missing.txt"
     add(
@@ -746,13 +806,48 @@ def suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
     return cases
 
 
+def fault_suite(install: Path, scratch: Path) -> list[tuple[str, Callable]]:
+    """Verified filesystem faults; run as uid 0 without DAC bypass capabilities.
+
+    The sentinel in each arm's copied snapshot is mode 000, so the server's
+    read and search really fail. A wholly failed run is unusable even though the
+    stub still supplies a valid answer; one successful call recovers it.
+    """
+    read = mcp_call("read_file", {"path": "sentinel.txt"})
+    search = mcp_call("grep", {"pattern": "^[0-9a-f]{48}$"})
+    cases: list[tuple[str, Callable]] = []
+
+    def add(label: str, steps: list[str], expected_status: str, **options: Any) -> None:
+        run = partial(
+            run_case,
+            install,
+            scratch,
+            label,
+            REQUIRED_MODEL,
+            steps=steps,
+            empty=True,
+            fault=True,
+            expected_status=expected_status,
+            **options,
+        )
+        cases.append((f"faults/{label}", run))
+
+    failed = "attempts all failed operationally"
+    add("read", [read], "model_error", expect_error=failed)
+    add("search", [search], "model_error", expect_error=failed)
+    add("recovered", [read, mcp_call("list_dir", {})], "success")
+    return cases
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-root", type=Path, default=Path("/opt/ai-review"))
     parser.add_argument("--scratch", type=Path, default=Path("/smoke/codex"))
+    parser.add_argument("--faults", action="store_true", help="run only the filesystem fault cases")
     args = parser.parse_args()
     sys.path.insert(0, str(args.install_root / "src"))
-    return run_cases(suite(args.install_root, args.scratch), args.scratch)
+    cases = (fault_suite if args.faults else suite)(args.install_root, args.scratch)
+    return run_cases(cases, args.scratch)
 
 
 if __name__ == "__main__":

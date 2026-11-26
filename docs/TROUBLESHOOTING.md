@@ -31,7 +31,10 @@ credentials or sensitive model content into issues.
 ## Reviewer status meanings
 
 - `model_error`: provider/CLI call failed, credential is absent, or endpoint/model
-  validation rejected input.
+  validation rejected input. A reviewer launcher that exits nonzero is
+  `model_error` with `AdapterExit` even when its stdout holds a valid batch.
+  For Claude the message names the CLI's terminal error. For Codex after its
+  stream started it is a fixed message; read the `exit` debug pair for stderr.
 - `schema_error`: model output could not satisfy the structured contract.
 - `timeout`: the complete process group exceeded the stage-specific timeout:
   `reviewers.<name>.timeout_seconds` for review or
@@ -80,7 +83,9 @@ reviewer ID for review and `critique-<reviewer>` for critique:
   stream can be replayed or reused as a test fixture directly.
 
 Timeouts write the same pair with `timeout` instead of `parse` in the names,
-preserving output emitted before the process group was killed. Temporary capture
+preserving output emitted before the process group was killed. A nonzero
+launcher exit with output writes the pair with `exit`; that output is kept for
+diagnosis and is never admitted. Temporary capture
 files are never uploaded as artifacts.
 
 A `schema_error` whose message names the *model* rather than the output — for

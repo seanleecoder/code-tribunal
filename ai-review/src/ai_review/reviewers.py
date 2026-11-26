@@ -81,6 +81,8 @@ def _definition(
 
 # The MCP server name the Codex codec admits tool calls from.
 CODEX_REPO_SERVER = "repo"
+# The repository tools a Claude review is granted; its codec checks them.
+CLAUDE_REPOSITORY_TOOLS = ("Read", "Grep", "Glob")
 _CODEX_REPO_CONFIG = f"--config=mcp_servers.{CODEX_REPO_SERVER}"
 
 # Stable (or deprecated, still default-on) feature flags of the pinned Codex
@@ -114,7 +116,7 @@ REVIEWERS: Mapping[str, ReviewerDefinition] = MappingProxyType(
                 "--json-schema",
                 "{schema_json}",
             ),
-            review_arguments=("--add-dir", "{root}", "--tools", "Read,Grep,Glob"),
+            review_arguments=("--add-dir", "{root}", "--tools", ",".join(CLAUDE_REPOSITORY_TOOLS)),
             critique_arguments=("--tools", ""),
             # --bare cannot authenticate through OpenRouter's Anthropic route.
             # The safe-mode flag and explicit stage tool lists are intentional.

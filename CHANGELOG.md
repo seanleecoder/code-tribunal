@@ -29,6 +29,51 @@ versioning.
   rather than discarding the completed review. An unconditional network-disabled real-CLI
   image gate guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
   exact-pair canary; existing v3.1.0 tags and digests remain immutable.
+- A Claude, OpenCode or Cursor reviewer that exited nonzero after printing a
+  valid batch was admitted as a successful review. Every seat's nonzero launcher
+  exit is now `model_error` (`AdapterExit`), whatever its stdout; the output is
+  kept as an `exit` debug pair for diagnosis only. Codex already behaved this
+  way, and its codec no longer repeats the check. The message names Claude's
+  terminal error, such as a provider or auth failure. Once a Codex stream has
+  started it reads `Codex exited N; reviewer output is not usable`, because
+  Codex stderr can then carry model or tool text; before any output it keeps
+  the launcher's own stderr.
+- Codex's repository tool server reported unreadable files and directories,
+  including failures swallowed by its file-type checks, as ordinary tool
+  results, so a Codex review that could read nothing was admitted. Permission,
+  I/O and other filesystem failures are now server errors that Codex records as
+  failed calls; missing paths stay tool-reported. A search that returned no
+  matches after an I/O error fails the same way. A search that found matches despite
+  unreadable paths returns them with a
+  `[search incomplete: some paths could not be read]` notice, including one
+  stopped at the output cap. An invalid pattern is reported as
+  `invalid search pattern`, decided by rechecking the pattern alone so that
+  repository paths in rg's errors never affect the result. The Codex image gate adds verified
+  read and search faults.
+- A Claude review whose repository reads all failed was admitted. A `Read` that
+  hit `EACCES` returned `is_error: true` to the model, the CLI still exited 0
+  with a valid answer, and the runner recorded `success`. The Claude codec now
+  matches each `Read`, `Grep` and `Glob` call to the CLI's own result and its
+  terminal `permission_denials`. A run whose repository calls all failed, ended
+  without a result, or returned an unrecognized error is `model_error`. A
+  missing file, a `Grep` or `Glob` on a missing path, a no-match search, a
+  pattern rg rejects before searching, an `InputValidationError`, or the CLI's
+  refusal of a path outside the review root stays usable, as does one
+  successful call among failures. A refusal inside the review root fails. A
+  review whose init inventory is missing or lacks its repository tools is
+  `model_error`. Codex and Claude share the threshold. A new unconditional
+  network-disabled Claude image gate checks reads, the verified fault and the
+  benign cases on every CLI pin bump.
+- An OpenCode review whose repository tools all failed was admitted. The client
+  read only the final answer and discarded the session's tool parts. It now
+  classifies every `read`, `grep` and `glob` part between the admitted prompt
+  and the answer, across pages. It fails without emitting a batch when they all
+  failed, ended unresolved, or reported an unrecognized error. Completed calls,
+  refused outside paths and captured benign lookups, including `grep` and
+  `glob` on a missing directory, stay usable. An unreadable directory fails. The OpenCode
+  image gate adds benign cases and a verified unreadable-file fault that the
+  session survives. OpenCode reports a failing rg as an empty grep, so that case
+  stays covered by the existing rg-execution gate rather than by tool health.
 
 ### Changed
 

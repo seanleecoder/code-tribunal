@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import parse_unified_diff
-from .reviewers import get_reviewer_definition
+from .reviewers import CLAUDE_REPOSITORY_TOOLS, get_reviewer_definition
 
 # Deterministic scenarios selectable at runtime via AI_REVIEW_MOCK_SCENARIO.
 # They let live-evidence lifecycle runs exercise posting and state behavior with
@@ -185,6 +185,10 @@ def cli(argv: list[str] | None = None, *, adapter_output: bool = False) -> int:
     if adapter_output:
         codec = get_reviewer_definition(args.reviewer).output_codec
         if codec == "claude_stream_json":
+            if args.stage == "review":
+                # A review answer is admitted only after the CLI's tool inventory.
+                tools = [*CLAUDE_REPOSITORY_TOOLS, "StructuredOutput"]
+                print(json.dumps({"type": "system", "subtype": "init", "tools": tools}))
             batch = {"type": "result", "is_error": False, "structured_output": batch}
         elif codec == "codex_stream_json":
             for event in (
