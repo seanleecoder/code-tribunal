@@ -109,7 +109,7 @@ def run(platform: str, reviewer_image: str) -> int:
     output = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
     witness = output / WITNESS_PATH
     witness.unlink(missing_ok=True)
-    stdout = ""
+    stdout: str | None = None
     original_run = adapter_runner._run_adapter_process
 
     def capture(*args: Any, **kwargs: Any) -> Any:
@@ -120,12 +120,19 @@ def run(platform: str, reviewer_image: str) -> int:
 
     adapter_runner._run_adapter_process = capture
     try:
-        exit_code = adapter_runner.run_adapter("codex", "review")
+        # The shipped entry point, as run_reviewer.sh invokes it, including its
+        # reset of an inherited ignored SIGCHLD.
+        exit_code = adapter_runner.cli(["codex", "review"])
     finally:
         adapter_runner._run_adapter_process = original_run
-    if exit_code == 0 and stdout:
+    if exit_code == 0:
         outcome = load_json_file(output / "findings/codex.json")
         if outcome["adapter_status"] == "success":
+            if stdout is None:
+                raise RuntimeError(
+                    "candidate canary: ai_review.adapter_runner._run_adapter_process was not "
+                    "called; the Codex read witness cannot be recorded"
+                )
             write_canonical_json(
                 witness,
                 read_witness(

@@ -127,6 +127,24 @@ def test_only_admitted_review_emits_redacted_witness(
         assert not witness.exists()
 
 
+def test_bypassed_capture_seam_names_the_cause(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(tmp_path))
+    finding_batch = tmp_path / "findings/codex.json"
+    finding_batch.parent.mkdir()
+    finding_batch.write_text(
+        json.dumps(
+            {"run_id": "gl-1-2", "effective_config_sha256": "a" * 64, "adapter_status": "success"}
+        ),
+        encoding="utf-8",
+    )
+    with (
+        patch.object(probe.adapter_runner, "run_adapter", return_value=0),
+        pytest.raises(RuntimeError, match="_run_adapter_process was not called"),
+    ):
+        probe.run("gitlab", "reviewer@sha256:example")
+    assert not (tmp_path / probe.WITNESS_PATH).exists()
+
+
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform):
     driver = load_repository_script(f"canary_{platform}", ROOT / f"scripts/canary_{platform}.py")
@@ -204,7 +222,10 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
     codex.chmod(0o755)
     output = tmp_path / "out"
     result = subprocess.run(
-        [shell, "-ec", command],
+        # A bash job shell (the Actions default) that ignores SIGCHLD passes that
+        # to the commands it runs; dash does not. The canary must reset it as the
+        # shipped launcher does, or the runner cannot wait for Codex.
+        [shutil.which("bash") or "bash", "-ec", f"trap '' CHLD\n{command}"],
         cwd=repo,
         env={
             "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
