@@ -34,6 +34,16 @@ versioning.
   exit is now `model_error` (`AdapterExit`), whatever its stdout; the output is
   kept as an `exit` debug pair for diagnosis only. Codex already behaved this
   way, and its codec no longer repeats the check.
+- Codex's repository tool server reported unreadable files and directories,
+  including failures swallowed by its file-type checks, as ordinary tool
+  results, so a Codex review that could read nothing was admitted. Permission,
+  I/O and other filesystem failures are now server errors that Codex records as
+  failed calls; missing paths stay tool-reported. A search that read nothing
+  after an I/O error fails the same way. A search that found matches despite
+  unreadable paths returns them with a
+  `[search incomplete: some paths could not be read]` notice. An invalid pattern
+  is reported as `invalid search pattern`. The Codex image gate adds verified
+  read and search faults.
 
 ### Changed
 

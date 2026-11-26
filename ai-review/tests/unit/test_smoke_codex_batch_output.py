@@ -261,6 +261,7 @@ def test_full_suite_covers_reads_controls_and_negative_cases(tmp_path: Path, mon
         "0/critique",
         "tools/search",
         "tools/no-match",
+        "tools/bad-pattern",
         "tools/recovery",
         "tools/reconnect",
         "failures/terminal",
@@ -303,6 +304,7 @@ def test_snapshot_observation_precedes_real_runner_cleanup(
             str(capture),
             str(workspace),
             json.dumps(overrides),
+            "0",
             "0",
         ],
     )
@@ -456,3 +458,109 @@ def test_a_negative_control_must_fail_for_its_own_cause(
             packaged.setenv(name, "")
             with pytest.raises(AssertionError, match="packaged Codex smoke requires"):
                 case()
+
+
+def test_fault_suite_runs_only_verified_filesystem_faults(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "probe",
+            "--install-root",
+            str(ROOT / "ai-review"),
+            "--scratch",
+            str(tmp_path),
+            "--faults",
+        ],
+    )
+    visited = []
+
+    def record(_install, scratch, label, model, **options):
+        visited.append((label, model, options["expected_status"], options["fault"]))
+
+    monkeypatch.setattr(smoke, "run_case", record)
+    assert smoke.main() == 0
+    assert visited == [
+        ("read", smoke.REQUIRED_MODEL, "model_error", True),
+        ("search", smoke.REQUIRED_MODEL, "model_error", True),
+        ("recovered", smoke.REQUIRED_MODEL, "success", True),
+    ]
+
+
+def test_fault_wrapper_drops_only_the_dac_bypass_capabilities() -> None:
+    wrapper = (ROOT / "scripts/smoke_codex_batch_output.sh").read_text()
+    assert "set -- --cap-drop DAC_OVERRIDE --cap-drop DAC_READ_SEARCH\n" in wrapper
+    assert "--faults --scratch /smoke/codex-faults" in wrapper
+    assert wrapper.rstrip().endswith("run_driver suite\nrun_driver faults")
+
+
+@pytest.mark.skipif(
+    __import__("os").geteuid() == 0, reason="file modes do not restrict root with DAC capabilities"
+)
+def test_fault_runner_records_its_precondition_and_survives_the_unreadable_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sys
+
+    from ai_review import adapter_runner as runner
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "example.py").write_bytes(b"example = 1\n")
+    (root / "sentinel.txt").write_bytes(b"secret-sentinel")
+    workspace = tmp_path / "workspace.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "review",
+            "http://127.0.0.1",
+            str(tmp_path / "c.json"),
+            str(workspace),
+            "[]",
+            "0",
+            "1",
+        ],
+    )
+    monkeypatch.setattr(runner, "prepare_shell_adapter", lambda *_: (["registry"], root))
+    monkeypatch.setattr(
+        runner,
+        "_run_adapter_process",
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    def run_adapter(*_args):
+        runner.prepare_shell_adapter(None, "review", {})
+        runner._run_adapter_process([], {}, 60)
+        return 0
+
+    monkeypatch.setattr(runner, "run_adapter", run_adapter)
+    try:
+        with pytest.raises(SystemExit):
+            exec(smoke.RUNNER, {})
+        fault = json.loads((tmp_path / "fault.json").read_text())
+        assert fault["mode"] == 0
+        assert set(fault) == {"mode", "dac_override", "dac_read_search"}
+        observed = json.loads(workspace.read_text())["files_after_cli"]
+        assert observed == {"example.py": b"example = 1\n".hex(), "sentinel.txt": None}
+    finally:
+        (root / "sentinel.txt").chmod(0o644)
+
+
+def test_item_errors_counts_only_failed_repository_calls() -> None:
+    def item(**fields) -> str:
+        base = {"id": "i", "type": "mcp_tool_call", "server": "repo", "status": "failed"}
+        return json.dumps({"type": "item.completed", "item": {**base, **fields}})
+
+    stdout = "\n".join(
+        [
+            item(error={"message": "read failed: Permission denied"}),
+            item(error=None, result={"isError": True}),
+            item(server="codex", error={"message": "x"}),
+            "not json",
+        ]
+    )
+    assert len(smoke.item_errors(stdout)) == 1

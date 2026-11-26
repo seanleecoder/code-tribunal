@@ -61,6 +61,13 @@ transport failures as failures:
   snapshot bytes are unchanged, checked independently by the trusted parent.
   The code-mode and direct tool sets are pinned, and `ALL_TOOLS` must list the
   repository tools, because Codex defers MCP tools in code mode.
+- Verified filesystem faults run in a second container that drops only
+  `DAC_OVERRIDE` and `DAC_READ_SEARCH`. The copied sentinel is mode 000, and each
+  case first proves that precondition from the runner process. A failed read or
+  search must reach the stream as a failed call (an item `error`, not a
+  tool-reported result). A run whose attempts all failed this way is unusable
+  even though the stub answers. A later successful call recovers the run. An
+  invalid search pattern stays a tool-reported result.
 - Negative controls: a terminal provider failure, a missing code-mode host
   (named from Codex's startup item), an unavailable tool server, and a
   credential in the tool server's environment all yield unusable outcomes. The
