@@ -394,10 +394,15 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         if isinstance(event.get("result"), str) and event["result"].strip():
             result_text = event["result"]
 
-    if (
-        stage == "review"
-        and init_tools is not None
-        and not all(tool in init_tools for tool in CLAUDE_REPOSITORY_TOOLS)
+    # A review answer needs the CLI's own init inventory with every repository
+    # tool (SPEC-69 rule 2). Answerless streams keep their own errors below.
+    has_answer = structured_result is not None or bool(
+        result_text.strip() or "".join(assistant_parts).strip()
+    )
+    if stage == "review" and (
+        not all(tool in init_tools for tool in CLAUDE_REPOSITORY_TOOLS)
+        if init_tools is not None
+        else has_answer
     ):
         raise AdapterModelError("Claude review started without its repository tools")
 

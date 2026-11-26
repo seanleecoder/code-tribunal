@@ -216,6 +216,9 @@ printf '%s\n' "$result"
                 'if [ "$AI_REVIEW_STAGE" = critique ]; then\n'
                 '  printf \'{"type":"result","structured_output":{"critiques":[]}}\'\n'
                 "else\n"
+                # A review answer is admitted only after the CLI's tool inventory.
+                '  printf \'%s\' \'{"type":"system","subtype":"init",\'\n'
+                '  printf \'"tools":["Read","Grep","Glob"]}\\n\'\n'
                 '  printf \'{"type":"result","structured_output":{"findings":[]}}\'\n'
                 "fi\n",
                 encoding="utf-8",

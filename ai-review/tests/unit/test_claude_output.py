@@ -177,13 +177,19 @@ def test_a_tool_free_critique_is_never_checked_for_repository_tools() -> None:
     assert load(stream(critique), stage="critique") == {"critiques": []}
 
 
-def test_only_a_recognized_init_inventory_is_checked() -> None:
+def test_a_review_without_its_init_inventory_is_unusable() -> None:
     items = events("grep-success")
     # The captured ui_invalidate event precedes init and carries no tools.
     assert items[0]["subtype"] == "ui_invalidate" and "tools" not in items[0]
-    init = next(e for e in items if e["type"] == "system" and e.get("subtype") == "init")
-    del init["tools"]
-    assert load(stream(items)) == {"findings": []}
+    no_tools = copy.deepcopy(items)
+    del next(e for e in no_tools if e.get("subtype") == "init")["tools"]
+    no_init = [e for e in items if e.get("subtype") != "init"]
+    for variant in (no_tools, no_init):
+        with pytest.raises(AdapterModelError, match="started without its repository tools"):
+            load(stream(variant))
+    # Critique is offered no repository tools, so it needs no inventory.
+    answer = {"type": "result", "is_error": False, "structured_output": {"critiques": []}}
+    assert load(stream([answer]), stage="critique") == {"critiques": []}
 
 
 def test_a_tool_free_review_stays_valid() -> None:

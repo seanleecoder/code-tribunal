@@ -9,17 +9,20 @@ import pytest
 from ai_review.adapter_process import _AdapterResult
 from ai_review.schema import batch_quality_fields
 
-from tests.support.adapter_inputs import run_captured_adapter
+from tests.support.adapter_inputs import CLAUDE_REVIEW_INIT, run_captured_adapter
 from tests.support.config_yaml import SHIPPED_CONFIG_PATH
 
 CODEX_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/codex"
 BATCH = '{"findings": []}'
 CLAUDE_STREAM = "\n".join(
-    json.dumps(event)
-    for event in (
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": BATCH}]}},
-        {"type": "result", "subtype": "success", "is_error": False, "result": BATCH},
-    )
+    [CLAUDE_REVIEW_INIT]
+    + [
+        json.dumps(event)
+        for event in (
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": BATCH}]}},
+            {"type": "result", "subtype": "success", "is_error": False, "result": BATCH},
+        )
+    ]
 )
 
 

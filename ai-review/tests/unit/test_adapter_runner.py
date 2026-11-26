@@ -35,6 +35,7 @@ from ai_review.schema import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.adapter_inputs import (  # noqa: E402
+    CLAUDE_REVIEW_INIT,
     bind_manifest_to_config,
     run_prepared_adapter,
     write_adapter_input_bundle,
@@ -141,14 +142,19 @@ class AdapterTimeoutSelectionTests(unittest.TestCase):
 class AdapterRunnerOutputTests(unittest.TestCase):
     @staticmethod
     def _claude_answer(text: str) -> str:
-        return json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": text}],
-                },
-            }
+        # The CLI's init inventory, then the answer: a review requires both.
+        return (
+            CLAUDE_REVIEW_INIT
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": text}],
+                    },
+                }
+            )
         )
 
     def test_batch_codec_loads_both_stage_shapes(self) -> None:

@@ -36,6 +36,7 @@ from ai_review.schema import load_json_file, write_canonical_json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from support.adapter_inputs import (  # noqa: E402
+    CLAUDE_REVIEW_INIT,
     run_prepared_adapter,
     write_adapter_input_bundle,
 )
@@ -372,7 +373,9 @@ class ReviewerAdapterContractTests(unittest.TestCase):
     def test_runner_uses_the_registry_codec_instead_of_guessing_from_stdout(self) -> None:
         result = _AdapterResult(
             returncode=0,
-            stdout=json.dumps({"type": "result", "structured_output": {"findings": []}}),
+            stdout=CLAUDE_REVIEW_INIT
+            + "\n"
+            + json.dumps({"type": "result", "structured_output": {"findings": []}}),
             stderr="",
         )
         for codec, expected_status, expected_exit in (

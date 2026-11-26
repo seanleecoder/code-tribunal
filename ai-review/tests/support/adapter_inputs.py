@@ -22,7 +22,13 @@ import pytest
 from ai_review.adapter_process import _AdapterResult
 from ai_review.adapter_runner import run_adapter
 from ai_review.config import ConfigError, effective_config_binding, load_config
+from ai_review.reviewers import CLAUDE_REPOSITORY_TOOLS
 from ai_review.schema import load_json_file, write_canonical_json
+
+# The pinned Claude CLI's init event. A review answer is admitted only after it.
+CLAUDE_REVIEW_INIT = json.dumps(
+    {"type": "system", "subtype": "init", "tools": [*CLAUDE_REPOSITORY_TOOLS, "StructuredOutput"]}
+)
 
 
 def bind_manifest_to_config(
