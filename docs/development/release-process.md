@@ -124,7 +124,8 @@ row whose target has arrived, and remove completed spec files from the active
      of `.github/workflows/candidate-canary.yml` on `main`, with `verify-candidate`
      and every selected campaign job green. Its `candidate-canary-identity`
      artifact must name exactly `P`'s `R` and both image references, and must list
-     `panel` and `lifecycle`. Every campaign summary must name the same candidate.
+     `panel` and `lifecycle`. Every campaign summary must name the same candidate,
+     and both panel summaries must record `repository_read: true` for Codex.
    - The `## [X.Y.Z]` section of `P`'s `CHANGELOG.md` must exist.
 
    It then writes the release body: the CHANGELOG section, with its
