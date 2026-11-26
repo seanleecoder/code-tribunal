@@ -26,6 +26,7 @@ from typing import Any
 from ai_review.schema import load_json_file
 from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
+    DEMO_CALLER_EXISTS_GUARD,
     DEMO_REPOSITORY,
     LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
@@ -209,8 +210,11 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
 
     def inject_defect(demo: Path) -> list[str]:
         require_demo_access((demo / FIXTURE_PATH).read_text(encoding="utf-8"), GitHubCanaryError)
-        with (demo / PANEL_CALLER_PATH).open("x", encoding="utf-8") as fixture:
-            fixture.write(PANEL_CALLER)
+        try:
+            with (demo / PANEL_CALLER_PATH).open("x", encoding="utf-8") as fixture:
+                fixture.write(PANEL_CALLER)
+        except FileExistsError:
+            raise GitHubCanaryError(DEMO_CALLER_EXISTS_GUARD) from None
         return [PANEL_CALLER_PATH]
 
     return push_candidate_branch(

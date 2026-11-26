@@ -34,6 +34,7 @@ from typing import Any
 import yaml
 from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
+    DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
     GITLAB_SECRETS,
     LIFECYCLE_FIXTURE,
@@ -161,6 +162,14 @@ def _raw_file(project: str, path: str) -> str:
         f"projects/{project}/repository/files/{encoded}/raw?ref=main",
         raw=True,
     ).decode("utf-8")
+
+
+def _file_exists(project: str, path: str) -> bool:
+    encoded = urllib.parse.quote(path, safe="")
+    found = _request(
+        "GET", f"projects/{project}/repository/files/{encoded}?ref=main", allow_missing=True
+    )
+    return found is not None
 
 
 def _commit(
@@ -369,6 +378,9 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = template.replace(review_line, f"    - |\n{command}\n", 1)
     template = template.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
     require_demo_access(_raw_file(DEMO_PROJECT, str(FIXTURE_PATH)), GitLabCanaryError)
+    # Checked before any branch exists; the "create" action stays the race backstop.
+    if _file_exists(DEMO_PROJECT, PANEL_CALLER_PATH):
+        raise GitLabCanaryError(DEMO_CALLER_EXISTS_GUARD)
     return push_candidate_change(
         args,
         template=template,

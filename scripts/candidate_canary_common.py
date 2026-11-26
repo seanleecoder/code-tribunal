@@ -35,6 +35,7 @@ GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
 DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
 PANEL_CALLER_PATH = "src/gateway_access.py"
+DEMO_CALLER_EXISTS_GUARD = f"demo repository already contains {PANEL_CALLER_PATH}"
 PANEL_CALLER = '''"""Access check for the gateway."""
 
 from src.access import is_allowed, normalize_username

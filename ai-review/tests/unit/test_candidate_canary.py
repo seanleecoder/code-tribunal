@@ -858,6 +858,53 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 commands,
             )
 
+    def test_preexisting_panel_caller_is_reported_as_demo_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commands: list[tuple[str, ...]] = []
+
+            def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
+                del cwd, capture
+                commands.append(command)
+                if command[:3] == ("gh", "repo", "clone"):
+                    demo = Path(command[4])
+                    (demo / ".github/workflows").mkdir(parents=True)
+                    (demo / "src").mkdir()
+                    (demo / "src/access.py").write_text(
+                        "    return normalize_username(username) in normalized_allowed\n",
+                        encoding="utf-8",
+                    )
+                    (demo / "src/gateway_access.py").write_text("merged\n", encoding="utf-8")
+                return ""
+
+            args = argparse.Namespace(
+                workdir=str(root / "work"),
+                branch="candidate-test",
+                base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
+                reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
+                runtime_source="c" * 40,
+                state=str(root / "github-state.json"),
+            )
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                self.assertRaisesRegex(
+                    self.github.GitHubCanaryError, "demo repository already contains"
+                ),
+            ):
+                self.github.create_campaign(args)
+            self.assertFalse(any("push" in command for command in commands))
+
+            with (
+                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_request", return_value={"file_name": "x"}),
+                mock.patch.object(self.gitlab, "_commit") as commit,
+                self.assertRaisesRegex(
+                    self.gitlab.GitLabCanaryError, "demo repository already contains"
+                ),
+            ):
+                self.gitlab.create_campaign(self._gitlab_args(root / "gitlab-state.json"))
+            commit.assert_not_called()
+
     def test_gitlab_records_template_branch_before_demo_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state.json"
@@ -878,6 +925,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
                 mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
@@ -916,6 +964,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
                 mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):

@@ -175,6 +175,7 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
     else:
         with (
             patch.object(driver, "_raw_file", return_value=helper_source),
+            patch.object(driver, "_file_exists", return_value=False),
             patch.object(driver, "push_candidate_change") as push,
         ):
             driver.create_campaign(args)
