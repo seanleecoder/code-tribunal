@@ -32,7 +32,7 @@ def _event(tool: str = "read_file", **overrides: object) -> dict:
             "error": None,
             "tool": tool,
             "arguments": {"path": "./src/access.py"},
-            "result": {"content": [{"type": "text", "text": "fixture contents"}]},
+            "result": {"content": [{"type": "text", "text": "1\tfixture contents"}]},
             **overrides,
         },
     }
@@ -55,6 +55,18 @@ def _result(text: str) -> dict:
         (_event(server="codex"), False),
         (_event(arguments={"path": "src/gateway_access.py"}), False),
         (_event(result=_result("\n")), False),
+        (
+            _event(
+                result=_result("[start_line 500 is past the end of the file, which has 2 lines]")
+            ),
+            False,
+        ),
+        (_event(result=_result("2\t")), False),
+        (_event(result=_result("0\tcode")), False),
+        (_event(result=_result("1\tdef is_allowed():")), True),
+        (_event(arguments={"path": "src/../src/access.py"}), True),
+        (_event(arguments={"path": "../src/access.py"}), False),
+        (_event("grep", result=_result("src/../src/access.py:7:fixture contents")), True),
         (_event(type="agent_message", text=json.dumps(_event())), False),
     ],
 )
@@ -176,7 +188,12 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
     )
     stream = tmp_path / "codex.jsonl"
     stream.write_text(
-        capture["stdout"].replace("sentinel.txt", str(probe.FIXTURE_PATH)), encoding="utf-8"
+        # The recorded read predates numbered read_file output; number it as the
+        # shipped repository server does.
+        capture["stdout"]
+        .replace("sentinel.txt", str(probe.FIXTURE_PATH))
+        .replace('"CAPTURED_SNAPSHOT_SENTINEL"', '"1\\tCAPTURED_SNAPSHOT_SENTINEL"'),
+        encoding="utf-8",
     )
     codex = tmp_path / "codex"
     shell = shutil.which("sh")

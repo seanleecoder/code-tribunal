@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -16,10 +17,31 @@ FIXTURE_PATH = PurePosixPath("src/access.py")
 WITNESS_PATH = Path("canary/codex-repo-read.json")
 
 
+def _is_fixture_path(path: str) -> bool:
+    # The repository server resolves the path, so `src/../src/access.py` reads it too.
+    return posixpath.normpath(path) == FIXTURE_PATH.as_posix()
+
+
+def _numbered_content(line_number: str, content: str) -> bool:
+    return (
+        line_number.isascii()
+        and line_number.isdecimal()
+        and int(line_number) >= 1
+        and bool(content.strip())
+    )
+
+
 def _fixture_match(line: str) -> bool:
     path, _, match = line.partition(":")
     line_number, _, content = match.partition(":")
-    return PurePosixPath(path) == FIXTURE_PATH and line_number.isdecimal() and bool(content.strip())
+    return _is_fixture_path(path) and _numbered_content(line_number, content)
+
+
+def _fixture_line(line: str) -> bool:
+    # read_file numbers every source line `<n>\t<text>`; its notes, such as a
+    # start_line past the end of the file, carry no helper content.
+    line_number, tab, content = line.partition("\t")
+    return bool(tab) and _numbered_content(line_number, content)
 
 
 def _fixture_result(item: dict[str, Any]) -> bool:
@@ -49,8 +71,8 @@ def _fixture_result(item: dict[str, Any]) -> bool:
         item.get("tool") == "read_file"
         and isinstance(arguments, dict)
         and isinstance(path := arguments.get("path"), str)
-        and PurePosixPath(path) == FIXTURE_PATH
-        and any(content.strip() for content in texts)
+        and _is_fixture_path(path)
+        and any(_fixture_line(line) for content in texts for line in content.split("\n"))
     )
 
 
