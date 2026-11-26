@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from ai_review.canary_codex_repo_read import CANARY_REVIEW_ENV
 from ai_review.config import unknown_environment_overrides
 from candidate_canary_common import (
     DEMO_PROJECT,
@@ -86,13 +87,20 @@ def _variable_checks(platform: str, names: set[str]) -> list[Check]:
         if platform == "github"
         else ("FAIL", "it fails config load")
     )
-    return [
-        Check("FAIL", f"{platform}: mock variable {name} is set; delete it before a run")
-        for name in sorted(names & MOCK_VARIABLES)
-    ] + [
-        Check(level, f"{platform}: unsupported variable {name} is set; {consequence}")
-        for name in unknown_environment_overrides(names)
-    ]
+    return (
+        [
+            Check("FAIL", f"{platform}: mock variable {name} is set; delete it before a run")
+            for name in sorted(names & MOCK_VARIABLES)
+        ]
+        + [
+            Check("FAIL", f"{platform}: canary-only variable {name} is set on the demo project")
+            for name in sorted(names & CANARY_REVIEW_ENV)
+        ]
+        + [
+            Check(level, f"{platform}: unsupported variable {name} is set; {consequence}")
+            for name in unknown_environment_overrides(names)
+        ]
+    )
 
 
 def github_checks(runner: Runner, now: datetime) -> list[Check]:

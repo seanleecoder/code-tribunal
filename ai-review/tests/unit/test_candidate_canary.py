@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import unittest
 import urllib.error
+import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -18,6 +20,7 @@ from unittest import mock
 import yaml
 from ai_review.reviewers import REVIEWERS
 
+from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -268,16 +271,29 @@ class CanaryCliTests(unittest.TestCase):
 class CandidateCanaryValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.validator = load_repository_script("validate_candidate_canary", VALIDATOR)
+        self.manifest = {"run_id": "run-1", "effective_config_sha256": "a" * 64}
+        self.reviewer_image = "reviewer@sha256:" + "c" * 64
+        self.witness = {
+            **self.manifest,
+            "platform": "github",
+            "reviewer": "codex",
+            "reviewer_image": self.reviewer_image,
+            "fixture": "demo-access-policy",
+            "observed": True,
+        }
 
     def _artifact(self, path: Path, _schema: str):
         name = path.name
         if path.parent.name == "findings":
+            findings = (
+                [{"title": "model finding visible in the diff"}] if path.stem == "codex" else []
+            )
             return {
                 "reviewer": path.stem,
                 "model": f"model-for-{path.stem}",
                 "adapter_status": "success",
-                "findings": [],
-                "raw_finding_count": 0,
+                "findings": findings,
+                "raw_finding_count": len(findings),
                 "dropped_finding_count": 0,
                 "effective_config_sha256": "a" * 64,
                 "run_id": "run-1",
@@ -302,12 +318,12 @@ class CandidateCanaryValidationTests(unittest.TestCase):
             }
         return {}
 
-    def _validate(self):
+    def _validate(self, *, missing: bool = False):
         with (
             mock.patch.object(
                 self.validator,
                 "load_json_file",
-                return_value={"run_id": "run-1", "effective_config_sha256": "a" * 64},
+                side_effect=[self.manifest, FileNotFoundError() if missing else self.witness],
             ),
             mock.patch.object(self.validator, "_load", side_effect=self._artifact),
         ):
@@ -317,7 +333,7 @@ class CandidateCanaryValidationTests(unittest.TestCase):
                 output=Path("out"),
                 runtime_source="a" * 40,
                 base_image="base@sha256:" + "b" * 64,
-                reviewer_image="reviewer@sha256:" + "c" * 64,
+                reviewer_image=self.reviewer_image,
                 external_run_url="https://example.test/run/1",
                 change_url="https://example.test/pr/2",
                 cleanup_status="success",
@@ -328,7 +344,24 @@ class CandidateCanaryValidationTests(unittest.TestCase):
         self.assertEqual(set(summary["seats"]), set(REVIEWERS))
         self.assertEqual(summary["posting"]["posted_thread_count"], 1)
         self.assertEqual(summary["cleanup"], "success")
+        self.assertIs(summary["seats"]["codex"]["review"]["repository_read"], True)
         self.assertNotIn("redacted-by-summary", repr(summary))
+        self.assertNotIn("model finding visible in the diff", repr(summary))
+
+    def test_healthy_panel_with_findings_fails_without_a_bound_repository_read(self) -> None:
+        with self.assertRaisesRegex(
+            self.validator.CanaryValidationError, "read evidence is missing"
+        ):
+            self._validate(missing=True)
+        for field in self.witness:
+            with (
+                self.subTest(field=field),
+                mock.patch.dict(self.witness, {field: "wrong"}),
+                self.assertRaisesRegex(
+                    self.validator.CanaryValidationError, "read was not verified"
+                ),
+            ):
+                self._validate()
 
     def test_incomplete_summary_has_one_redacted_shape(self) -> None:
         summary = self.validator.build_incomplete_summary(
@@ -641,6 +674,75 @@ class CandidateCollectionTests(unittest.TestCase):
             self.assertEqual(discovery_requests, 1)
             self.assertEqual(result["external_run_url"], "pipeline")
 
+    def test_github_takes_witness_only_from_codex_review_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.json"
+            state.write_text('{"branch":"candidate"}', encoding="utf-8")
+            artifacts = root / "artifacts"
+            for name in (
+                "ai-review-inputs",
+                "ai-review-consensus",
+                "ai-review-post",
+                *(
+                    f"ai-review-{stage}-{seat}"
+                    for seat in REVIEWERS
+                    for stage in ("review", "critique")
+                ),
+            ):
+                (artifacts / name).mkdir(parents=True)
+            path = self.github.WITNESS_PATH
+            for job, value in (("review-codex", "expected"), ("critique-codex", "wrong job")):
+                witness = artifacts / f"ai-review-{job}" / path
+                witness.parent.mkdir()
+                witness.write_text(value, encoding="utf-8")
+            args = argparse.Namespace(
+                state=state, destination=root / "collected", timeout_seconds=10
+            )
+            with (
+                mock.patch.object(self.github, "await_new_run", return_value=12),
+                mock.patch.object(self.github, "await_success", return_value={"url": "run"}),
+                mock.patch.object(self.github, "download_run", return_value=artifacts),
+            ):
+                self.github.collect_campaign(args)
+            self.assertEqual((args.destination / "out" / path).read_text(), "expected")
+
+    def test_gitlab_takes_witness_only_from_codex_review_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.json"
+            state.write_text('{"mr_iid":"7"}', encoding="utf-8")
+            jobs = [
+                {
+                    "id": job_id,
+                    "name": name,
+                    "status": "success",
+                    "artifacts_file": {"filename": "artifacts.zip"},
+                }
+                for job_id, name in enumerate(("AI review: [codex]", "AI critique: [codex]"), 1)
+            ]
+            path = self.gitlab.WITNESS_PATH
+
+            def artifact(job):
+                content = io.BytesIO()
+                with zipfile.ZipFile(content, "w") as archive:
+                    archive.writestr(f"out/{path}", str(job["id"]))
+                return content.getvalue()
+
+            args = argparse.Namespace(
+                state=state, destination=root / "collected", timeout_seconds=10
+            )
+            with (
+                mock.patch.object(self.gitlab, "_first_pipeline", return_value=12),
+                mock.patch.object(
+                    self.gitlab, "_succeeded", return_value={"id": 12, "web_url": "run"}
+                ),
+                mock.patch.object(self.gitlab, "_jobs", return_value=jobs),
+                mock.patch.object(self.gitlab, "_artifacts", side_effect=artifact),
+            ):
+                self.gitlab.collect_campaign(args)
+            self.assertEqual((args.destination / "out" / path).read_text(), "1")
+
 
 class CandidateCanaryCleanupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -658,7 +760,39 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             state=str(state),
         )
 
-    GITLAB_ACCESS_LINE = "    return normalize_username(username) in normalized_allowed\n"
+    @staticmethod
+    def _github_args(root: Path, state: Path) -> argparse.Namespace:
+        return argparse.Namespace(
+            workdir=str(root / "work"),
+            branch="candidate-test",
+            base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
+            reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
+            runtime_source="c" * 40,
+            state=str(state),
+        )
+
+    def _github_run(
+        self,
+        commands: list[tuple[str, ...]],
+        *,
+        demo_files: dict[str, str] | None = None,
+        pr_error: Exception | None = None,
+    ) -> Callable[..., str]:
+        def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
+            del cwd, capture
+            commands.append(command)
+            if command[:3] == ("gh", "repo", "clone"):
+                demo = Path(command[4])
+                (demo / ".github/workflows").mkdir(parents=True)
+                (demo / "src").mkdir()
+                files = {"src/access.py": DEMO_ACCESS_SOURCE, **(demo_files or {})}
+                for path, content in files.items():
+                    (demo / path).write_text(content, encoding="utf-8")
+            if command[:3] == ("gh", "pr", "create") and pr_error is not None:
+                raise pr_error
+            return ""
+
+        return run
 
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -691,30 +825,10 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             root = Path(tmp)
             state = root / "state.json"
             commands: list[tuple[str, ...]] = []
-
-            def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
-                del cwd, capture
-                commands.append(command)
-                if command[:3] == ("gh", "repo", "clone"):
-                    demo = Path(command[4])
-                    (demo / ".github/workflows").mkdir(parents=True)
-                    (demo / "src").mkdir()
-                    (demo / "src/access.py").write_text(
-                        "    return normalize_username(username) in normalized_allowed\n",
-                        encoding="utf-8",
-                    )
-                if command[:3] == ("gh", "pr", "create"):
-                    raise self.github.GitHubCanaryError("creation failed")
-                return ""
-
-            args = argparse.Namespace(
-                workdir=str(root / "work"),
-                branch="candidate-test",
-                base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
-                reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
-                runtime_source="c" * 40,
-                state=str(state),
+            run = self._github_run(
+                commands, pr_error=self.github.GitHubCanaryError("creation failed")
             )
+            args = self._github_args(root, state)
             with (
                 mock.patch.object(self.github, "_run", side_effect=run),
                 self.assertRaisesRegex(self.github.GitHubCanaryError, "creation failed"),
@@ -739,7 +853,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                     "add",
                     self.github.GITHUB_CALLER,
                     self.github.GITHUB_WORKFLOW,
-                    "src/access.py",
+                    "src/gateway_access.py",
                 ),
                 commands,
             )
@@ -757,6 +871,53 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 ),
                 commands,
             )
+
+    def test_preexisting_panel_caller_is_reported_as_demo_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commands: list[tuple[str, ...]] = []
+            run = self._github_run(commands, demo_files={"src/gateway_access.py": "merged\n"})
+            args = self._github_args(root, root / "github-state.json")
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                self.assertRaisesRegex(
+                    self.github.GitHubCanaryError, "demo repository already contains"
+                ),
+            ):
+                self.github.create_campaign(args)
+            self.assertFalse(any("push" in command for command in commands))
+
+            with (
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
+                mock.patch.object(self.gitlab, "_request", return_value={"file_name": "x"}),
+                mock.patch.object(self.gitlab, "_commit") as commit,
+                self.assertRaisesRegex(
+                    self.gitlab.GitLabCanaryError, "demo repository already contains"
+                ),
+            ):
+                self.gitlab.create_campaign(self._gitlab_args(root / "gitlab-state.json"))
+            commit.assert_not_called()
+
+    def test_panel_requires_the_demo_helper_exports_on_both_platforms(self) -> None:
+        drifted = DEMO_ACCESS_SOURCE.replace("def is_allowed(", "def renamed(")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commands: list[tuple[str, ...]] = []
+            run = self._github_run(commands, demo_files={"src/access.py": drifted})
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                self.assertRaisesRegex(self.github.GitHubCanaryError, "access helper contract"),
+            ):
+                self.github.create_campaign(self._github_args(root, root / "github.json"))
+            self.assertFalse(any("push" in command for command in commands))
+
+            with (
+                mock.patch.object(self.gitlab, "_raw_file", return_value=drifted),
+                mock.patch.object(self.gitlab, "push_candidate_change") as push,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "access helper contract"),
+            ):
+                self.gitlab.create_campaign(self._gitlab_args(root / "gitlab.json"))
+            push.assert_not_called()
 
     def test_gitlab_records_template_branch_before_demo_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -777,7 +938,8 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
+                mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
             ):
@@ -815,7 +977,8 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(Path(tmp) / "state.json")
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
+                mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),
             ):

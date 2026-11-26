@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from collections.abc import Callable
+from difflib import unified_diff
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +17,7 @@ from ai_review.mock_reviewer import review_batch
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import finalize_finding_batch
 
+from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -58,10 +60,15 @@ def _state_note(**changes: object) -> dict[str, object]:
 
 
 def _review_artifacts(root: Path) -> None:
-    diff = (
-        "diff --git a/src/audit.py b/src/audit.py\nnew file mode 100644\n"
-        "--- /dev/null\n+++ b/src/audit.py\n@@ -0,0 +1,6 @@\n"
-        + "".join(f"+{line}\n" for line in lifecycle.LIFECYCLE_FIXTURE.splitlines())
+    path = lifecycle.LIFECYCLE_FIXTURE_PATH
+    modified = lifecycle.append_lifecycle_fixture(DEMO_ACCESS_SOURCE, lifecycle.GitHubCanaryError)
+    diff = f"diff --git a/{path} b/{path}\n" + "".join(
+        unified_diff(
+            DEMO_ACCESS_SOURCE.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
     )
     root.mkdir(parents=True)
     (root / "mr.diff").write_text(diff, encoding="utf-8")
@@ -376,6 +383,9 @@ class MockWorkflowTests(unittest.TestCase):
                 demo = Path(command[4])
                 (demo / ".github/workflows").mkdir(parents=True)
                 (demo / "src").mkdir()
+                (demo / canary.LIFECYCLE_FIXTURE_PATH).write_text(
+                    DEMO_ACCESS_SOURCE, encoding="utf-8"
+                )
             if command[:3] == ("gh", "pr", "view"):
                 return json.dumps({"number": 7, "url": "https://example.test/pr/7"})
             return ""
@@ -392,6 +402,9 @@ class MockWorkflowTests(unittest.TestCase):
             with mock.patch.object(lifecycle, "_run", side_effect=run):
                 lifecycle.create_lifecycle(args)
             demo = Path(tmp) / "demo"
+            updated = (demo / canary.LIFECYCLE_FIXTURE_PATH).read_text(encoding="utf-8")
+            self.assertTrue(updated.startswith(DEMO_ACCESS_SOURCE))
+            self.assertIn('return records[0]["actor"]', updated)
             caller = yaml.load((demo / canary.GITHUB_CALLER).read_text(), Loader=yaml.BaseLoader)
             workflow_text = (demo / canary.GITHUB_WORKFLOW).read_text()
             workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)

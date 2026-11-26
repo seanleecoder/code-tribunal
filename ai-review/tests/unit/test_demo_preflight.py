@@ -108,6 +108,19 @@ class DemoPreflightTests(unittest.TestCase):
                     if platform == "github":
                         self.assertNotIn("fails config load", checks[0].message)
 
+    def test_canary_only_controls_fail_on_either_demo_project(self) -> None:
+        for name in preflight.CANARY_REVIEW_ENV:
+            for platform in ("github", "gitlab"):
+                with self.subTest(name=name, platform=platform):
+                    state = _state()
+                    if platform == "github":
+                        state["github_variables"][name] = "configured"
+                    else:
+                        state["gitlab_variables"].append(_gitlab_variable(name))
+                    checks = preflight.run(_runner(state), NOW)
+                    self.assertEqual([check.level for check in checks], ["FAIL"])
+                    self.assertIn(f"canary-only variable {name}", checks[0].message)
+
     def test_each_2_0_0_drift_is_reported(self) -> None:
         cases = {
             "requires status checks": _state(

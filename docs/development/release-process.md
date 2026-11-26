@@ -50,6 +50,9 @@ row whose target has arrived, and remove completed spec files from the active
    probe needs no credentials or external network; it proves no-shell repository
    reads through code mode, containment and the pinned tool set, and rejects
    operational failures hidden by valid final JSON.
+   When a CLI pin or packaging change affects a required capability, exercise
+   that capability with a representative operation in the built image.
+   Version and feature listings establish executable presence and defaults.
 
 2. **Run the canary.** Run the read-only `make demo-preflight`, which catches demo
    drift before tokens are spent. Then dispatch the protected
@@ -65,7 +68,10 @@ row whose target has arrived, and remove completed spec files from the active
      -f campaigns=panel,lifecycle,hostile
    ```
 
-   `panel` and `lifecycle` are required on every release. Include `hostile` when the
+   `panel` and `lifecycle` are required on every release. The panel must record
+   a successful Codex read of the unchanged demo access helper on GitHub and
+   GitLab. Build both candidate images from a runtime source that includes the
+   shipped runner's canary capture. Include `hostile` when the
    [checklist](#release-pull-request-checklist) says it applies. Publication
    accepts only a run whose first attempt succeeded, so after a failure fix forward
    and dispatch a fresh run rather than re-running jobs. A red run blocks the
@@ -119,7 +125,8 @@ row whose target has arrived, and remove completed spec files from the active
      of `.github/workflows/candidate-canary.yml` on `main`, with `verify-candidate`
      and every selected campaign job green. Its `candidate-canary-identity`
      artifact must name exactly `P`'s `R` and both image references, and must list
-     `panel` and `lifecycle`. Every campaign summary must name the same candidate.
+     `panel` and `lifecycle`. Every campaign summary must name the same candidate,
+     and both panel summaries must record `repository_read: true` for Codex.
    - The `## [X.Y.Z]` section of `P`'s `CHANGELOG.md` must exist.
 
    It then writes the release body: the CHANGELOG section, with its
@@ -136,6 +143,13 @@ row whose target has arrived, and remove completed spec files from the active
    ```bash
    gh workflow run publish-release.yml --ref main -f tag="v$V"
    ```
+
+   The signed tag's cited run must satisfy the current evidence requirements.
+   Before a cutover that adds evidence requirements, inventory pending signed
+   tags and finish eligible publication under the current procedure. If a
+   pending tag's evidence is incompatible after the cutover, keep its signed
+   record and prepare a fresh release version with a fresh first-attempt canary
+   on compatible, exact candidate images.
 
    A stable release becomes GitHub's latest. For a backport to an older series,
    publish by dispatch with `-f latest=false`. If the tag push publishes it first,
@@ -164,7 +178,8 @@ applied, and the review checks the evidence it cites.
   code-mode sentinel retrieval, negative execution controls, and both OpenCode
   probes. CLI upgrades must pass the same gates before the runtime is frozen.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
-  pinned references.
+  pinned references. Both panel summaries must record `repository_read: true`
+  for Codex and identify the model used.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`
   touches `ai-review/ci/review.gitlab-ci.yml`, `scripts/pipeline_trust.py`, or how
   prepare obtains credentials (`ai-review/src/ai_review/input_bundle.py` prepare,

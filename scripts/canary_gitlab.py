@@ -28,23 +28,30 @@ from collections.abc import Callable, Iterator
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import yaml
+from ai_review.canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
+    DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
     GITLAB_SECRETS,
-    LIFECYCLE_FIXTURE,
     LIFECYCLE_FIXTURE_PATH,
+    PANEL_CALLER,
+    PANEL_CALLER_PATH,
+    REVIEW_COMMAND,
     Lifecycle,
     LifecycleFailure,
+    append_lifecycle_fixture,
     canary_stage_environment,
     candidate_identity,
     expect,
-    inject_demo_defect,
     lifecycle_reviewer_results,
+    panel_review_command,
     poll,
     read_state,
+    require_demo_access,
     run_lifecycle_steps,
     saved_disposition,
     write_state,
@@ -147,13 +154,19 @@ def _request(
     return json.loads(body) if body else None
 
 
+def _file_endpoint(project: str, path: str) -> str:
+    return f"projects/{project}/repository/files/{urllib.parse.quote(path, safe='')}"
+
+
 def _raw_file(project: str, path: str) -> str:
-    encoded = urllib.parse.quote(path, safe="")
-    return _request(
-        "GET",
-        f"projects/{project}/repository/files/{encoded}/raw?ref=main",
-        raw=True,
-    ).decode("utf-8")
+    return _request("GET", f"{_file_endpoint(project, path)}/raw?ref=main", raw=True).decode(
+        "utf-8"
+    )
+
+
+def _file_exists(project: str, path: str) -> bool:
+    found = _request("GET", f"{_file_endpoint(project, path)}?ref=main", allow_missing=True)
+    return found is not None
 
 
 def _commit(
@@ -353,11 +366,31 @@ def _artifacts(job: dict[str, Any], *, allow_missing: bool = False) -> bytes | N
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
-    access = inject_demo_defect(_raw_file(DEMO_PROJECT, "src/access.py"), GitLabCanaryError)
+    before, review_header, remainder = template.partition("\n.review_template:\n")
+    review, matrix_header, after = remainder.partition('\n"AI review":\n')
+    image_line = '  image: "$AI_REVIEW_REVIEWER_IMAGE"\n'
+    prefix = canary_stage_environment() + " "
+    review_line = f"    - {prefix}{REVIEW_COMMAND}\n"
+    review_paths = "      - out/findings/\n      - out/status/\n"
+    if not (review_header and matrix_header) or any(
+        review.count(anchor) != 1 for anchor in (image_line, review_line, review_paths)
+    ):
+        raise GitLabCanaryError(
+            "candidate template no longer exposes the review image, command and paths"
+        )
+    command = indent(panel_review_command("gitlab", args.reviewer_image, prefix=prefix), "      ")
+    review = review.replace(image_line, f"  image: {json.dumps(args.reviewer_image)}\n", 1)
+    review = review.replace(review_line, f"    - |\n{command}\n", 1)
+    review = review.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
+    template = before + review_header + review + matrix_header + after
+    require_demo_access(_raw_file(DEMO_PROJECT, str(FIXTURE_PATH)), GitLabCanaryError)
+    # Checked before any branch exists; the "create" action stays the race backstop.
+    if _file_exists(DEMO_PROJECT, PANEL_CALLER_PATH):
+        raise GitLabCanaryError(DEMO_CALLER_EXISTS_GUARD)
     return push_candidate_change(
         args,
         template=template,
-        fixture=[{"action": "update", "file_path": "src/access.py", "content": access}],
+        fixture=[{"action": "create", "file_path": PANEL_CALLER_PATH, "content": PANEL_CALLER}],
         message="candidate canary fixture",
         title=f"Candidate canary {args.runtime_source[:12]}",
     )
@@ -373,6 +406,8 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
+    # Only the Codex review job may carry the read witness.
+    ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
     for job in _jobs(pipeline["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
@@ -381,10 +416,11 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
-        for name, target in (("inputs", inputs), ("out", output)):
+        out_ignore = None if job.get("name") == "AI review: [codex]" else ignore_canary
+        for name, target, ignore in (("inputs", inputs, None), ("out", output, out_ignore)):
             source = extracted / name
             if source.is_dir():
-                shutil.copytree(source, target, dirs_exist_ok=True)
+                shutil.copytree(source, target, dirs_exist_ok=True, ignore=ignore)
     state["pipeline_id"] = str(pipeline["id"])
     state["external_run_url"] = str(pipeline["web_url"])
     write_state(args.state, state)
@@ -453,14 +489,14 @@ def set_scenario(scenario: str) -> None:
 
 def create_lifecycle(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args, mock=True)
+    source = _raw_file(DEMO_PROJECT, LIFECYCLE_FIXTURE_PATH)
+    updated = append_lifecycle_fixture(source, GitLabCanaryError)
     # Opening the MR starts the first pipeline, so the scenario must exist first.
     set_scenario("blocking")
     state = push_candidate_change(
         args,
         template=template,
-        fixture=[
-            {"action": "create", "file_path": LIFECYCLE_FIXTURE_PATH, "content": LIFECYCLE_FIXTURE}
-        ],
+        fixture=[{"action": "update", "file_path": LIFECYCLE_FIXTURE_PATH, "content": updated}],
         message="candidate canary lifecycle fixture",
         title=f"Candidate canary lifecycle {args.runtime_source[:12]}",
     )

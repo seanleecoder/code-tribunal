@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import shlex
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from ai_review.canary_codex_repo_read import FIXTURE_PATH, IMAGE_ENV, PLATFORM_ENV
 from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
@@ -30,24 +33,27 @@ REVIEWER_CREDENTIALS = tuple(
 GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
 GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
-DEMO_CANARY_DEFECT = (
-    "# Candidate-canary defect: prefix membership grants unintended users.\n"
-    "    return any(\n"
-    "        normalize_username(username).startswith(candidate)\n"
-    "        for candidate in normalized_allowed\n"
-    "    )"
-)
-DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
+DEMO_FIXTURE_GUARD = "demo fixture no longer matches the access helper contract"
+PANEL_CALLER_PATH = "src/gateway_access.py"
+DEMO_CALLER_EXISTS_GUARD = f"demo repository already contains {PANEL_CALLER_PATH}"
+PANEL_CALLER = '''"""Access check for the gateway."""
 
-# The mock-lifecycle fixture adds one file whose `records[0]` line is the mock
+from src.access import is_allowed
+
+
+def gateway_allows(username: str, allowed_user: str) -> bool:
+    """Check access for a gateway with one configured user."""
+    return is_allowed(username, allowed_user)
+'''
+
+REVIEW_COMMAND = '/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review'
+
+# The mock-lifecycle fixture adds a hunk whose `records[0]` line is the mock
 # reviewer's preferred anchor, so the finding's identity does not depend on any
 # other change on the branch (the pinned workflow or CI include) and is the same
 # on both platforms.
-LIFECYCLE_FIXTURE_PATH = "src/audit.py"
+LIFECYCLE_FIXTURE_PATH = FIXTURE_PATH.as_posix()
 LIFECYCLE_FIXTURE = (
-    '"""Audit trail helpers for the demo consumer."""\n'
-    "\n"
-    "\n"
     "def first_actor(records):\n"
     '    """Return the first actor without validating the payload."""\n'
     '    return records[0]["actor"]\n'
@@ -103,10 +109,44 @@ def write_state(path: str | Path, state: dict[str, Any]) -> None:
     Path(path).write_bytes(canonical_json_bytes(state))
 
 
-def inject_demo_defect(source: str, error_type: type[RuntimeError]) -> str:
-    if DEMO_SAFE_MEMBERSHIP not in source:
+def _demo_functions(source: str, error_type: type[RuntimeError]) -> dict[str, ast.FunctionDef]:
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        raise error_type(DEMO_FIXTURE_GUARD) from None
+    return {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+
+
+def require_demo_access(source: str, error_type: type[RuntimeError]) -> None:
+    functions = _demo_functions(source, error_type)
+    expected_return = ast.dump(ast.parse(DEMO_SAFE_MEMBERSHIP).body[0])
+    is_allowed = functions.get("is_allowed")
+    if (
+        is_allowed is None
+        or len(is_allowed.args.posonlyargs + is_allowed.args.args) != 2
+        or not any(ast.dump(statement) == expected_return for statement in is_allowed.body)
+    ):
         raise error_type(DEMO_FIXTURE_GUARD)
-    return source.replace(DEMO_SAFE_MEMBERSHIP, DEMO_CANARY_DEFECT, 1)
+    normalize = functions.get("normalize_username")
+    if normalize is None or len(normalize.args.posonlyargs + normalize.args.args) != 1:
+        raise error_type(DEMO_FIXTURE_GUARD)
+
+
+def append_lifecycle_fixture(source: str, error_type: type[RuntimeError]) -> str:
+    if "first_actor" in _demo_functions(source, error_type):
+        raise error_type(f"demo fixture {LIFECYCLE_FIXTURE_PATH} already defines first_actor")
+    return source.rstrip("\n") + "\n\n\n" + LIFECYCLE_FIXTURE
+
+
+def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = "") -> str:
+    canary_env = f"{PLATFORM_ENV}={platform} {IMAGE_ENV}={shlex.quote(reviewer_image)}"
+    return (
+        'if [ "$REVIEWER" = codex ]; then\n'
+        f"  {prefix or 'env '}{canary_env} {REVIEW_COMMAND}\n"
+        "else\n"
+        f"  {prefix}{REVIEW_COMMAND}\n"
+        "fi"
+    )
 
 
 def reviewer_ids() -> tuple[str, ...]:
@@ -370,7 +410,7 @@ class Lifecycle:
         expect(post.get("created_discussions") == 1, "expected one created discussion")
         threads = self.threads()
         expect(len(threads) == 1, f"expected one finding thread, found {len(threads)}")
-        expect(threads[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the added file")
+        expect(threads[0]["path"] == LIFECYCLE_FIXTURE_PATH, "thread is not on the modified file")
         self.root = threads[0]
         return {
             self.run_key: run,

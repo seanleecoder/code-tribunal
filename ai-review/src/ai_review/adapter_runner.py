@@ -26,6 +26,13 @@ from .adapter_process import (
     _model_id_validation_error,
     _run_adapter_process,
 )
+from .canary_codex_repo_read import (
+    IMAGE_ENV,
+    PLATFORM_ENV,
+    WITNESS_PATH,
+    fixture_read_observed,
+    read_witness,
+)
 from .config import (
     ConfigError,
     config_from_manifest,
@@ -93,7 +100,17 @@ def run_adapter(reviewer: str, stage: str) -> int:
         write_canonical_json(output_dir / output_file, outcome)
         return exit_code
 
+    canary = None
+    if reviewer == "codex" and stage == "review":
+        canary_platform = os.environ.get(PLATFORM_ENV)
+        canary_image = os.environ.get(IMAGE_ENV)
+    else:
+        canary_platform = canary_image = None
+    canary_requested = canary_platform is not None or canary_image is not None
+
     try:
+        if canary_requested:
+            (output_dir / WITNESS_PATH).unlink(missing_ok=True)
         manifest = _load_manifest(input_dir)
         config = config_from_manifest(manifest)
         manifest_run_id = manifest.get("run_id")
@@ -111,6 +128,18 @@ def run_adapter(reviewer: str, stage: str) -> int:
         if stage not in reviewer_definition.supported_stages:
             raise ConfigError(f"reviewer {reviewer} does not support stage {stage}")
         mock_requested = os.environ.get("AI_REVIEW_LOCAL_MOCK") == "1"
+        if canary_requested:
+            if (
+                canary_platform not in ("github", "gitlab")
+                or not canary_image
+                or not canary_image.strip()
+            ):
+                raise ConfigError(
+                    f"Codex canary requires {PLATFORM_ENV} (github or gitlab) and {IMAGE_ENV}"
+                )
+            if mock_requested:
+                raise ConfigError("Codex canary requires a real review")
+            canary = (canary_platform, canary_image)
         # GitLab project/pipeline variables can override the template's mock=0
         # default. Keep the explicit companion guard in this single selection
         # point; missing real prerequisites never select a mock.
@@ -141,7 +170,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
         pooled: dict[str, Any] | None = None
 
         if stage == "review":
-            rendered = render_review_prompt(input_dir, config, reviewer)
+            rendered = render_review_prompt(
+                input_dir, config, reviewer, canary_read=canary is not None
+            )
             tmp_dir = output_dir / ".tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)
             prompt_tmp = tmp_dir / f"{reviewer}-{stage}-prompt.md"
@@ -242,6 +273,17 @@ def run_adapter(reviewer: str, stage: str) -> int:
             )
 
         write_canonical_json(output_dir / output_file, finalized)
+        if canary is not None:
+            platform, reviewer_image = canary
+            write_canonical_json(
+                output_dir / WITNESS_PATH,
+                read_witness(
+                    platform,
+                    reviewer_image,
+                    finalized,
+                    observed=fixture_read_observed(result.stdout),
+                ),
+            )
         return 0
     except subprocess.TimeoutExpired as exc:
         # Preserve bounded, redacted diagnostics for a stuck reviewer.

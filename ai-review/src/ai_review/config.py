@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, get_args, get_type_hints
 
 from .anchors import is_sha256
+from .canary_codex_repo_read import CANARY_REVIEW_ENV
 from .canonical import stable_json_hash
 from .reviewers import REVIEWER_IDS, REVIEWERS, trusted_runtime_root
 
@@ -33,6 +34,7 @@ CONFIG_ENV_OVERRIDES = {
     *{f"AI_REVIEW_{name.upper()}_{suffix}" for name in REVIEWERS for suffix in ("MODEL", "EFFORT")},
 }
 RUNTIME_ENV_VARIABLES = {
+    *CANARY_REVIEW_ENV,
     "AI_REVIEW_ALLOW_LOCAL_MOCK",
     "AI_REVIEW_BASE_IMAGE",
     "AI_REVIEW_BASE_TAG",

@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from ai_review.canary_codex_repo_read import WITNESS_PATH, read_witness
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
     batch_usable,
@@ -135,6 +136,20 @@ def validate_run(
         raise CanaryValidationError(f"{platform} posting did not succeed")
     if not post.get("posted_discussions"):
         raise CanaryValidationError(f"{platform} posted no finding thread")
+
+    try:
+        witness = load_json_file(output / WITNESS_PATH)
+    except OSError, ValueError:
+        raise CanaryValidationError(
+            f"{platform} Codex repository read evidence is missing or invalid"
+        ) from None
+    # Equality alone would accept `observed: 1`, since 1 == True.
+    if (
+        witness != read_witness(platform, reviewer_image, manifest, observed=True)
+        or witness["observed"] is not True
+    ):
+        raise CanaryValidationError(f"{platform} Codex repository read was not verified")
+    seats["codex"]["review"]["repository_read"] = True
 
     return {
         **_summary_base(

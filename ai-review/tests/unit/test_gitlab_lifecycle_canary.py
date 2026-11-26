@@ -12,6 +12,7 @@ from unittest import mock
 
 from ai_review.memory import empty_state, encode_state_note, normalize_state_record
 
+from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,6 +52,36 @@ class MockTemplateTests(unittest.TestCase):
 
 
 class ScenarioVariableTests(unittest.TestCase):
+    def test_lifecycle_updates_the_existing_file_after_drift_checks(self) -> None:
+        args = argparse.Namespace(
+            **vars(ARGS), template=ROOT / "ai-review/ci/review.gitlab-ci.yml", state="unused"
+        )
+        for drifted, source in (
+            (False, DEMO_ACCESS_SOURCE),
+            (True, DEMO_ACCESS_SOURCE + "\n\n" + common.LIFECYCLE_FIXTURE),
+        ):
+            with (
+                self.subTest(drifted=drifted),
+                mock.patch.object(lifecycle, "_raw_file", return_value=source) as read,
+                mock.patch.object(lifecycle, "set_scenario") as scenario,
+                mock.patch.object(lifecycle, "push_candidate_change", return_value={}) as push,
+                mock.patch.object(lifecycle, "write_state"),
+            ):
+                if drifted:
+                    with self.assertRaisesRegex(lifecycle.GitLabCanaryError, "already defines"):
+                        lifecycle.create_lifecycle(args)
+                    scenario.assert_not_called()
+                    push.assert_not_called()
+                else:
+                    lifecycle.create_lifecycle(args)
+                    scenario.assert_called_once_with("blocking")
+                    [change] = push.call_args.kwargs["fixture"]
+                    self.assertEqual(change["action"], "update")
+                    self.assertEqual(change["file_path"], "src/access.py")
+                    self.assertTrue(change["content"].startswith(source))
+                    self.assertIn('return records[0]["actor"]', change["content"])
+                read.assert_called_once_with(lifecycle.DEMO_PROJECT, "src/access.py")
+
     def test_scenario_is_created_then_updated(self) -> None:
         calls: list[tuple[str, str]] = []
 

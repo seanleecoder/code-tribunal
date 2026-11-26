@@ -230,9 +230,17 @@ def _verdict(campaign: str, platform: str, summary: dict[str, Any]) -> str:
             raise ReleaseValidationError(f"panel/{platform} summary is incomplete")
         if summary.get("cleanup") != "success":
             raise ReleaseValidationError(f"panel/{platform} cleanup was {summary.get('cleanup')}")
+        review: Any = summary
+        for key in ("seats", "codex", "review"):
+            review = review.get(key) if isinstance(review, dict) else None
+        if not isinstance(review, dict) or review.get("repository_read") is not True:
+            raise ReleaseValidationError(
+                f"panel/{platform} did not record Codex repository_read: true"
+            )
         return (
             f"panel / {platform}: {summary['consensus']['panel_status']} panel, "
-            f"{summary['posting']['posted_thread_count']} threads posted, cleanup succeeded"
+            f"{summary['posting']['posted_thread_count']} threads posted, "
+            "Codex repository read verified, cleanup succeeded"
         )
     steps = summary.get("steps")
     if summary.get("passed") is not True or not isinstance(steps, list):

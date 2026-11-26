@@ -268,6 +268,7 @@ class FakeCanary:
                         "cleanup": "success",
                         "consensus": {"panel_status": "full"},
                         "posting": {"status": "success", "posted_thread_count": 3},
+                        "seats": {"codex": {"review": {"repository_read": True}}},
                     }
                 else:
                     summary = {
@@ -318,13 +319,36 @@ class CanaryVerificationTests(unittest.TestCase):
         self.assertEqual(
             run.verdicts,
             (
-                "panel / github: full panel, 3 threads posted, cleanup succeeded",
-                "panel / gitlab: full panel, 3 threads posted, cleanup succeeded",
+                "panel / github: full panel, 3 threads posted, "
+                "Codex repository read verified, cleanup succeeded",
+                "panel / gitlab: full panel, 3 threads posted, "
+                "Codex repository read verified, cleanup succeeded",
                 "lifecycle / github: 2/2 steps passed",
                 "lifecycle / gitlab: 2/2 steps passed",
                 "hostile / gitlab: 2/2 steps passed",
             ),
         )
+
+    def test_panel_summaries_must_record_the_codex_repository_read(self) -> None:
+        artifact = tool.CAMPAIGN_SUMMARIES["panel"]["gitlab"]
+        for seats in (
+            None,
+            {"codex": {"review": {}}},
+            *({"codex": {"review": {"repository_read": value}}} for value in (False, "true", 1)),
+        ):
+            canary = FakeCanary(self.pins)
+            if seats is None:
+                del canary.artifacts[artifact]["seats"]
+            else:
+                canary.artifacts[artifact]["seats"] = seats
+            with (
+                self.subTest(seats=seats),
+                self.assertRaisesRegex(
+                    tool.ReleaseValidationError,
+                    "panel/gitlab did not record Codex repository_read: true",
+                ),
+            ):
+                self._verify(canary)
 
     def test_hostile_is_optional(self) -> None:
         run = self._verify(FakeCanary(self.pins, ("panel", "lifecycle")))
