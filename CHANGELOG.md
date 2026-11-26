@@ -55,6 +55,13 @@ versioning.
   `model_error`. Codex and Claude share the threshold. A new unconditional
   network-disabled Claude image gate checks reads, the verified fault and the
   benign cases on every CLI pin bump.
+- An OpenCode review whose repository tools all failed was admitted. The client
+  read only the final answer and discarded the session's tool parts. It now
+  classifies every `read`, `grep` and `glob` part between the admitted prompt
+  and the answer, across pages. It fails without emitting a batch when they all
+  failed, ended unresolved, or reported an unrecognized error. Completed calls,
+  refused outside paths and captured benign lookups stay usable. The OpenCode
+  image gate adds benign cases and a failing-rg fault that the session survives.
 
 ### Changed
 

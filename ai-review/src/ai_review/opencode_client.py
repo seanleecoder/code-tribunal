@@ -26,7 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
-from .adapter_output import extract_json_text
+from .adapter_output import _require_repository_tool_health, extract_json_text
 from .adapter_process import _OPENROUTER_BASE_URL
 from .canonical import json_loads_no_duplicates
 from .config import EFFORT_LEVELS
@@ -45,16 +45,43 @@ _SESSION_TITLE = "code-tribunal-ai-review"
 _SERVER_START_TIMEOUT_SECONDS = 15.0
 _SERVER_STOP_TIMEOUT_SECONDS = 5.0
 _MESSAGE_TIMEOUT_SECONDS = 24 * 60 * 60  # The runner owns the actual stage deadline.
+_REPOSITORY_TOOLS = ("read", "glob", "grep")
 _CONFIG_PERMISSIONS = [
     {"action": "*", "resource": "*", "effect": "deny"},
-    *({"action": tool, "resource": "*", "effect": "allow"} for tool in ("read", "glob", "grep")),
+    *({"action": tool, "resource": "*", "effect": "allow"} for tool in _REPOSITORY_TOOLS),
     # V2 allows external_directory by default. Never inherit that default.
     {"action": "external_directory", "resource": "*", "effect": "deny"},
 ]
 
 
+# Error states the pinned server reports for an ordinary outcome, as (type,
+# message prefix) pairs captured from real 2.4.2 sessions in the image gate
+# (scripts/smoke_opencode_batch_output.py). Every other error counts as failed.
+_BENIGN_TOOL_ERRORS = (
+    # A path outside the snapshot, refused by our external_directory deny rule.
+    ("permission.rejected", "Permission denied: external_directory"),
+)
+
+
 class OpenCodeClientError(RuntimeError):
     """The server or provider did not return a usable, completed answer."""
+
+
+def _repository_tool_failed(part: dict[str, Any]) -> bool:
+    """Whether one repository tool part failed, ended unresolved, or is unrecognized."""
+    state = part.get("state")
+    status = state.get("status") if isinstance(state, dict) else None
+    if status == "completed":
+        return False
+    if status != "error":
+        return True  # never reached a terminal state
+    error = state.get("error") if isinstance(state, dict) else None
+    if not isinstance(error, dict) or not isinstance(error.get("message"), str):
+        return True
+    return not any(
+        error.get("type") == kind and error["message"].startswith(prefix)
+        for kind, prefix in _BENIGN_TOOL_ERRORS
+    )
 
 
 def _basic_token(password: str) -> str:
@@ -417,7 +444,10 @@ def _session_answer(
 ) -> dict[str, Any] | list[Any]:
     # Descending pagination finds the newest final answer, then proves it belongs
     # to our admitted prompt. Never accept an earlier answer after a failed run.
+    # Every repository tool part between the prompt and the answer is collected
+    # on the way; execution health precedes the answer (SPEC-69).
     prefix = f"api/session/{session_id}"
+    tool_parts: dict[tuple[object, object], dict[str, Any]] = {}
     cursor: str | None = None
     seen: set[str] = set()
     answer: dict[str, Any] | None = None
@@ -442,6 +472,14 @@ def _session_answer(
                     f"OpenCode provider/API error: {_compact(message['error'])}"
                 )
             kind = message.get("type")
+            if kind == "assistant" and isinstance(message.get("content"), list):
+                for part in message["content"]:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "tool"
+                        and part.get("name") in _REPOSITORY_TOOLS
+                    ):
+                        tool_parts.setdefault((message.get("id"), part.get("id")), part)
             if kind == "idle":
                 if message.get("outcome") != "succeeded":
                     raise OpenCodeClientError("OpenCode session failed or was interrupted")
@@ -457,6 +495,11 @@ def _session_answer(
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
+                _require_repository_tool_health(
+                    "OpenCode",
+                    attempts=len(tool_parts),
+                    failed=sum(_repository_tool_failed(part) for part in tool_parts.values()),
+                )
                 return _normalize_message(answer, stage=stage)
         cursor = cursors.get("next")
         if not isinstance(cursor, str) or not cursor or cursor in seen:

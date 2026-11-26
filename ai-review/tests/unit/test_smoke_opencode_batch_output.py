@@ -159,3 +159,24 @@ def test_both_image_gates_are_unconditional_and_network_disabled() -> None:
         start = workflow.rindex("      - name:", 0, workflow.index(marker))
         assert "if:" not in workflow[start : workflow.index(marker)]
         assert workflow.index(marker) < workflow.index("Save preflighted image artifact")
+
+
+def test_tool_parts_are_collected_once_across_recorded_pages(capsys) -> None:
+    part = {"type": "tool", "id": "call_1", "name": "grep", "state": {"status": "error"}}
+    page = {"data": [{"id": "msg_1", "type": "assistant", "content": [part, {"type": "text"}]}]}
+    line = "OPENCODE_V2_EVIDENCE " + json.dumps({"path": "api/session/x/message", "response": page})
+    stderr = "\n".join([line, line, "OPENCODE_V2_EVIDENCE " + json.dumps({"startup": {}}), "noise"])
+    assert smoke._tool_parts(stderr) == [part]
+    assert "OPENCODE_TOOL_PARTS" in capsys.readouterr().out
+
+
+def test_tool_health_cases_run_before_the_rg_audit_restores_the_binary() -> None:
+    source = SCRIPT.read_text()
+    main = source[source.index("def main() -> int:") :]
+    order = [
+        "_prove_external_and_mutation_denial()",
+        "_prove_benign_tool_outcomes()",
+        "_prove_operational_tool_failure_is_rejected()",
+        "_prove_rg_execution_and_credential_scrubbing()",
+    ]
+    assert [main.index(call) for call in order] == sorted(main.index(call) for call in order)

@@ -455,6 +455,83 @@ def _prove_external_and_mutation_denial() -> None:
             re.IGNORECASE,
         ):
             fail(f"{label} produced no observable denial (exit={code})")
+        if tool == "read":
+            _tool_parts(stderr)
+            # A refused outside path is a deliberate scope refusal, not a failure.
+            if code:
+                fail(f"a scope refusal made the review unusable: {stderr}")
+
+
+TOOL_HEALTH_FAILURE = "OpenCode repository-tool attempts all failed operationally"
+
+
+def _tool_parts(stderr: str) -> list[dict[str, Any]]:
+    """Repository tool parts from the client's recorded session pages, printed as evidence."""
+    parts: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for line in stderr.splitlines():
+        if not line.startswith("OPENCODE_V2_EVIDENCE "):
+            continue
+        response = json.loads(line.removeprefix("OPENCODE_V2_EVIDENCE ")).get("response")
+        data = response.get("data") if isinstance(response, dict) else None
+        for message in data if isinstance(data, list) else ():
+            for part in message.get("content") or ():
+                if isinstance(part, dict) and part.get("type") == "tool":
+                    parts.setdefault((message.get("id"), part.get("id")), part)
+    found = list(parts.values())
+    print("OPENCODE_TOOL_PARTS " + json.dumps(found), flush=True)
+    return found
+
+
+def _prove_benign_tool_outcomes() -> None:
+    # Ordinary lookups the model can make: each must leave the review usable.
+    batch = probe_batch("review")
+    for label, steps in [
+        ("missing-read", [("read", {"path": "missing.py"})]),
+        ("no-match-grep", [("grep", {"pattern": "PREFLIGHT_NO_SUCH_MARKER"})]),
+    ]:
+        with _StubProvider(batch, steps=steps) as stub:
+            code, stdout, stderr = _run_client(stub.base_url, label)
+        _assert_provider_requests(stub.requests)
+        if not _tool_parts(stderr) or len(stub.requests) < 2:
+            fail(f"{label} never returned its tool result to the provider")
+        if code or json.loads(stdout) != batch:
+            fail(f"benign {label} was not admitted: {stderr}")
+
+
+def _prove_operational_tool_failure_is_rejected() -> None:
+    # A real in-root failure that the session survives: the pinned rg is present
+    # but fails, so neither the download guard nor a provider error can explain
+    # the rejection. A later successful read recovers the run.
+    rg = Path("/usr/local/bin/rg")
+    saved = rg.with_name("rg-fault-saved")
+    log = SMOKE_DIR / "rg-fault.log"
+    batch = probe_batch("review")
+    rg.rename(saved)
+    try:
+        rg.write_text(
+            f"#!/bin/sh\necho \"$*\" >> {log}\necho 'rg: probe-induced failure' >&2\nexit 2\n"
+        )
+        rg.chmod(0o755)
+        grep = ("grep", {"pattern": GREP_MARKER})
+        with _StubProvider(batch, steps=[grep]) as stub:
+            code, stdout, stderr = _run_client(stub.base_url, "rg-fault")
+        parts = _tool_parts(stderr)
+        if not log.is_file() or GREP_MARKER not in log.read_text():
+            fail("the failing rg was never invoked by grep")
+        if len(stub.requests) < 2 or not parts:
+            fail(f"the failed grep never returned to the provider: {stderr}")
+        if code == 0 or stdout.strip() or TOOL_HEALTH_FAILURE not in stderr:
+            fail(f"a wholly failed repository run was admitted (exit={code}): {stderr}")
+        if "downloaded ripgrep" in stderr:
+            fail("the download guard, not tool health, rejected the fault")
+        with _StubProvider(batch, steps=[grep, ("read", {"path": "example.py"})]) as stub:
+            code, stdout, stderr = _run_client(stub.base_url, "rg-fault-recovered")
+        _tool_parts(stderr)
+        if code or json.loads(stdout) != batch:
+            fail(f"a successful read did not recover the failed grep: {stderr}")
+    finally:
+        rg.unlink(missing_ok=True)
+        saved.rename(rg)
 
 
 def _prove_rg_execution_and_credential_scrubbing() -> None:
@@ -527,6 +604,8 @@ def main() -> int:
     _prove_failures()
     _prove_agent_catalog_check_fires()
     _prove_external_and_mutation_denial()
+    _prove_benign_tool_outcomes()
+    _prove_operational_tool_failure_is_rejected()
     _prove_rg_execution_and_credential_scrubbing()
     _prove_rg_absent_is_a_client_failure()
     print("opencode batch-output preflight smoke passed")

@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 
 import pytest
 from ai_review import opencode_client as client
+from ai_review.schema import AdapterModelError
 
 
 def answer(text: str = '{"findings":[]}', **extra: object) -> dict[str, object]:
@@ -610,3 +611,78 @@ def test_git_initialization_receives_no_model_or_server_credentials(tmp_path: Pa
     assert "OPENCODE_PASSWORD" not in forwarded
     assert forwarded["GIT_CONFIG_GLOBAL"] == os.devnull
     assert "--template=" in run.call_args.args[0]
+
+
+# SPEC-69: repository tool parts are admitted before the answer. The error
+# shapes are the pinned server's own, captured by the image gate.
+def tool(status: str, *, name: str = "grep", call: str = "call_1", **state: object) -> dict:
+    return {"type": "tool", "id": call, "name": name, "state": {"status": status, **state}}
+
+
+RG_FAILED = {"type": "unknown", "message": "ripgrep execution failed"}
+SCOPE_REFUSED = {"type": "permission.rejected", "message": "Permission denied: external_directory"}
+
+
+def calls(*parts: dict, message: str = "msg_calls") -> dict:
+    return {"id": message, "type": "assistant", "finish": "tool-calls", "content": list(parts)}
+
+
+def admit(*pages: dict) -> dict:
+    with mock.patch.object(client, "_request_json", side_effect=list(pages)):
+        return client._session_answer(
+            "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage="review"
+        )
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        [tool("completed", content=[{"type": "text", "text": "Found 1 matches"}])],
+        [tool("error", name="read", error=SCOPE_REFUSED)],
+        [tool("error", error=RG_FAILED), tool("completed", name="read", call="call_2")],
+        # Not a repository tool: the server already refuses it.
+        [tool("error", name="edit", error={"type": "tool.execution", "message": "No tool"})],
+        [],
+    ],
+    ids=["completed", "scope-refusal", "recovered", "non-repository", "tool-free"],
+)
+def test_healthy_or_benign_repository_tool_runs_are_admitted(parts: list[dict]) -> None:
+    assert admit(page(IDLE, answer(), calls(*parts), USER)) == {"findings": []}
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        tool("error", error=RG_FAILED),
+        tool(
+            "error",
+            name="read",
+            error={"type": "permission.rejected", "message": "Permission denied: read"},
+        ),
+        tool(
+            "error", name="glob", error={"type": "unknown", "message": "EACCES: permission denied"}
+        ),
+        tool("error", name="read"),
+        tool("running", name="read"),
+    ],
+    ids=["rg-failed", "in-root-denial", "unrecognized", "no-error-detail", "unresolved"],
+)
+def test_a_run_whose_repository_tools_all_failed_is_unusable(part: dict) -> None:
+    with pytest.raises(AdapterModelError, match="OpenCode repository-tool attempts all failed"):
+        admit(page(IDLE, answer(), calls(part), USER))
+
+
+def test_a_failure_on_an_older_page_than_the_answer_is_counted() -> None:
+    with pytest.raises(AdapterModelError, match="all failed"):
+        admit(
+            page(IDLE, answer(), cursor="older"),
+            page(calls(tool("error", error=RG_FAILED)), USER),
+        )
+
+
+def test_tool_parts_inside_the_final_answer_message_are_counted() -> None:
+    final = answer(
+        content=[tool("error", error=RG_FAILED), {"type": "text", "text": '{"findings":[]}'}]
+    )
+    with pytest.raises(AdapterModelError, match="all failed"):
+        admit(page(IDLE, final, USER))
