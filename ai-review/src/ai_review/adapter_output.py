@@ -247,13 +247,17 @@ def require_repository_tool_health(seat: str, *, attempts: int, failed: int) -> 
         raise AdapterModelError(f"{seat} repository-tool attempts all failed operationally")
 
 
-# Error results the pinned CLI returns for an ordinary lookup, from captured
-# traces (tests/fixtures/claude): a missing file for Read, a missing path for
-# Grep and a missing directory for Glob. Every other error result counts as failed.
+# Error results the pinned CLI returns for an ordinary lookup or a model's own
+# argument mistake, from captured traces (tests/fixtures/claude): a missing file
+# for Read, a missing path for Grep, a missing directory for Glob, a pattern rg
+# rejected before searching, and schema validation that runs before any I/O.
+# Every other error result counts as failed.
 _CLAUDE_BENIGN_ERRORS = (
     "File does not exist.",
     "Path does not exist: ",
     "Directory does not exist: ",
+    "Search failed \u2014 ripgrep rejected the pattern, glob, or file type without searching:\n",
+    "<tool_use_error>InputValidationError: ",
 )
 
 

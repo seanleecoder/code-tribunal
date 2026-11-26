@@ -164,6 +164,8 @@ def test_profiles_cover_controls_faults_and_benign_lookups() -> None:
         "grep-missing",
         "glob-missing",
         "read-outside",
+        "grep-invalid-pattern",
+        "read-invalid-input",
         "recovered",
     ]
     assert faults["read-fault"].expected_status == "model_error"

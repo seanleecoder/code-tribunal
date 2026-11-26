@@ -62,6 +62,8 @@ def renamed(items: list[dict], old: str, new: str) -> list[dict]:
         "grep-missing",
         "glob-missing",
         "read-outside",
+        "grep-invalid-pattern",
+        "read-invalid-input",
     ],
 )
 def test_captured_healthy_and_benign_runs_are_admitted(label: str) -> None:
@@ -129,6 +131,18 @@ def _refusal_variants() -> dict[str, list[dict]]:
 def test_only_an_outside_root_refusal_is_benign(variant: str) -> None:
     with pytest.raises(AdapterModelError, match=FAILED):
         load(stream(_refusal_variants()[variant]))
+
+
+def test_unreadable_directory_search_errors_stay_unusable() -> None:
+    # Captured on 2.1.332 for Grep and Glob under a mode-000 directory.
+    items = events("grep-invalid-pattern")
+    for block in _repository_results(items):
+        block["content"] = (
+            "Refusing to search /r/locked: it could not be opened (EACCES) \u2014 "
+            "it is unreadable, or is being replaced concurrently."
+        )
+    with pytest.raises(AdapterModelError, match=FAILED):
+        load(stream(items))
 
 
 def test_an_unrecognized_error_result_fails_closed() -> None:

@@ -15,7 +15,8 @@ tool_result came back, then the same valid answer through StructuredOutput.
   Read control, then a Read of the copied sentinel at mode 000. The CLI must
   report the path-specific EACCES and still supply the answer, and the runner
   must record ``model_error``. Missing-file, no-match, missing-path Grep and
-  Glob, outside-root refusal and recovered runs stay ``success``.
+  Glob, outside-root refusal, invalid-pattern, invalid-input and recovered runs
+  stay ``success``.
 
 A stub failure, a missing fault signal or any unexpected outcome fails the gate.
 """
@@ -488,6 +489,17 @@ def cases(profile: str) -> list[Case]:
             "read-outside",
             [("Read", lambda root, _s: {"file_path": str(Path(root).parents[2] / "change.diff")})],
             expect_text={0: "Claude requested permissions to read from "},
+        ),
+        Case(
+            # A model's own argument mistakes, rejected before any I/O.
+            "grep-invalid-pattern",
+            [("Grep", lambda _r, _s: {"pattern": "run_adapter(", "output_mode": "content"})],
+            expect_text={0: "Search failed \u2014 ripgrep rejected the pattern"},
+        ),
+        Case(
+            "read-invalid-input",
+            [("Read", lambda _r, _s: {})],
+            expect_text={0: "<tool_use_error>InputValidationError: "},
         ),
         Case(
             "recovered",

@@ -40,6 +40,14 @@ random sentinels, none of which is secret.
   0 with `structured_output`. The codec treats it as benign only for a denied
   repository call whose path is outside the `system/init` `cwd`, which is the
   review root.
+- `grep-invalid-pattern` and `read-invalid-input` were captured the same way on
+  2026-11-26. A `Grep` for `run_adapter(` returns `is_error: true` with `Search
+  failed — ripgrep rejected the pattern, glob, or file type without searching:`.
+  A `Read` with no arguments returns `<tool_use_error>InputValidationError: …`,
+  the CLI's schema validation before any I/O. Both are the model's own argument
+  mistakes and stay benign. A `Grep` or `Glob` on a mode-000 directory instead
+  returns `Refusing to search <path>: it could not be opened (EACCES) …`, which
+  stays failed.
 
 A benign missing file and a filesystem failure share `is_error: true`, so the
 codec cannot classify by that flag alone. The Claude image gate reruns these
