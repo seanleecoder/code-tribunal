@@ -18,6 +18,7 @@ Deliberately free of filesystem I/O: status and debug artifact writing lives in
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import sys
 from typing import Any
@@ -275,6 +276,30 @@ def _claude_tool_failed(block: dict[str, Any]) -> bool:
     return not _claude_tool_result_text(block).startswith(_CLAUDE_BENIGN_ERRORS)
 
 
+# The pinned CLI's refusal of a path outside the directories it was granted
+# (tests/fixtures/claude/read-outside.json). It is benign only for a denied call
+# whose path lies outside the review root, which is the CLI's working directory.
+_CLAUDE_REFUSAL_PREFIX = "Claude requested permissions to read from "
+_CLAUDE_REFUSAL_SUFFIX = ", but you haven't granted it yet."
+
+
+def _claude_refused_path(block: dict[str, Any]) -> str | None:
+    """The absolute path a refusal result names, or None for any other result."""
+    if block.get("is_error") is not True:
+        return None
+    text = _claude_tool_result_text(block)
+    if not (text.startswith(_CLAUDE_REFUSAL_PREFIX) and text.endswith(_CLAUDE_REFUSAL_SUFFIX)):
+        return None
+    path = text[len(_CLAUDE_REFUSAL_PREFIX) : -len(_CLAUDE_REFUSAL_SUFFIX)]
+    return path if path.startswith("/") and "\n" not in path else None
+
+
+def _outside_root(path: str, root: str) -> bool:
+    """Whether ``path`` lies lexically outside ``root``; never for the root ``/``."""
+    root, path = posixpath.normpath(root), posixpath.normpath(path)
+    return root != "/" and path != root and not path.startswith(root + "/")
+
+
 def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     """Read the pinned Claude stream, including its observed answer fallbacks.
 
@@ -288,8 +313,9 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     correlated by id with the CLI's own tool results and terminal
     ``permission_denials``. A review whose init inventory lacks its repository
     tools, or whose repository attempts all failed, is unusable. Only a result
-    without ``is_error`` or a captured benign lookup counts as healthy. Tool
-    output and answer text are never classified.
+    without ``is_error``, a captured benign lookup, or the captured refusal of a
+    path outside the review root counts as healthy. Tool output and answer text
+    are never classified.
     """
     assistant_parts: list[str] = []
     result_text = ""
@@ -299,8 +325,10 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     nonanswer_types: set[str] = set()
     repository_calls: set[str] = set()
     call_failed: dict[str, bool] = {}
-    denied: set[str] = set()
+    refused_paths: dict[str, str | None] = {}
+    denied: dict[str, object] = {}
     init_tools: list[Any] | None = None
+    init_cwd: str | None = None
     for line in stdout.splitlines():
         if not line.strip():
             continue
@@ -340,17 +368,20 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
                     and isinstance(block.get("tool_use_id"), str)
                 ):
                     call_failed.setdefault(block["tool_use_id"], _claude_tool_failed(block))
+                    refused_paths.setdefault(block["tool_use_id"], _claude_refused_path(block))
         if (
             event["type"] == "system"
             and event.get("subtype") == "init"
             and isinstance(event.get("tools"), list)
         ):
             init_tools = event["tools"]
+            cwd = event.get("cwd")
+            init_cwd = cwd if isinstance(cwd, str) and cwd.startswith("/") else None
         if event["type"] != "result":
             continue
         for denial in event.get("permission_denials") or ():
             if isinstance(denial, dict) and isinstance(denial.get("tool_use_id"), str):
-                denied.add(denial["tool_use_id"])
+                denied.setdefault(denial["tool_use_id"], denial.get("tool_name"))
         if event.get("is_error") is True:
             stream_error = _json_preview(_terminal_error_detail(event))
             continue
@@ -365,10 +396,25 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
         and not all(tool in init_tools for tool in CLAUDE_REPOSITORY_TOOLS)
     ):
         raise AdapterModelError("Claude review started without its repository tools")
+
+    def outside_root_refusal(call: str) -> bool:
+        path = refused_paths.get(call)
+        return (
+            denied[call] in CLAUDE_REPOSITORY_TOOLS
+            and path is not None
+            and init_cwd is not None
+            and _outside_root(path, init_cwd)
+        )
+
+    # A denied call fails unless it is the captured refusal of a path outside
+    # the review root; every other denial, including an in-root one, fails.
     require_repository_tool_health(
         "Claude",
         attempts=len(repository_calls),
-        failed=sum(call in denied or call_failed.get(call, True) for call in repository_calls),
+        failed=sum(
+            not outside_root_refusal(call) if call in denied else call_failed.get(call, True)
+            for call in repository_calls
+        ),
     )
     if structured_result is not None:
         sys.stderr.write(redact_text(f"ai-review: {stage} adapter used structured_output\n"))

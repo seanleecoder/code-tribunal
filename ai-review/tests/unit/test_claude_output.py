@@ -61,6 +61,7 @@ def renamed(items: list[dict], old: str, new: str) -> list[dict]:
         "grep-no-match",
         "grep-missing",
         "glob-missing",
+        "read-outside",
     ],
 )
 def test_captured_healthy_and_benign_runs_are_admitted(label: str) -> None:
@@ -100,6 +101,34 @@ def test_a_permission_denial_overrides_a_benign_result() -> None:
     ]
     with pytest.raises(AdapterModelError, match=FAILED):
         load(stream(items))
+
+
+def _refusal_variants() -> dict[str, list[dict]]:
+    """The captured outside-root refusal, changed so each benign condition fails."""
+    init = next(e for e in events("read-outside") if e.get("subtype") == "init")
+    variants = {}
+    in_root = events("read-outside")
+    for block in _repository_results(in_root):
+        block["content"] = (
+            f"Claude requested permissions to read from {init['cwd']}/x.py, "
+            "but you haven't granted it yet."
+        )
+    variants["in-root path"] = in_root
+    no_cwd = events("read-outside")
+    for event in no_cwd:
+        if event.get("subtype") == "init":
+            del event["cwd"]
+    variants["unknown cwd"] = no_cwd
+    undenied = events("read-outside")
+    undenied[-1]["permission_denials"] = []
+    variants["no denial"] = undenied
+    return variants
+
+
+@pytest.mark.parametrize("variant", ["in-root path", "unknown cwd", "no denial"])
+def test_only_an_outside_root_refusal_is_benign(variant: str) -> None:
+    with pytest.raises(AdapterModelError, match=FAILED):
+        load(stream(_refusal_variants()[variant]))
 
 
 def test_an_unrecognized_error_result_fails_closed() -> None:

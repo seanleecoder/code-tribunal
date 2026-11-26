@@ -33,6 +33,13 @@ random sentinels, none of which is secret.
   `is_error: true` with `Path does not exist: …` or `Directory does not exist: …`.
   Both are benign missing-path lookups. The image gate's matching cases re-prove
   them inside every reviewer image.
+- `read-outside` was captured the same way on 2026-11-26: a `Read` of the case's
+  own `change.diff`, outside the copied root. The CLI refuses it with `is_error:
+  true`, `Claude requested permissions to read from <path>, but you haven't
+  granted it yet.`, and a matching terminal `permission_denials` entry, then exits
+  0 with `structured_output`. The codec treats it as benign only for a denied
+  repository call whose path is outside the `system/init` `cwd`, which is the
+  review root.
 
 A benign missing file and a filesystem failure share `is_error: true`, so the
 codec cannot classify by that flag alone. The Claude image gate reruns these

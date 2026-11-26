@@ -15,7 +15,7 @@ tool_result came back, then the same valid answer through StructuredOutput.
   Read control, then a Read of the copied sentinel at mode 000. The CLI must
   report the path-specific EACCES and still supply the answer, and the runner
   must record ``model_error``. Missing-file, no-match, missing-path Grep and
-  Glob, and recovered runs stay ``success``.
+  Glob, outside-root refusal and recovered runs stay ``success``.
 
 A stub failure, a missing fault signal or any unexpected outcome fails the gate.
 """
@@ -482,6 +482,12 @@ def cases(profile: str) -> list[Case]:
             "glob-missing",
             [("Glob", lambda root, _s: {"pattern": "*.py", "path": f"{root}/missing-dir"})],
             expect_text={0: "Directory does not exist: "},
+        ),
+        Case(
+            # The case's own diff, outside the copied root: a deliberate scope refusal.
+            "read-outside",
+            [("Read", lambda root, _s: {"file_path": str(Path(root).parents[2] / "change.diff")})],
+            expect_text={0: "Claude requested permissions to read from "},
         ),
         Case(
             "recovered",
