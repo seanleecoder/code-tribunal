@@ -254,8 +254,13 @@ def _claude_review_tools() -> frozenset[str]:
 
 _CLAUDE_REPOSITORY_TOOLS = _claude_review_tools()
 # Error results the pinned CLI returns for an ordinary lookup, from captured
-# traces (tests/fixtures/claude). Every other error result counts as failed.
-_CLAUDE_BENIGN_ERRORS = ("File does not exist.",)
+# traces (tests/fixtures/claude): a missing file for Read, a missing path for
+# Grep and a missing directory for Glob. Every other error result counts as failed.
+_CLAUDE_BENIGN_ERRORS = (
+    "File does not exist.",
+    "Path does not exist: ",
+    "Directory does not exist: ",
+)
 
 
 def _claude_tool_result_text(block: dict[str, Any]) -> str:
@@ -282,7 +287,8 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
 
     Schema steering can omit structured_output. Keep the terminal result text
     and assistant text fallbacks, including an answer preceding a terminal model
-    error. Only Claude's assistant content and terminal result carry answers;
+    error in a stream whose CLI exited 0; the runner rejects a nonzero exit
+    before this codec runs. Only Claude's assistant content and terminal result carry answers;
     OpenCode's retired message/part/text event forms are deliberately absent.
 
     Execution health precedes the answer (SPEC-69). Repository calls are

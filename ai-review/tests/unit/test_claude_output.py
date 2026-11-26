@@ -53,7 +53,17 @@ def renamed(items: list[dict], old: str, new: str) -> list[dict]:
     return json.loads(json.dumps(items).replace(json.dumps(old), json.dumps(new)))
 
 
-@pytest.mark.parametrize("label", ["grep-success", "read-success", "read-missing", "grep-no-match"])
+@pytest.mark.parametrize(
+    "label",
+    [
+        "grep-success",
+        "read-success",
+        "read-missing",
+        "grep-no-match",
+        "grep-missing",
+        "glob-missing",
+    ],
+)
 def test_captured_healthy_and_benign_runs_are_admitted(label: str) -> None:
     assert load(capture(label)["stdout"]) == {"findings": []}
 

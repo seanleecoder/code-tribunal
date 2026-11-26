@@ -14,8 +14,8 @@ tool_result came back, then the same valid answer through StructuredOutput.
 - ``faults`` profile (uid 0 without DAC_OVERRIDE and DAC_READ_SEARCH): a matched
   Read control, then a Read of the copied sentinel at mode 000. The CLI must
   report the path-specific EACCES and still supply the answer, and the runner
-  must record ``model_error``. Missing-file, no-match and recovered runs stay
-  ``success``.
+  must record ``model_error``. Missing-file, no-match, missing-path Grep and
+  Glob, and recovered runs stay ``success``.
 
 A stub failure, a missing fault signal or any unexpected outcome fails the gate.
 """
@@ -475,6 +475,16 @@ def cases(profile: str) -> list[Case]:
             "grep-no-match",
             [("Grep", lambda _r, _s: no_match)],
             expect_text={0: "No matches found"},
+        ),
+        Case(
+            "grep-missing",
+            [("Grep", lambda root, _s: {"pattern": "example", "path": f"{root}/missing-dir"})],
+            expect_text={0: "Path does not exist: "},
+        ),
+        Case(
+            "glob-missing",
+            [("Glob", lambda root, _s: {"pattern": "*.py", "path": f"{root}/missing-dir"})],
+            expect_text={0: "Directory does not exist: "},
         ),
         Case(
             "recovered",

@@ -52,8 +52,8 @@ versioning.
   matches each `Read`, `Grep` and `Glob` call to the CLI's own result and its
   terminal `permission_denials`. A run whose repository calls all failed, ended
   without a result, or returned an unrecognized error is `model_error`. A
-  missing file or a no-match search stays usable, as does one successful call
-  among failures. A review whose init inventory lacks its repository tools is
+  missing file, a `Grep` or `Glob` on a missing path, or a no-match search stays
+  usable, as does one successful call among failures. A review whose init inventory lacks its repository tools is
   `model_error`. Codex and Claude share the threshold. A new unconditional
   network-disabled Claude image gate checks reads, the verified fault and the
   benign cases on every CLI pin bump.

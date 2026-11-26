@@ -1,6 +1,7 @@
 # Claude stream-json captures
 
-Captured on 2026-11-26 with Claude Code 2.1.325 in the consumer reviewer image
+Except where noted below, captured on 2026-11-26 with Claude Code 2.1.325 in the
+consumer reviewer image
 `ai-review-reviewer:3.1-a7066d4…@sha256:0bb096c3…`, through the image's own
 `adapter_runner.run_adapter("claude", "review")` and registry argv. Only
 `ANTHROPIC_BASE_URL` was redirected, to a scripted loopback Messages provider,
@@ -24,6 +25,14 @@ random sentinels, none of which is secret.
   - `read-missing` is a benign missing file: `is_error: true` with
     `File does not exist. …`.
   - `grep-no-match` is a benign empty search: no `is_error`, `No matches found`.
+- `grep-missing` and `glob-missing` were captured on 2026-11-26 with the pinned
+  Claude Code 2.1.332 on a Termux development host, not in the reviewer image.
+  The capture used the same `run_case` loopback path from
+  `scripts/smoke_claude_batch_output.py`, with only a writable `TMPDIR` added for
+  the host. A `Grep` or `Glob` whose `path` names a missing directory returns
+  `is_error: true` with `Path does not exist: …` or `Directory does not exist: …`.
+  Both are benign missing-path lookups. The image gate's matching cases re-prove
+  them inside every reviewer image.
 
 A benign missing file and a filesystem failure share `is_error: true`, so the
 codec cannot classify by that flag alone. The Claude image gate reruns these
