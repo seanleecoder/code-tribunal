@@ -143,10 +143,10 @@ def validate_run(
         raise CanaryValidationError(
             f"{platform} Codex repository read evidence is missing or invalid"
         ) from None
+    # Equality alone would accept `observed: 1`, since 1 == True.
     if (
-        not isinstance(witness, dict)
-        or witness.get("observed") is not True
-        or witness != read_witness(platform, reviewer_image, manifest, observed=True)
+        witness != read_witness(platform, reviewer_image, manifest, observed=True)
+        or witness["observed"] is not True
     ):
         raise CanaryValidationError(f"{platform} Codex repository read was not verified")
     seats["codex"]["review"]["repository_read"] = True

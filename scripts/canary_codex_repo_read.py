@@ -57,22 +57,23 @@ def _fixture_result(item: dict[str, Any]) -> bool:
     result = item.get("result")
     if not isinstance(result, dict) or not isinstance(result.get("content"), list):
         return False
-    texts = [
-        part["text"]
+    lines = [
+        line
         for part in result["content"]
         if isinstance(part, dict)
         and part.get("type") == "text"
         and isinstance(part.get("text"), str)
+        for line in part["text"].split("\n")
     ]
     if item.get("tool") == "grep":
-        return any(_fixture_match(line) for content in texts for line in content.split("\n"))
+        return any(_fixture_match(line) for line in lines)
     arguments = item.get("arguments")
     return (
         item.get("tool") == "read_file"
         and isinstance(arguments, dict)
         and isinstance(path := arguments.get("path"), str)
         and _is_fixture_path(path)
-        and any(_fixture_line(line) for content in texts for line in content.split("\n"))
+        and any(_fixture_line(line) for line in lines)
     )
 
 
@@ -125,20 +126,20 @@ def run(platform: str, reviewer_image: str) -> int:
         exit_code = adapter_runner.cli(["codex", "review"])
     finally:
         adapter_runner._run_adapter_process = original_run
-    if exit_code == 0:
-        outcome = load_json_file(output / "findings/codex.json")
-        if outcome["adapter_status"] == "success":
-            if stdout is None:
-                raise RuntimeError(
-                    "candidate canary: ai_review.adapter_runner._run_adapter_process was not "
-                    "called; the Codex read witness cannot be recorded"
-                )
-            write_canonical_json(
-                witness,
-                read_witness(
-                    platform, reviewer_image, outcome, observed=fixture_read_observed(stdout)
-                ),
-            )
+    if exit_code != 0:
+        return exit_code
+    outcome = load_json_file(output / "findings/codex.json")
+    if outcome["adapter_status"] != "success":
+        return exit_code
+    if stdout is None:
+        raise RuntimeError(
+            "candidate canary: ai_review.adapter_runner._run_adapter_process was not "
+            "called; the Codex read witness cannot be recorded"
+        )
+    write_canonical_json(
+        witness,
+        read_witness(platform, reviewer_image, outcome, observed=fixture_read_observed(stdout)),
+    )
     return exit_code
 
 

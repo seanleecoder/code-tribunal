@@ -46,7 +46,6 @@ from candidate_canary_common import (
     LifecycleFailure,
     canary_stage_environment,
     candidate_identity,
-    copy_codex_witness,
     expect,
     lifecycle_reviewer_results,
     panel_review_command,
@@ -155,20 +154,18 @@ def _request(
     return json.loads(body) if body else None
 
 
+def _file_endpoint(project: str, path: str) -> str:
+    return f"projects/{project}/repository/files/{urllib.parse.quote(path, safe='')}"
+
+
 def _raw_file(project: str, path: str) -> str:
-    encoded = urllib.parse.quote(path, safe="")
-    return _request(
-        "GET",
-        f"projects/{project}/repository/files/{encoded}/raw?ref=main",
-        raw=True,
-    ).decode("utf-8")
+    return _request("GET", f"{_file_endpoint(project, path)}/raw?ref=main", raw=True).decode(
+        "utf-8"
+    )
 
 
 def _file_exists(project: str, path: str) -> bool:
-    encoded = urllib.parse.quote(path, safe="")
-    found = _request(
-        "GET", f"projects/{project}/repository/files/{encoded}?ref=main", allow_missing=True
-    )
+    found = _request("GET", f"{_file_endpoint(project, path)}?ref=main", allow_missing=True)
     return found is not None
 
 
@@ -400,7 +397,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    (output / WITNESS_PATH).unlink(missing_ok=True)
+    # Only the Codex review job may carry the read witness.
     ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
     for job in _jobs(pipeline["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
@@ -410,17 +407,11 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
-        if job.get("name") == "AI review: [codex]":
-            copy_codex_witness(extracted / "out", output)
-        for name, target in (("inputs", inputs), ("out", output)):
+        out_ignore = None if job.get("name") == "AI review: [codex]" else ignore_canary
+        for name, target, ignore in (("inputs", inputs, None), ("out", output, out_ignore)):
             source = extracted / name
             if source.is_dir():
-                shutil.copytree(
-                    source,
-                    target,
-                    dirs_exist_ok=True,
-                    ignore=ignore_canary if name == "out" else None,
-                )
+                shutil.copytree(source, target, dirs_exist_ok=True, ignore=ignore)
     state["pipeline_id"] = str(pipeline["id"])
     state["external_run_url"] = str(pipeline["web_url"])
     write_state(args.state, state)

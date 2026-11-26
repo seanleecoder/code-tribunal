@@ -12,6 +12,7 @@ import tempfile
 import unittest
 import urllib.error
 import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -760,6 +761,40 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
 
     GITLAB_ACCESS_LINE = "    return normalize_username(username) in normalized_allowed\n"
 
+    @staticmethod
+    def _github_args(root: Path, state: Path) -> argparse.Namespace:
+        return argparse.Namespace(
+            workdir=str(root / "work"),
+            branch="candidate-test",
+            base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
+            reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
+            runtime_source="c" * 40,
+            state=str(state),
+        )
+
+    def _github_run(
+        self,
+        commands: list[tuple[str, ...]],
+        *,
+        demo_files: dict[str, str] | None = None,
+        pr_error: Exception | None = None,
+    ) -> Callable[..., str]:
+        def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
+            del cwd, capture
+            commands.append(command)
+            if command[:3] == ("gh", "repo", "clone"):
+                demo = Path(command[4])
+                (demo / ".github/workflows").mkdir(parents=True)
+                (demo / "src").mkdir()
+                files = {"src/access.py": self.GITLAB_ACCESS_LINE, **(demo_files or {})}
+                for path, content in files.items():
+                    (demo / path).write_text(content, encoding="utf-8")
+            if command[:3] == ("gh", "pr", "create") and pr_error is not None:
+                raise pr_error
+            return ""
+
+        return run
+
     def test_missing_state_is_an_idempotent_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = argparse.Namespace(state=str(Path(tmp) / "missing.json"))
@@ -791,30 +826,10 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             root = Path(tmp)
             state = root / "state.json"
             commands: list[tuple[str, ...]] = []
-
-            def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
-                del cwd, capture
-                commands.append(command)
-                if command[:3] == ("gh", "repo", "clone"):
-                    demo = Path(command[4])
-                    (demo / ".github/workflows").mkdir(parents=True)
-                    (demo / "src").mkdir()
-                    (demo / "src/access.py").write_text(
-                        "    return normalize_username(username) in normalized_allowed\n",
-                        encoding="utf-8",
-                    )
-                if command[:3] == ("gh", "pr", "create"):
-                    raise self.github.GitHubCanaryError("creation failed")
-                return ""
-
-            args = argparse.Namespace(
-                workdir=str(root / "work"),
-                branch="candidate-test",
-                base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
-                reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
-                runtime_source="c" * 40,
-                state=str(state),
+            run = self._github_run(
+                commands, pr_error=self.github.GitHubCanaryError("creation failed")
             )
+            args = self._github_args(root, state)
             with (
                 mock.patch.object(self.github, "_run", side_effect=run),
                 self.assertRaisesRegex(self.github.GitHubCanaryError, "creation failed"),
@@ -862,29 +877,8 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             commands: list[tuple[str, ...]] = []
-
-            def run(*command: str, cwd: Path | None = None, capture: bool = True) -> str:
-                del cwd, capture
-                commands.append(command)
-                if command[:3] == ("gh", "repo", "clone"):
-                    demo = Path(command[4])
-                    (demo / ".github/workflows").mkdir(parents=True)
-                    (demo / "src").mkdir()
-                    (demo / "src/access.py").write_text(
-                        "    return normalize_username(username) in normalized_allowed\n",
-                        encoding="utf-8",
-                    )
-                    (demo / "src/gateway_access.py").write_text("merged\n", encoding="utf-8")
-                return ""
-
-            args = argparse.Namespace(
-                workdir=str(root / "work"),
-                branch="candidate-test",
-                base_image=("ghcr.io/example/ai-review-base:1.0-test@sha256:" + "a" * 64),
-                reviewer_image=("ghcr.io/example/ai-review-reviewer:1.0-test@sha256:" + "b" * 64),
-                runtime_source="c" * 40,
-                state=str(root / "github-state.json"),
-            )
+            run = self._github_run(commands, demo_files={"src/gateway_access.py": "merged\n"})
+            args = self._github_args(root, root / "github-state.json")
             with (
                 mock.patch.object(self.github, "_run", side_effect=run),
                 self.assertRaisesRegex(

@@ -37,7 +37,6 @@ from candidate_canary_common import (
     LifecycleFailure,
     LifecycleStep,
     candidate_identity,
-    copy_codex_witness,
     effort_variables,
     expect,
     lifecycle_reviewer_results,
@@ -208,7 +207,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     command = indent(panel_review_command("github", args.reviewer_image), "          ")
     workflow = workflow.replace(review_line, f"        run: |\n{command}\n", 1)
 
-    def inject_defect(demo: Path) -> list[str]:
+    def add_panel_caller(demo: Path) -> list[str]:
         require_demo_access((demo / FIXTURE_PATH).read_text(encoding="utf-8"), GitHubCanaryError)
         try:
             with (demo / PANEL_CALLER_PATH).open("x", encoding="utf-8") as fixture:
@@ -221,7 +220,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
         args,
         caller=caller,
         workflow=workflow,
-        edit=inject_defect,
+        edit=add_panel_caller,
         message="candidate canary fixture",
         title=f"Candidate canary {args.runtime_source[:12]}",
     )
@@ -308,13 +307,15 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     inputs = destination / "inputs"
     output = destination / "out"
     shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
-    (output / WITNESS_PATH).unlink(missing_ok=True)
+    # Only the Codex review artifact may carry the read witness.
     ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
     for reviewer in reviewer_ids():
-        review = artifacts / f"ai-review-review-{reviewer}"
-        if reviewer == "codex":
-            copy_codex_witness(review, output)
-        shutil.copytree(review, output, dirs_exist_ok=True, ignore=ignore_canary)
+        shutil.copytree(
+            artifacts / f"ai-review-review-{reviewer}",
+            output,
+            dirs_exist_ok=True,
+            ignore=None if reviewer == "codex" else ignore_canary,
+        )
         shutil.copytree(
             artifacts / f"ai-review-critique-{reviewer}",
             output,

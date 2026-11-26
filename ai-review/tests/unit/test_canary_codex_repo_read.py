@@ -15,6 +15,7 @@ import pytest
 import yaml
 from ai_review.config import load_config
 from ai_review.input_bundle import prepare_local_bundle
+from ai_review.reviewers import CODEX_REPO_SERVER
 
 from tests.support.repository_script import load_repository_script
 
@@ -22,24 +23,33 @@ ROOT = Path(__file__).resolve().parents[3]
 probe = load_repository_script("canary_codex_repo_read", ROOT / "scripts/canary_codex_repo_read.py")
 
 
+def _result(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}]}
+
+
 def _event(tool: str = "read_file", **overrides: object) -> dict:
     return {
         "type": "item.completed",
         "item": {
             "type": "mcp_tool_call",
-            "server": "repo",
+            "server": CODEX_REPO_SERVER,
             "status": "completed",
             "error": None,
             "tool": tool,
             "arguments": {"path": "./src/access.py"},
-            "result": {"content": [{"type": "text", "text": "1\tfixture contents"}]},
+            "result": _result("1\tfixture contents"),
             **overrides,
         },
     }
 
 
-def _result(text: str) -> dict:
-    return {"content": [{"type": "text", "text": text}]}
+def _write_batch(output: Path, **fields: object) -> None:
+    batch = output / "findings/codex.json"
+    batch.parent.mkdir()
+    batch.write_text(
+        json.dumps({"run_id": "gl-1-2", "effective_config_sha256": "a" * 64, **fields}),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.parametrize(
@@ -84,19 +94,7 @@ def test_only_admitted_review_emits_redacted_witness(
     witness = tmp_path / probe.WITNESS_PATH
     witness.parent.mkdir()
     witness.write_text("stale witness", encoding="utf-8")
-    finding_batch = tmp_path / "findings/codex.json"
-    finding_batch.parent.mkdir()
-    finding_batch.write_text(
-        json.dumps(
-            {
-                "run_id": "gl-1-2",
-                "effective_config_sha256": "a" * 64,
-                "adapter_status": adapter_status,
-                "findings": ["raw model output"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_batch(tmp_path, adapter_status=adapter_status, findings=["raw model output"])
 
     def review(reviewer, stage):
         assert (reviewer, stage) == ("codex", "review")
@@ -129,14 +127,7 @@ def test_only_admitted_review_emits_redacted_witness(
 
 def test_bypassed_capture_seam_names_the_cause(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(tmp_path))
-    finding_batch = tmp_path / "findings/codex.json"
-    finding_batch.parent.mkdir()
-    finding_batch.write_text(
-        json.dumps(
-            {"run_id": "gl-1-2", "effective_config_sha256": "a" * 64, "adapter_status": "success"}
-        ),
-        encoding="utf-8",
-    )
+    _write_batch(tmp_path, adapter_status="success")
     with (
         patch.object(probe.adapter_runner, "run_adapter", return_value=0),
         pytest.raises(RuntimeError, match="_run_adapter_process was not called"),

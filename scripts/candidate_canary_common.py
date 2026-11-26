@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-import shutil
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -21,7 +20,6 @@ from ai_review.schema import (
     validate_outcome,
     write_canonical_json,
 )
-from canary_codex_repo_read import WITNESS_PATH
 from release_common import canonical_json_bytes
 
 DEFAULT_TIMEOUT_SECONDS = 7200
@@ -138,14 +136,6 @@ def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = ""
         f"  {prefix}{REVIEW_COMMAND}\n"
         "fi"
     )
-
-
-def copy_codex_witness(source: Path, output: Path) -> None:
-    witness = source / WITNESS_PATH
-    if witness.is_file():
-        target = output / WITNESS_PATH
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(witness, target)
 
 
 def reviewer_ids() -> tuple[str, ...]:
