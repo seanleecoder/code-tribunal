@@ -691,6 +691,16 @@ def test_a_failure_on_an_older_page_than_the_answer_is_counted() -> None:
         )
 
 
+def test_tool_parts_without_ids_are_counted_separately() -> None:
+    # Keyed by (message id, None), the failed part would hide the completed one.
+    failed, completed = tool("error", error=RG_FAILED), tool("completed", name="read")
+    for part in (failed, completed):
+        del part["id"]
+    assert admit(page(IDLE, answer(), calls(failed, completed), USER)) == {"findings": []}
+    with pytest.raises(AdapterModelError, match="all failed"):
+        admit(page(IDLE, answer(), calls(failed), USER))
+
+
 def test_tool_parts_inside_the_final_answer_message_are_counted() -> None:
     final = answer(
         content=[tool("error", error=RG_FAILED), {"type": "text", "text": '{"findings":[]}'}]

@@ -449,7 +449,9 @@ def _session_answer(
     # Every repository tool part between the prompt and the answer is collected
     # on the way; execution health precedes the answer (SPEC-69).
     prefix = f"api/session/{session_id}"
-    tool_parts: dict[tuple[object, object], dict[str, Any]] = {}
+    tool_parts: dict[tuple[str, str], dict[str, Any]] = {}
+    # Parts without both ids cannot be deduplicated, so each one counts.
+    unkeyed_parts: list[dict[str, Any]] = []
     cursor: str | None = None
     seen: set[str] = set()
     answer: dict[str, Any] | None = None
@@ -477,11 +479,21 @@ def _session_answer(
             if kind == "assistant" and isinstance(message.get("content"), list):
                 for part in message["content"]:
                     if (
-                        isinstance(part, dict)
-                        and part.get("type") == "tool"
-                        and part.get("name") in _REPOSITORY_TOOLS
+                        not isinstance(part, dict)
+                        or part.get("type") != "tool"
+                        or part.get("name") not in _REPOSITORY_TOOLS
                     ):
-                        tool_parts.setdefault((message.get("id"), part.get("id")), part)
+                        continue
+                    message_id, part_id = message.get("id"), part.get("id")
+                    if (
+                        isinstance(message_id, str)
+                        and message_id
+                        and isinstance(part_id, str)
+                        and part_id
+                    ):
+                        tool_parts.setdefault((message_id, part_id), part)
+                    else:
+                        unkeyed_parts.append(part)
             if kind == "idle":
                 if message.get("outcome") != "succeeded":
                     raise OpenCodeClientError("OpenCode session failed or was interrupted")
@@ -497,10 +509,11 @@ def _session_answer(
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
+                parts = [*tool_parts.values(), *unkeyed_parts]
                 _require_repository_tool_health(
                     "OpenCode",
-                    attempts=len(tool_parts),
-                    failed=sum(_repository_tool_failed(part) for part in tool_parts.values()),
+                    attempts=len(parts),
+                    failed=sum(_repository_tool_failed(part) for part in parts),
                 )
                 return _normalize_message(answer, stage=stage)
         cursor = cursors.get("next")
