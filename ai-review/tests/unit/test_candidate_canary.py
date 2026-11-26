@@ -20,6 +20,7 @@ from unittest import mock
 import yaml
 from ai_review.reviewers import REVIEWERS
 
+from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -759,8 +760,6 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             state=str(state),
         )
 
-    GITLAB_ACCESS_LINE = "    return normalize_username(username) in normalized_allowed\n"
-
     @staticmethod
     def _github_args(root: Path, state: Path) -> argparse.Namespace:
         return argparse.Namespace(
@@ -786,7 +785,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
                 demo = Path(command[4])
                 (demo / ".github/workflows").mkdir(parents=True)
                 (demo / "src").mkdir()
-                files = {"src/access.py": self.GITLAB_ACCESS_LINE, **(demo_files or {})}
+                files = {"src/access.py": DEMO_ACCESS_SOURCE, **(demo_files or {})}
                 for path, content in files.items():
                     (demo / path).write_text(content, encoding="utf-8")
             if command[:3] == ("gh", "pr", "create") and pr_error is not None:
@@ -889,7 +888,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             self.assertFalse(any("push" in command for command in commands))
 
             with (
-                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
                 mock.patch.object(self.gitlab, "_request", return_value={"file_name": "x"}),
                 mock.patch.object(self.gitlab, "_commit") as commit,
                 self.assertRaisesRegex(
@@ -898,6 +897,27 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             ):
                 self.gitlab.create_campaign(self._gitlab_args(root / "gitlab-state.json"))
             commit.assert_not_called()
+
+    def test_panel_requires_the_demo_helper_exports_on_both_platforms(self) -> None:
+        drifted = DEMO_ACCESS_SOURCE.replace("def is_allowed(", "def renamed(")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            commands: list[tuple[str, ...]] = []
+            run = self._github_run(commands, demo_files={"src/access.py": drifted})
+            with (
+                mock.patch.object(self.github, "_run", side_effect=run),
+                self.assertRaisesRegex(self.github.GitHubCanaryError, "access helper contract"),
+            ):
+                self.github.create_campaign(self._github_args(root, root / "github.json"))
+            self.assertFalse(any("push" in command for command in commands))
+
+            with (
+                mock.patch.object(self.gitlab, "_raw_file", return_value=drifted),
+                mock.patch.object(self.gitlab, "push_candidate_change") as push,
+                self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "access helper contract"),
+            ):
+                self.gitlab.create_campaign(self._gitlab_args(root / "gitlab.json"))
+            push.assert_not_called()
 
     def test_gitlab_records_template_branch_before_demo_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -918,7 +938,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(state)
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
                 mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", return_value={}),
                 self.assertRaisesRegex(self.gitlab.GitLabCanaryError, "demo commit failed"),
@@ -957,7 +977,7 @@ class CandidateCanaryCleanupTests(unittest.TestCase):
             args = self._gitlab_args(Path(tmp) / "state.json")
             with (
                 mock.patch.object(self.gitlab, "_commit", side_effect=commit),
-                mock.patch.object(self.gitlab, "_raw_file", return_value=self.GITLAB_ACCESS_LINE),
+                mock.patch.object(self.gitlab, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
                 mock.patch.object(self.gitlab, "_file_exists", return_value=False),
                 mock.patch.object(self.gitlab, "_request", side_effect=request),
                 mock.patch.object(self.gitlab.time, "sleep"),

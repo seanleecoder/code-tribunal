@@ -70,8 +70,9 @@ row whose target has arrived, and remove completed spec files from the active
 
    `panel` and `lifecycle` are required on every release. The panel must record
    a successful Codex read of the unchanged demo access helper on GitHub and
-   GitLab. Include `hostile` when the [checklist](#release-pull-request-checklist)
-   says it applies. Publication
+   GitLab. Build both candidate images from a runtime source that includes the
+   shipped runner's canary capture. Include `hostile` when the
+   [checklist](#release-pull-request-checklist) says it applies. Publication
    accepts only a run whose first attempt succeeded, so after a failure fix forward
    and dispatch a fresh run rather than re-running jobs. A red run blocks the
    release; it does not gate ordinary pull requests.

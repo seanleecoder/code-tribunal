@@ -78,16 +78,19 @@ before release established that the configured default model discovers the
 deferred tools: it called `grep` and `read_file`, read an unchanged file the diff
 called into, and completed without command execution.
 
-The Candidate Canary panel adds a gateway caller that references the unchanged
-demo access helper on GitHub and GitLab. The generated panel workflows capture
-the Codex execution stream in memory in the trusted runner process. A completed
-`read_file` or `grep` result must contain content from the helper, and the review
-must pass normal adapter admission. The panel validator checks the read result
+The Candidate Canary panel adds a gateway caller whose behavior depends on the
+unchanged demo access helper on GitHub and GitLab. The generated panel jobs pin
+the candidate reviewer image and invoke the shipped launcher. The trusted runner
+asks Codex to inspect the helper and records the result from its execution stream
+in memory after normal review admission. A completed `read_file` or `grep` result
+must contain content from the helper. The panel validator checks the result
 against the run, effective configuration, platform, fixture, and reviewer image.
 The canary artifact contains only the bound verdict. The panel summary identifies
 the tested model and reports `repository_read: true` when the proof succeeds.
-This requirement applies to the release fixture. Ordinary reviews may complete
-with no findings or tool calls.
+Build the candidate images from a source revision that includes the runner's
+canary capture. Ordinary reviews may complete with no findings or tool calls.
+The separate lifecycle campaign exercises live inline anchoring on a modified
+existing file.
 
 Configuration tables, headings, ordinary prose, and backticked code/test names
 are reviewed by people rather than a documentation-policy checker. Review

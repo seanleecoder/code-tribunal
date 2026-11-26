@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .anchors import anchor_location, finding_sort_key
+from .canary_codex_repo_read import FIXTURE_PATH
 from .canonical import canonical_json_text
 from .config import ReviewConfig
 from .outcomes import load_outcomes
@@ -99,22 +100,29 @@ def _render(stage: str, config: ReviewConfig, blocks: list[tuple[str, str]]) -> 
     return rendered
 
 
-def render_review_prompt(input_dir: str | Path, config: ReviewConfig, reviewer: str) -> str:
+def render_review_prompt(
+    input_dir: str | Path, config: ReviewConfig, reviewer: str, *, canary_read: bool = False
+) -> str:
     input_dir = Path(input_dir)
     manifest = load_json_file(input_dir / "manifest.json")
     diff_text = (input_dir / "mr.diff").read_text(encoding="utf-8")
-    return _render(
-        "review",
-        config,
-        [
-            ("REVIEWER", reviewer),
-            ("PROJECT_CONTEXT_JSON", canonical_json_text(_project_context(manifest))),
-            ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
-            ("RULES", _read_rules()),
-            ("DIFF_STATS", _diff_stats_text(diff_text)),
-            ("MR_DIFF_UNTRUSTED_DATA", diff_text),
-        ],
-    )
+    blocks = [
+        ("REVIEWER", reviewer),
+        ("PROJECT_CONTEXT_JSON", canonical_json_text(_project_context(manifest))),
+        ("PRIOR_DECISIONS_JSON", canonical_json_text(_prior_decisions(input_dir))),
+        ("RULES", _read_rules()),
+        ("DIFF_STATS", _diff_stats_text(diff_text)),
+    ]
+    if canary_read:
+        blocks.append(
+            (
+                "CANARY_REVIEW",
+                f"Read {FIXTURE_PATH} with the available repository tools and use the helper's "
+                "implementation to assess its caller in the diff.",
+            )
+        )
+    blocks.append(("MR_DIFF_UNTRUSTED_DATA", diff_text))
+    return _render("review", config, blocks)
 
 
 def _reviewer_aliases(reviewers: list[str]) -> dict[str, str]:

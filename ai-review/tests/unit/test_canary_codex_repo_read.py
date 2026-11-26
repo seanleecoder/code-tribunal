@@ -13,14 +13,19 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from ai_review import adapter_runner
+from ai_review import canary_codex_repo_read as probe
 from ai_review.config import load_config
 from ai_review.input_bundle import prepare_local_bundle
 from ai_review.reviewers import CODEX_REPO_SERVER
 
+from tests.support.adapter_inputs import bind_manifest_to_config, write_adapter_input_bundle
+from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
 from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
-probe = load_repository_script("canary_codex_repo_read", ROOT / "scripts/canary_codex_repo_read.py")
+CONFIG_PATH = ROOT / "ai-review/config/review.yaml"
+CAPTURE_PATH = ROOT / "ai-review/tests/fixtures/codex/mcp-read.json"
 
 
 def _result(text: str) -> dict:
@@ -41,15 +46,6 @@ def _event(tool: str = "read_file", **overrides: object) -> dict:
             **overrides,
         },
     }
-
-
-def _write_batch(output: Path, **fields: object) -> None:
-    batch = output / "findings/codex.json"
-    batch.parent.mkdir()
-    batch.write_text(
-        json.dumps({"run_id": "gl-1-2", "effective_config_sha256": "a" * 64, **fields}),
-        encoding="utf-8",
-    )
 
 
 @pytest.mark.parametrize(
@@ -84,60 +80,75 @@ def test_fixture_requires_an_actual_content_bearing_result(event: dict, observed
     assert probe.fixture_read_observed(json.dumps(event)) is observed
 
 
+@pytest.fixture
+def review_output(tmp_path, monkeypatch):
+    inputs = tmp_path / "inputs"
+    write_adapter_input_bundle(inputs)
+    bind_manifest_to_config(inputs, CONFIG_PATH)
+    output = tmp_path / "out"
+    monkeypatch.setenv("AI_REVIEW_INPUT_DIR", str(inputs))
+    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-token")
+    monkeypatch.delenv("AI_REVIEW_LOCAL_MOCK", raising=False)
+    for name in probe.CANARY_REVIEW_ENV:
+        monkeypatch.delenv(name, raising=False)
+    return output
+
+
 @pytest.mark.parametrize(
-    ("runner_exit", "adapter_status"), [(0, "success"), (1, "model_error"), (0, "skipped")]
+    "settings",
+    [
+        {probe.PLATFORM_ENV: "github"},
+        {probe.IMAGE_ENV: "candidate"},
+        {probe.PLATFORM_ENV: "other", probe.IMAGE_ENV: "candidate"},
+        {probe.PLATFORM_ENV: "gitlab", probe.IMAGE_ENV: " "},
+        {probe.PLATFORM_ENV: "gitlab", probe.IMAGE_ENV: "candidate", "AI_REVIEW_LOCAL_MOCK": "1"},
+    ],
 )
-def test_only_admitted_review_emits_redacted_witness(
-    tmp_path, monkeypatch, runner_exit, adapter_status
-):
-    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(tmp_path))
-    witness = tmp_path / probe.WITNESS_PATH
-    witness.parent.mkdir()
+def test_bad_canary_controls_clear_stale_evidence(review_output, monkeypatch, settings):
+    for name, value in settings.items():
+        monkeypatch.setenv(name, value)
+    witness = review_output / probe.WITNESS_PATH
+    witness.parent.mkdir(parents=True)
     witness.write_text("stale witness", encoding="utf-8")
-    _write_batch(tmp_path, adapter_status=adapter_status, findings=["raw model output"])
-
-    def review(reviewer, stage):
-        assert (reviewer, stage) == ("codex", "review")
-        probe.adapter_runner._run_adapter_process()
-        return runner_exit
-
     with (
-        patch.object(probe.adapter_runner, "run_adapter", side_effect=review),
-        patch.object(
-            probe.adapter_runner,
-            "_run_adapter_process",
-            return_value=SimpleNamespace(stdout=json.dumps(_event())),
-        ),
+        patch.object(adapter_runner, "render_review_prompt") as render,
+        patch.object(adapter_runner, "_run_adapter_process") as child,
     ):
-        assert probe.run("gitlab", "reviewer@sha256:example") == runner_exit
-
-    if adapter_status == "success":
-        assert json.loads(witness.read_text(encoding="utf-8")) == {
-            "platform": "gitlab",
-            "reviewer": "codex",
-            "reviewer_image": "reviewer@sha256:example",
-            "fixture": "demo-access-policy",
-            "run_id": "gl-1-2",
-            "effective_config_sha256": "a" * 64,
-            "observed": True,
-        }
-    else:
-        assert not witness.exists()
+        assert adapter_runner.run_adapter("codex", "review") == 1
+    render.assert_not_called()
+    child.assert_not_called()
+    outcome = json.loads((review_output / "findings/codex.json").read_text(encoding="utf-8"))
+    assert outcome["adapter_status"] == "config_error"
+    assert outcome["error_class"] == "ConfigError"
+    assert not witness.exists()
 
 
-def test_bypassed_capture_seam_names_the_cause(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_REVIEW_OUTPUT_DIR", str(tmp_path))
-    _write_batch(tmp_path, adapter_status="success")
-    with (
-        patch.object(probe.adapter_runner, "run_adapter", return_value=0),
-        pytest.raises(RuntimeError, match="_run_adapter_process was not called"),
-    ):
-        probe.run("gitlab", "reviewer@sha256:example")
-    assert not (tmp_path / probe.WITNESS_PATH).exists()
+@pytest.mark.parametrize("canary", [False, True])
+def test_failed_review_writes_no_canary_evidence(review_output, monkeypatch, canary):
+    witness = review_output / probe.WITNESS_PATH
+    if canary:
+        monkeypatch.setenv(probe.PLATFORM_ENV, "github")
+        monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
+        witness.parent.mkdir(parents=True)
+        witness.write_text("stale witness", encoding="utf-8")
+
+    def fail(_command, env, *_args, **_kwargs):
+        assert not probe.CANARY_REVIEW_ENV.intersection(env)
+        prompt = Path(env["AI_REVIEW_RENDERED_PROMPT"]).read_text(encoding="utf-8")
+        assert ("<CANARY_REVIEW>" in prompt) is canary
+        return SimpleNamespace(returncode=1, stdout="", stderr="failed", stderr_matched=False)
+
+    with patch.object(adapter_runner, "_run_adapter_process", side_effect=fail) as child:
+        assert adapter_runner.run_adapter("codex", "review") == 1
+    child.assert_called_once()
+    assert not witness.exists()
 
 
-@pytest.mark.parametrize("platform", ["github", "gitlab"])
-def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform):
+@pytest.mark.parametrize(
+    ("platform", "observed"), [("github", True), ("gitlab", True), ("gitlab", False)]
+)
+def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform, observed):
     driver = load_repository_script(f"canary_{platform}", ROOT / f"scripts/canary_{platform}.py")
     args = argparse.Namespace(
         base_image="ghcr.io/example/ai-review-base:3.1-test@sha256:" + "a" * 64,
@@ -148,11 +159,7 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
     repo = tmp_path / "demo"
     helper = repo / probe.FIXTURE_PATH
     helper.parent.mkdir(parents=True)
-    helper_source = (
-        "def is_allowed(username, normalized_allowed):\n"
-        "    return normalize_username(username) in normalized_allowed\n"
-    )
-    helper.write_text(helper_source, encoding="utf-8")
+    helper.write_text(DEMO_ACCESS_SOURCE, encoding="utf-8")
     if platform == "github":
         with patch.object(driver, "push_candidate_branch") as push:
             driver.create_campaign(args)
@@ -165,13 +172,15 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         [caller_path] = push.call_args.kwargs["edit"](repo)
     else:
         with (
-            patch.object(driver, "_raw_file", return_value=helper_source),
+            patch.object(driver, "_raw_file", return_value=DEMO_ACCESS_SOURCE),
             patch.object(driver, "_file_exists", return_value=False),
             patch.object(driver, "push_candidate_change") as push,
         ):
             driver.create_campaign(args)
         template = yaml.safe_load(push.call_args.kwargs["template"])
         [command] = template[".review_template"]["script"]
+        assert template[".review_template"]["image"] == args.reviewer_image
+        assert template[".critique_template"]["image"] == "$AI_REVIEW_REVIEWER_IMAGE"
         assert f"out/{probe.WITNESS_PATH}" in template[".review_template"]["artifacts"]["paths"]
         [caller] = push.call_args.kwargs["fixture"]
         assert caller["action"] == "create"
@@ -179,8 +188,9 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         (repo / caller_path).write_text(caller["content"], encoding="utf-8")
 
     caller_lines = (repo / caller_path).read_text(encoding="utf-8").splitlines(keepends=True)
-    assert helper.read_text(encoding="utf-8") == helper_source
-    assert "from src.access import is_allowed, normalize_username\n" in caller_lines
+    assert helper.read_text(encoding="utf-8") == DEMO_ACCESS_SOURCE
+    assert "from src.access import is_allowed\n" in caller_lines
+    assert "    return is_allowed(username, allowed_user)\n" in caller_lines
     diff = tmp_path / "change.diff"
     diff.write_text(
         f"diff --git a/{caller_path} b/{caller_path}\nnew file mode 100644\n"
@@ -189,30 +199,43 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
         encoding="utf-8",
     )
     inputs = tmp_path / "inputs"
-    prepare_local_bundle(load_config(ROOT / "ai-review/config/review.yaml"), diff, repo, inputs)
+    prepare_local_bundle(load_config(CONFIG_PATH), diff, repo, inputs)
 
     # Exercise both generated shell steps and the normal adapter using a
     # captured CLI stream. Only the Codex executable is replaced locally.
-    capture = json.loads(
-        (ROOT / "ai-review/tests/fixtures/codex/mcp-read.json").read_text(encoding="utf-8")
-    )
+    captured_stdout = json.loads(CAPTURE_PATH.read_text(encoding="utf-8"))["stdout"]
+    if not observed:
+        captured_stdout = (
+            "\n".join(
+                line for line in captured_stdout.splitlines() if '"mcp_tool_call"' not in line
+            )
+            + "\n"
+        )
     stream = tmp_path / "codex.jsonl"
     stream.write_text(
         # The recorded read predates numbered read_file output; number it as the
         # shipped repository server does.
-        capture["stdout"]
-        .replace("sentinel.txt", str(probe.FIXTURE_PATH))
-        .replace('"CAPTURED_SNAPSHOT_SENTINEL"', '"1\\tCAPTURED_SNAPSHOT_SENTINEL"'),
+        captured_stdout.replace("sentinel.txt", str(probe.FIXTURE_PATH)).replace(
+            '"CAPTURED_SNAPSHOT_SENTINEL"', '"1\\tCAPTURED_SNAPSHOT_SENTINEL"'
+        ),
         encoding="utf-8",
     )
     codex = tmp_path / "codex"
     shell = shutil.which("sh")
     codex.write_text(
-        f"#!{shell}\nset -eu\ntest -f src/access.py\ncat {shlex.quote(str(stream))}\n",
+        f"#!{shell}\nset -eu\ntest -f src/access.py\n"
+        + "".join(f'test -z "${{{name}+set}}"\n' for name in probe.CANARY_REVIEW_ENV)
+        + "grep -Fq 'Read src/access.py with the available repository tools'\n"
+        + f"cat {shlex.quote(str(stream))}\n",
         encoding="utf-8",
     )
     codex.chmod(0o755)
     output = tmp_path / "out"
+    launcher = "/opt/ai-review/adapters/run_reviewer.sh"
+    assert launcher in command
+    command = command.replace(
+        launcher, shlex.quote(str(ROOT / "ai-review/adapters/run_reviewer.sh"))
+    )
     result = subprocess.run(
         # A bash job shell (the Actions default) that ignores SIGCHLD passes that
         # to the commands it runs; dash does not. The canary must reset it as the
@@ -234,5 +257,13 @@ def test_generated_panel_observes_read_through_shipped_runner(tmp_path, platform
     )
     assert result.returncode == 0, result.stderr
     witness = json.loads((output / probe.WITNESS_PATH).read_text(encoding="utf-8"))
-    assert witness["observed"] is True
-    assert witness["platform"] == platform
+    manifest = json.loads((inputs / "manifest.json").read_text(encoding="utf-8"))
+    assert witness == {
+        "platform": platform,
+        "reviewer": "codex",
+        "reviewer_image": args.reviewer_image,
+        "fixture": "demo-access-policy",
+        "run_id": manifest["run_id"],
+        "effective_config_sha256": manifest["effective_config_sha256"],
+        "observed": observed,
+    }

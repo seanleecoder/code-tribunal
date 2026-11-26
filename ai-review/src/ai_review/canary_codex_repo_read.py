@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import os
 import posixpath
-import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ai_review import adapter_runner
-from ai_review.canonical import json_loads_no_duplicates
-from ai_review.reviewers import CODEX_REPO_SERVER
-from ai_review.schema import load_json_file, write_canonical_json
+from .canonical import json_loads_no_duplicates
+from .reviewers import CODEX_REPO_SERVER
 
 FIXTURE_PATH = PurePosixPath("src/access.py")
 WITNESS_PATH = Path("canary/codex-repo-read.json")
+PLATFORM_ENV = "AI_REVIEW_CANARY_CODEX_PLATFORM"
+IMAGE_ENV = "AI_REVIEW_CANARY_CODEX_REVIEWER_IMAGE"
+CANARY_REVIEW_ENV = frozenset({PLATFORM_ENV, IMAGE_ENV})
 
 
 def _is_fixture_path(path: str) -> bool:
@@ -104,44 +103,3 @@ def read_witness(
         "effective_config_sha256": artifact["effective_config_sha256"],
         "observed": observed,
     }
-
-
-def run(platform: str, reviewer_image: str) -> int:
-    output = Path(os.environ.get("AI_REVIEW_OUTPUT_DIR", "out"))
-    witness = output / WITNESS_PATH
-    witness.unlink(missing_ok=True)
-    stdout: str | None = None
-    original_run = adapter_runner._run_adapter_process
-
-    def capture(*args: Any, **kwargs: Any) -> Any:
-        nonlocal stdout
-        result = original_run(*args, **kwargs)
-        stdout = result.stdout
-        return result
-
-    adapter_runner._run_adapter_process = capture
-    try:
-        # The shipped entry point, as run_reviewer.sh invokes it, including its
-        # reset of an inherited ignored SIGCHLD.
-        exit_code = adapter_runner.cli(["codex", "review"])
-    finally:
-        adapter_runner._run_adapter_process = original_run
-    if exit_code != 0:
-        return exit_code
-    outcome = load_json_file(output / "findings/codex.json")
-    if outcome["adapter_status"] != "success":
-        return exit_code
-    if stdout is None:
-        raise RuntimeError(
-            "candidate canary: ai_review.adapter_runner._run_adapter_process was not "
-            "called; the Codex read witness cannot be recorded"
-        )
-    write_canonical_json(
-        witness,
-        read_witness(platform, reviewer_image, outcome, observed=fixture_read_observed(stdout)),
-    )
-    return exit_code
-
-
-if __name__ == "__main__":
-    raise SystemExit(run(*sys.argv[1:]))

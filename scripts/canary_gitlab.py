@@ -32,7 +32,7 @@ from textwrap import indent
 from typing import Any
 
 import yaml
-from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
+from ai_review.canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
@@ -366,14 +366,23 @@ def _artifacts(job: dict[str, Any], *, allow_missing: bool = False) -> bytes | N
 
 def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     template = candidate_template(Path(args.template).read_text(encoding="utf-8"), args)
+    before, review_header, remainder = template.partition("\n.review_template:\n")
+    review, matrix_header, after = remainder.partition('\n"AI review":\n')
+    image_line = '  image: "$AI_REVIEW_REVIEWER_IMAGE"\n'
     prefix = canary_stage_environment() + " "
     review_line = f"    - {prefix}{REVIEW_COMMAND}\n"
     review_paths = "      - out/findings/\n      - out/status/\n"
-    if template.count(review_line) != 1 or template.count(review_paths) != 1:
-        raise GitLabCanaryError("candidate template no longer exposes the review command and paths")
+    if not (review_header and matrix_header) or any(
+        review.count(anchor) != 1 for anchor in (image_line, review_line, review_paths)
+    ):
+        raise GitLabCanaryError(
+            "candidate template no longer exposes the review image, command and paths"
+        )
     command = indent(panel_review_command("gitlab", args.reviewer_image, prefix=prefix), "      ")
-    template = template.replace(review_line, f"    - |\n{command}\n", 1)
-    template = template.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
+    review = review.replace(image_line, f"  image: {json.dumps(args.reviewer_image)}\n", 1)
+    review = review.replace(review_line, f"    - |\n{command}\n", 1)
+    review = review.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
+    template = before + review_header + review + matrix_header + after
     require_demo_access(_raw_file(DEMO_PROJECT, str(FIXTURE_PATH)), GitLabCanaryError)
     # Checked before any branch exists; the "create" action stays the race backstop.
     if _file_exists(DEMO_PROJECT, PANEL_CALLER_PATH):

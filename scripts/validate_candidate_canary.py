@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from ai_review.canary_codex_repo_read import WITNESS_PATH, read_witness
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
     batch_usable,
@@ -14,7 +15,6 @@ from ai_review.schema import (
     validate_artifact,
     write_canonical_json,
 )
-from canary_codex_repo_read import WITNESS_PATH, read_witness
 from candidate_canary_common import read_state
 
 CLEANUP_STATUSES = ("success", "failure", "cancelled", "skipped")

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import shlex
 import time
@@ -11,6 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from ai_review.canary_codex_repo_read import IMAGE_ENV, PLATFORM_ENV
 from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
@@ -31,24 +33,17 @@ REVIEWER_CREDENTIALS = tuple(
 GITHUB_SECRETS = (*REVIEWER_CREDENTIALS, "AI_REVIEW_GITHUB_RESOLVE_TOKEN")
 GITLAB_SECRETS = (*REVIEWER_CREDENTIALS, "GITLAB_TOKEN")
 DEMO_SAFE_MEMBERSHIP = "return normalize_username(username) in normalized_allowed"
-DEMO_FIXTURE_GUARD = "demo fixture no longer contains the expected safe membership line"
+DEMO_FIXTURE_GUARD = "demo fixture no longer matches the access helper contract"
 PANEL_CALLER_PATH = "src/gateway_access.py"
 DEMO_CALLER_EXISTS_GUARD = f"demo repository already contains {PANEL_CALLER_PATH}"
 PANEL_CALLER = '''"""Access check for the gateway."""
 
-from src.access import is_allowed, normalize_username
+from src.access import is_allowed
 
 
-def gateway_allows(username: str, allowed_users: set[str]) -> bool:
-    """Permit the shared access check or a gateway-specific fallback."""
-    if is_allowed(username, allowed_users):
-        return True
-    # Keep the gateway fallback consistent with the shared policy in src/access.py.
-    normalized_allowed = {normalize_username(item) for item in allowed_users}
-    return any(
-        normalize_username(username).startswith(candidate)
-        for candidate in normalized_allowed
-    )
+def gateway_allows(username: str, allowed_user: str) -> bool:
+    """Check access for a gateway with one configured user."""
+    return is_allowed(username, allowed_user)
 '''
 
 REVIEW_COMMAND = '/opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review'
@@ -117,21 +112,34 @@ def write_state(path: str | Path, state: dict[str, Any]) -> None:
     Path(path).write_bytes(canonical_json_bytes(state))
 
 
+def _demo_functions(source: str, error_type: type[RuntimeError]) -> dict[str, ast.FunctionDef]:
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        raise error_type(DEMO_FIXTURE_GUARD) from None
+    return {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+
+
 def require_demo_access(source: str, error_type: type[RuntimeError]) -> None:
-    if DEMO_SAFE_MEMBERSHIP not in source:
+    functions = _demo_functions(source, error_type)
+    expected_return = ast.dump(ast.parse(DEMO_SAFE_MEMBERSHIP).body[0])
+    is_allowed = functions.get("is_allowed")
+    if (
+        is_allowed is None
+        or len(is_allowed.args.posonlyargs + is_allowed.args.args) != 2
+        or not any(ast.dump(statement) == expected_return for statement in is_allowed.body)
+    ):
+        raise error_type(DEMO_FIXTURE_GUARD)
+    normalize = functions.get("normalize_username")
+    if normalize is None or len(normalize.args.posonlyargs + normalize.args.args) != 1:
         raise error_type(DEMO_FIXTURE_GUARD)
 
 
 def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = "") -> str:
-    # Inline trusted source in the generated workflow/template. Python -P keeps
-    # the demo worktree out of module resolution, as the canonical launcher does.
-    script = Path(__file__).with_name("canary_codex_repo_read.py").read_text(encoding="utf-8")
+    canary_env = f"{PLATFORM_ENV}={platform} {IMAGE_ENV}={shlex.quote(reviewer_image)}"
     return (
         'if [ "$REVIEWER" = codex ]; then\n'
-        f'  {prefix}"${{PYTHON:-python3}}" -P - {platform} {shlex.quote(reviewer_image)} '
-        "<<'CODEX_READ_PY'\n"
-        f"{script}"
-        "CODEX_READ_PY\n"
+        f"  {prefix or 'env '}{canary_env} {REVIEW_COMMAND}\n"
         "else\n"
         f"  {prefix}{REVIEW_COMMAND}\n"
         "fi"

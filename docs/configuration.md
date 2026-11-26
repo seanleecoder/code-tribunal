@@ -394,6 +394,8 @@ override them in merge-request-controlled configuration.
 | `AI_REVIEW_CONFIG` | Configuration path read only by prepare. |
 | `AI_REVIEW_INPUT_DIR` | Adapter input bundle path. |
 | `AI_REVIEW_OUTPUT_DIR` | Adapter output root. |
+| `AI_REVIEW_CANARY_CODEX_PLATFORM` | Generated panel review platform, `github` or `gitlab`. Set only by the Candidate Canary together with its reviewer image reference. |
+| `AI_REVIEW_CANARY_CODEX_REVIEWER_IMAGE` | Literal reviewer image reference used by the generated panel review job. The shipped runner consumes both canary controls and keeps them out of the reviewer subprocess environment. |
 | `AI_REVIEW_LOCAL_MOCK` | Selects the deterministic mock in the Python runner only when `1`, with the companion allow flag below. Production templates set `0`; never set as a consumer project/pipeline variable. |
 | `AI_REVIEW_ALLOW_LOCAL_MOCK` | Exact `true` required alongside `AI_REVIEW_LOCAL_MOCK=1`. A missing CLI or credential always fails when mock mode is not selected. Image preflight and the operator's mock lifecycle runs only; forbidden in production. This is a misconfiguration guard, not an authorization boundary: an actor who can inject both variables can enable mock mode. |
 | `AI_REVIEW_MOCK_SCENARIO` | Selects a deterministic mock-reviewer finding set when the mock path runs (`default`, `blocking`, `blocking_alt`, `advisory`, `none`); forwarded only to the selected mock subprocess. |

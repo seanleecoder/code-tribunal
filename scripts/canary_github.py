@@ -23,8 +23,8 @@ from pathlib import Path
 from textwrap import indent
 from typing import Any
 
+from ai_review.canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from ai_review.schema import load_json_file
-from canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_REPOSITORY,
