@@ -29,7 +29,6 @@ def capture(label: str) -> dict:
 def load(data: dict, stage: str = "review") -> dict:
     return _load_adapter_json(
         data["stdout"],
-        returncode=data["returncode"],
         stderr=data["stderr"],
         codec="codex_stream_json",
         stage=stage,
@@ -238,13 +237,6 @@ def test_events_split_only_at_newlines() -> None:
     events.insert(2, json.dumps({"type": "item.completed", "item": reasoning}, ensure_ascii=False))
     data["stdout"] = "\n".join(events)
     assert load(data) == {"findings": []}
-
-
-def test_nonzero_cli_exit_overrides_valid_answer() -> None:
-    data = capture("empty")
-    data["returncode"] = 7
-    with pytest.raises(AdapterModelError, match="exited 7"):
-        load(data)
 
 
 @pytest.mark.parametrize(

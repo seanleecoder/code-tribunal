@@ -585,7 +585,6 @@ def run_case(
             capture["stdout"],
             codec=get_reviewer_definition("codex").output_codec,
             stage=stage,
-            returncode=capture["returncode"],
             stderr=capture["stderr"],
         )
         if raw != batch:

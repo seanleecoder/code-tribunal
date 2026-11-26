@@ -29,6 +29,11 @@ versioning.
   rather than discarding the completed review. An unconditional network-disabled real-CLI
   image gate guards CLI pin bumps. The fix requires both runtime images rebuilt and a fresh
   exact-pair canary; existing v3.1.0 tags and digests remain immutable.
+- A Claude, OpenCode or Cursor reviewer that exited nonzero after printing a
+  valid batch was admitted as a successful review. Every seat's nonzero launcher
+  exit is now `model_error` (`AdapterExit`), whatever its stdout; the output is
+  kept as an `exit` debug pair for diagnosis only. Codex already behaved this
+  way, and its codec no longer repeats the check.
 
 ### Changed
 

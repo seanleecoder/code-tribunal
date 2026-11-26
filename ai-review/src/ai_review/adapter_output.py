@@ -368,13 +368,13 @@ def _load_codex_stream(
     stdout: str,
     *,
     stage: str,
-    returncode: int,
     stderr: str,
     stderr_host_session_failed: bool = False,
 ) -> Any:
     """Admit the pinned exec --json contract; execution health precedes content.
 
-    Codex runs without a shell, so a command item is outside the contract.
+    The runner has already rejected a nonzero CLI exit, as it does for every
+    seat. Codex runs without a shell, so a command item is outside the contract.
     A ``failed`` repository MCP call without an ``error`` is a tool-reported
     result (missing file, refused path, no match); a set ``error`` means the
     call itself failed, including a server-side search failure. A built-in
@@ -389,8 +389,6 @@ def _load_codex_stream(
     tests/fixtures/codex and the real-CLI image gate in
     scripts/smoke_codex_batch_output.py.
     """
-    if returncode:
-        raise AdapterModelError(f"Codex exited {returncode}; reviewer output is not usable")
     thread_started = turn_started = turn_completed = reconnected = False
     active: dict[str, dict[str, Any]] = {}
     finished: set[str] = set()
@@ -498,7 +496,6 @@ def _load_adapter_json(
     *,
     codec: OutputCodec,
     stage: str,
-    returncode: int = 0,
     stderr: str = "",
     stderr_host_session_failed: bool = False,
 ) -> dict[str, Any]:
@@ -511,7 +508,6 @@ def _load_adapter_json(
         raw = _load_codex_stream(
             stdout,
             stage=stage,
-            returncode=returncode,
             stderr=stderr,
             stderr_host_session_failed=stderr_host_session_failed,
         )
