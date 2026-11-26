@@ -519,6 +519,24 @@ def test_a_path_removed_after_its_check_stays_a_lookup_result(repo: Path, monkey
     )
 
 
+def test_overlong_and_looping_paths_stay_lookup_results(repo: Path) -> None:
+    # Both describe the requested path, not a failure to read the snapshot.
+    (repo / "loop").symlink_to("loop")
+    long_name = "x" * 300
+    assert call(repo, "read_file", path=long_name) == (f"not a file: {long_name}", True)
+    assert call(repo, "read_file", path="loop") == ("not a file: loop", True)
+
+
+def test_an_unusable_temporary_directory_is_a_server_error(repo: Path, monkeypatch) -> None:
+    # tempfile reports this as FileNotFoundError, which is not a missing path.
+    def unusable(*_args, **_kwargs):
+        raise FileNotFoundError(2, "No usable temporary directory found in ['/nonexistent']")
+
+    monkeypatch.setattr(tools.tempfile, "TemporaryFile", unusable)
+    message = server_error(repo, "grep", pattern="value")
+    assert message == "search could not create temporary file"
+
+
 def fake_rg(tmp_path: Path, monkeypatch, *, stdout: str, stderr: str, code: int) -> None:
     script = tmp_path / "fake-rg"
     script.write_text(

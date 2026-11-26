@@ -16,6 +16,7 @@ It refuses credentials and other unexpected variables at startup.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import signal
@@ -124,8 +125,13 @@ class ServerError(Exception):
     """
 
 
+# Errors that describe the requested path itself, not the server's ability to
+# read the snapshot: it is missing, crosses a file, is too long, or loops.
+_LOOKUP_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ENAMETOOLONG, errno.ELOOP})
+
+
 def _stat(path: Path) -> os.stat_result | None:
-    """Stat ``path``; None only when it does not exist.
+    """Stat ``path``; None only when the path itself cannot name an entry.
 
     ``Path.is_file()`` and ``is_dir()`` return False for any OSError, which would
     report an unreadable path as an ordinary "not a file". Every other failure
@@ -133,8 +139,13 @@ def _stat(path: Path) -> os.stat_result | None:
     """
     try:
         return path.stat()
-    except FileNotFoundError, NotADirectoryError:
-        return None
+    except OSError as exc:
+        if exc.errno in _LOOKUP_ERRNOS:
+            return None
+        raise
+
+
+VANISHED = "read failed: no such file or directory"
 
 
 def contained(root: Path, requested: Any) -> Path:
@@ -182,7 +193,15 @@ def read_file(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError(f"not a file: {_relative(root, path)}")
     start = _positive(arguments, "start_line", 1)
     count = _positive(arguments, "max_lines", DEFAULT_MAX_LINES)
-    with path.open("rb") as handle:
+    try:
+        handle = path.open("rb")
+    except OSError as exc:
+        # Removed between its check and its use: an ordinary lookup. Any other
+        # failure is the server's and reaches call_tool as a server error.
+        if exc.errno not in _LOOKUP_ERRNOS:
+            raise
+        raise ToolError(VANISHED) from exc
+    with handle:
         data = handle.read(min(8192, MAX_FILE_BYTES + 1))
         if b"\x00" in data:
             raise ToolError(f"binary file: {_relative(root, path)}")
@@ -232,7 +251,13 @@ def list_dir(root: Path, arguments: dict[str, Any]) -> str:
     status = _stat(path)
     if status is None or not stat.S_ISDIR(status.st_mode):
         raise ToolError(f"not a directory: {_relative(root, path)}")
-    with os.scandir(path) as entries:
+    try:
+        listing = os.scandir(path)
+    except OSError as exc:
+        if exc.errno not in _LOOKUP_ERRNOS:
+            raise
+        raise ToolError(VANISHED) from exc
+    with listing as entries:
         names = sorted(
             _text(e.name) + ("/" if e.is_dir(follow_symlinks=False) else "") for e in entries
         )
@@ -294,7 +319,7 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         argv.append("./-" if operand == "-" else operand)
     # A file, not a pipe: rg can write many errors and must never block on them.
     # Its text names repository paths, so only whether it is empty is ever used.
-    with tempfile.TemporaryFile() as errors:
+    with _error_file() as errors:
         data, returncode, stopped_at_cap, timed_out = _run_search(argv, root, errors)
         reported_errors = errors.seek(0, os.SEEK_END) > 0
     # The timer can also fire while wait() reaps a search that already exited;
@@ -315,6 +340,15 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         raise ToolError("invalid search pattern")
     # Never echo rg's stderr: it names repository paths.
     raise ServerError("search found no matches but could not read some paths")
+
+
+def _error_file() -> IO[bytes]:
+    """A temporary file for rg's stderr; failing to create one is the server's fault."""
+    try:
+        return tempfile.TemporaryFile()
+    except OSError as exc:
+        # Never a lookup, and never echo the temporary-directory candidates.
+        raise ServerError("search could not create temporary file") from exc
 
 
 def _pattern_compiles(pattern: str) -> bool:
@@ -404,9 +438,6 @@ def call_tool(root: Path, params: dict[str, Any]) -> dict[str, Any]:
         text, is_error = handler(root, arguments), False
     except ToolError as exc:
         text, is_error = str(exc), True
-    except FileNotFoundError, NotADirectoryError:
-        # The path vanished between the check and its use: an ordinary lookup.
-        text, is_error = "read failed: no such file or directory", True
     except OSError as exc:
         # Permission, I/O and resource failures are the server failing to read
         # the snapshot, not a tool-reported result (SPEC-69).
