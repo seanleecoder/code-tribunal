@@ -505,14 +505,25 @@ def _prove_benign_tool_outcomes() -> None:
     for label, steps in [
         ("missing-read", [("read", {"path": "missing.py"})]),
         ("no-match-grep", [("grep", {"pattern": "PREFLIGHT_NO_SUCH_MARKER"})]),
+        ("missing-grep", [("grep", {"pattern": GREP_MARKER, "path": "missing"})]),
+        ("missing-glob", [("glob", {"pattern": "**/*.py", "path": "missing"})]),
     ]:
         with _StubProvider(batch, steps=steps) as stub:
             code, stdout, stderr = _run_client(stub.base_url, label)
         _assert_provider_requests(stub.requests)
-        if not _tool_parts(stderr) or len(stub.requests) < 2:
+        parts = _tool_parts(stderr)
+        if not parts or len(stub.requests) < 2:
             fail(f"{label} never returned its tool result to the provider")
         if code or json.loads(stdout) != batch:
             fail(f"benign {label} was not admitted: {stderr}")
+        if label in ("missing-grep", "missing-glob"):
+            # A renamed path parameter would search the root and pass vacuously.
+            state = parts[0].get("state") or {}
+            message = (state.get("error") or {}).get("message", "")
+            if state.get("status") != "error" or not message.startswith(
+                "Search path does not exist: "
+            ):
+                fail(f"{label} did not report its missing search path: {parts}")
 
 
 def _fault_precondition(stderr: str) -> dict[str, Any]:

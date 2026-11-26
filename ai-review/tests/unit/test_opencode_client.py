@@ -622,6 +622,7 @@ def tool(status: str, *, name: str = "grep", call: str = "call_1", **state: obje
 RG_FAILED = {"type": "unknown", "message": "ripgrep execution failed"}
 SCOPE_REFUSED = {"type": "permission.rejected", "message": "Permission denied: external_directory"}
 MISSING_FILE = {"type": "tool.execution", "message": "File not found: missing.py"}
+MISSING_SEARCH_PATH = {"type": "tool.execution", "message": "Search path does not exist: missing"}
 
 
 def calls(*parts: dict, message: str = "msg_calls") -> dict:
@@ -641,12 +642,23 @@ def admit(*pages: dict) -> dict:
         [tool("completed", content=[{"type": "text", "text": "Found 1 matches"}])],
         [tool("error", name="read", error=SCOPE_REFUSED)],
         [tool("error", name="read", error=MISSING_FILE)],
+        [tool("error", error=MISSING_SEARCH_PATH)],
+        [tool("error", name="glob", error=MISSING_SEARCH_PATH)],
         [tool("error", error=RG_FAILED), tool("completed", name="read", call="call_2")],
         # Not a repository tool: the server already refuses it.
         [tool("error", name="edit", error={"type": "tool.execution", "message": "No tool"})],
         [],
     ],
-    ids=["completed", "scope-refusal", "missing-file", "recovered", "non-repository", "tool-free"],
+    ids=[
+        "completed",
+        "scope-refusal",
+        "missing-file",
+        "missing-grep-path",
+        "missing-glob-path",
+        "recovered",
+        "non-repository",
+        "tool-free",
+    ],
 )
 def test_healthy_or_benign_repository_tool_runs_are_admitted(parts: list[dict]) -> None:
     assert admit(page(IDLE, answer(), calls(*parts), USER)) == {"findings": []}
@@ -681,6 +693,14 @@ def test_healthy_or_benign_repository_tool_runs_are_admitted(parts: list[dict]) 
 def test_a_run_whose_repository_tools_all_failed_is_unusable(part: dict) -> None:
     with pytest.raises(AdapterModelError, match="OpenCode repository-tool attempts all failed"):
         admit(page(IDLE, answer(), calls(part), USER))
+
+
+@pytest.mark.parametrize("name", ["read", "grep", "glob"])
+def test_an_unreadable_directory_stays_unusable(name: str) -> None:
+    # The pinned 2.4.2 reports an unreadable path as `Unable to read`, not missing.
+    unreadable = {"type": "tool.execution", "message": "Unable to read /r/locked"}
+    with pytest.raises(AdapterModelError, match="OpenCode repository-tool attempts all failed"):
+        admit(page(IDLE, answer(), calls(tool("error", name=name, error=unreadable)), USER))
 
 
 def test_a_failure_on_an_older_page_than_the_answer_is_counted() -> None:

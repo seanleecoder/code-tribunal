@@ -62,6 +62,9 @@ _BENIGN_TOOL_ERRORS = (
     ("permission.rejected", "Permission denied: external_directory"),
     # A missing in-root file (`File not found: missing.py`).
     ("tool.execution", "File not found: "),
+    # A grep or glob whose search directory is missing (`Search path does not
+    # exist: missing`); an unreadable one reports `Unable to read` and fails.
+    ("tool.execution", "Search path does not exist: "),
 )
 
 
