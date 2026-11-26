@@ -323,6 +323,53 @@ def test_claude_witness_requires_a_successful_correlated_result(stdout: str, obs
     assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is observed
 
 
+GREP_TIMEOUT = (
+    "The search stopped before it finished, most likely at its time limit, so these "
+    "results are incomplete: more matches may exist. Search a more specific path or pattern."
+)
+
+
+def _file_grep(path: str = f"{ROOT_DIR}/src/access.py", **options) -> dict:
+    return {"pattern": "def", "path": path, "output_mode": "content", **options}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "text", "observed"),
+    [
+        # Claude Code 2.1.332 omits the filename when Grep searches one file.
+        (_file_grep(), "1:def is_allowed(user, allowed):", True),
+        (_file_grep("src/access.py"), "7:    return user == allowed", True),
+        (_file_grep("src/../src/access.py", **{"-n": True}), "1:def is_allowed():", True),
+        (_file_grep(**{"-n": False}), "def is_allowed(user, allowed):", True),
+        (_file_grep(), "No matches found", False),
+        (_file_grep(**{"-n": False}), "No matches found", False),
+        (_file_grep(**{"-n": False}), f"{GREP_TIMEOUT}\n\nNo matches found", False),
+        (
+            _file_grep(**{"-n": False}),
+            "No entries at this offset\n\n[Showing results with pagination = offset: 5]",
+            False,
+        ),
+        (_file_grep(), "", False),
+        (_file_grep(), "1:", False),
+        (_file_grep(**{"-n": False}), "\n  \n", False),
+        (_file_grep(**{"-C": 1}), "3-def is_allowed():", False),
+        (_file_grep(**{"-n": 1}), "1:def is_allowed():", False),
+        (_file_grep(output_mode="files_with_matches"), "src/access.py", False),
+        ({"pattern": "def", "path": "src/access.py"}, "src/access.py", False),
+        (_file_grep(output_mode="count"), "src/access.py:2", False),
+        (_file_grep("src/other.py"), "1:def is_allowed():", False),
+        (_file_grep("/elsewhere/src/access.py"), "1:def is_allowed():", False),
+    ],
+)
+def test_claude_witness_accepts_single_file_content_grep(
+    arguments: dict, text: str, observed: bool
+) -> None:
+    stdout = _claude_stream("Grep", arguments, text)
+    assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is observed
+    errored = _claude_stream("Grep", arguments, text, is_error=True)
+    assert probe.claude_fixture_read_observed(errored, ROOT_DIR) is False
+
+
 def test_claude_witness_ignores_a_result_without_its_call():
     stdout = _claude_stream("Read", READ, "1\tdef is_allowed():").split("\n")[1]
     assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is False

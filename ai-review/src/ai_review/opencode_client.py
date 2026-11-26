@@ -516,23 +516,18 @@ def _session_history(
         seen.add(cursor)
 
 
-def _admit_answer(
-    answer: dict[str, Any], parts: list[dict[str, Any]], *, stage: str
-) -> dict[str, Any] | list[Any]:
+def _session_answer(
+    base_url: str, session_id: str, input_id: str, *, password: str, stage: str
+) -> tuple[dict[str, Any] | list[Any], list[dict[str, Any]]]:
+    """The admitted batch, and the repository tool parts it was admitted with."""
+    answer, parts = _session_history(base_url, session_id, input_id, password=password)
     # Execution health precedes the answer (SPEC-69).
     require_repository_tool_health(
         "OpenCode",
         attempts=len(parts),
         failed=sum(map(_repository_tool_failed, parts)),
     )
-    return _normalize_message(answer, stage=stage)
-
-
-def _session_answer(
-    base_url: str, session_id: str, input_id: str, *, password: str, stage: str
-) -> dict[str, Any] | list[Any]:
-    answer, parts = _session_history(base_url, session_id, input_id, password=password)
-    return _admit_answer(answer, parts, stage=stage)
+    return _normalize_message(answer, stage=stage), parts
 
 
 def _create_session(
@@ -628,8 +623,9 @@ def run() -> int:
                 password=password,
                 timeout=_MESSAGE_TIMEOUT_SECONDS,
             )
-            answer, parts = _session_history(base_url, session_id, input_id, password=password)
-            result = _admit_answer(answer, parts, stage=stage)
+            result, parts = _session_answer(
+                base_url, session_id, input_id, password=password, stage=stage
+            )
             observed = opencode_fixture_read_observed(parts, str(root))
         finally:
             if process is not None:

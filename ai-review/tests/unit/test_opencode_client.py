@@ -53,7 +53,7 @@ def test_captured_v2_image_message_pages(name: str, stage: str, accepted: bool) 
     captured = json.loads(fixture.read_text())
     with mock.patch.object(client, "_request_json", return_value=captured["page"]):
         if accepted:
-            result = client._session_answer(
+            result, _parts = client._session_answer(
                 "http://127.0.0.1:1/",
                 "captured",
                 captured["prompt_id"],
@@ -164,7 +164,7 @@ def test_answer_is_bound_to_our_prompt_across_descending_pages() -> None:
     ) as request:
         assert client._session_answer(
             "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage="review"
-        ) == {"findings": []}
+        )[0] == {"findings": []}
     assert request.call_args_list[0].args[2].endswith("message?order=desc")
     assert request.call_args_list[1].args[2].endswith("message?cursor=older")
 
@@ -227,7 +227,7 @@ def test_successful_continuation_can_follow_an_errored_assistant(stage: str) -> 
         assert (
             client._session_answer(
                 "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage=stage
-            )
+            )[0]
             == batch
         )
 
@@ -633,7 +633,7 @@ def admit(*pages: dict) -> dict:
     with mock.patch.object(client, "_request_json", side_effect=list(pages)):
         return client._session_answer(
             "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage="review"
-        )
+        )[0]
 
 
 @pytest.mark.parametrize(

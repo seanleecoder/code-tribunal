@@ -15,6 +15,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .adapter_output import _claude_tool_result_text
 from .canonical import json_loads_no_duplicates
 from .reviewers import CODEX_REPO_SERVER
 
@@ -31,6 +32,19 @@ CANARY_REVIEW_ENV = frozenset({PLATFORM_ENV, IMAGE_ENV})
 OPENCODE_OBSERVATION_ENV = "AI_REVIEW_CANARY_OBSERVATION_FILE"
 
 _CLAUDE_READ_LINE = re.compile(r"^\s*([0-9]+)\t(.*)$")
+_CLAUDE_GREP_LINE = re.compile(r"^([0-9]+):(.*)$")
+# The notes Claude Code 2.1.332 composes around a content-mode Grep's ripgrep
+# output (`mapToolResultToToolResultBlockParam`): a timeout prefix, the empty
+# result bodies, and a pagination trailer. None of them is fixture content.
+_CLAUDE_GREP_NOTES = frozenset(
+    {
+        "The search stopped before it finished, most likely at its time limit, so these "
+        "results are incomplete: more matches may exist. Search a more specific path or pattern.",
+        "No matches found",
+        "No entries at this offset",
+    }
+)
+_CLAUDE_GREP_PAGINATION = re.compile(r"^\[Showing results with pagination = .*\]$")
 _OPENCODE_READ_LINE = re.compile(r"^([0-9]+): (.*)$")
 _OPENCODE_GREP_LINE = re.compile(r"^\s+Line ([0-9]+): (.*)$")
 
@@ -160,14 +174,12 @@ def claude_fixture_read_observed(stdout: str, root: str) -> bool:
 def _claude_fixture_result(
     name: str, arguments: dict[str, Any], block: dict[str, Any], root: str
 ) -> bool:
-    content = block.get("content")
-    if isinstance(content, list):
-        content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-    if not isinstance(content, str):
+    content = _claude_tool_result_text(block)
+    if not content:
         return False
     lines = content.split("\n")
     if name == "Grep":
-        return any(_match_line(line, root) for line in lines)
+        return _claude_grep_result(arguments, lines, root)
     path = arguments.get("file_path")
     return (
         name == "Read"
@@ -178,6 +190,34 @@ def _claude_fixture_result(
             for line in lines
         )
     )
+
+
+def _claude_grep_result(arguments: dict[str, Any], lines: list[str], root: str) -> bool:
+    if any(_match_line(line, root) for line in lines):
+        return True
+    # A content-mode search of the fixture file itself omits the filename:
+    # `<n>:<text>`, or bare source text when `-n` is false.
+    path = arguments.get("path")
+    if not (
+        arguments.get("output_mode") == "content"
+        and isinstance(path, str)
+        and _is_fixture_path(path, root)
+    ):
+        return False
+    numbered = arguments.get("-n", True)
+    body = [
+        line
+        for line in lines
+        if line not in _CLAUDE_GREP_NOTES and not _CLAUDE_GREP_PAGINATION.match(line)
+    ]
+    if numbered is True:
+        return any(
+            (match := _CLAUDE_GREP_LINE.match(line)) and _numbered_content(*match.groups())
+            for line in body
+        )
+    if numbered is False:
+        return any(line.strip() for line in body)
+    return False
 
 
 # OpenCode: completed tool parts from the prompt-bound session history.
