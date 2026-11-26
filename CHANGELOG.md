@@ -38,11 +38,13 @@ versioning.
   including failures swallowed by its file-type checks, as ordinary tool
   results, so a Codex review that could read nothing was admitted. Permission,
   I/O and other filesystem failures are now server errors that Codex records as
-  failed calls; missing paths stay tool-reported. A search that read nothing
-  after an I/O error fails the same way. A search that found matches despite
+  failed calls; missing paths stay tool-reported. A search that returned no
+  matches after an I/O error fails the same way. A search that found matches despite
   unreadable paths returns them with a
-  `[search incomplete: some paths could not be read]` notice. An invalid pattern
-  is reported as `invalid search pattern`. The Codex image gate adds verified
+  `[search incomplete: some paths could not be read]` notice, including one
+  stopped at the output cap. An invalid pattern is reported as
+  `invalid search pattern`, decided by rechecking the pattern alone so that
+  repository paths in rg's errors never affect the result. The Codex image gate adds verified
   read and search faults.
 - A Claude review whose repository reads all failed was admitted. A `Read` that
   hit `EACCES` returned `is_error: true` to the model, the CLI still exited 0

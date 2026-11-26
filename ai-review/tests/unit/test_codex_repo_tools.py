@@ -531,14 +531,14 @@ def fake_rg(tmp_path: Path, monkeypatch, *, stdout: str, stderr: str, code: int)
     monkeypatch.setattr(tools, "RG", str(script))
 
 
-def test_a_search_that_read_nothing_after_an_io_error_is_a_server_error(
+def test_a_no_match_search_after_an_io_error_is_a_server_error(
     repo: Path, monkeypatch, tmp_path: Path
 ) -> None:
     fake_rg(
         tmp_path, monkeypatch, stdout="", stderr="rg: pkg: Permission denied (os error 13)", code=2
     )
     message = server_error(repo, "grep", pattern="value")
-    assert message == "search could not read the repository"
+    assert message == "search found no matches but could not read some paths"
     assert "pkg" not in message  # rg's stderr names repository paths
 
 
@@ -561,13 +561,59 @@ def test_an_unclassified_search_failure_without_output_fails_closed(
     repo: Path, monkeypatch, tmp_path: Path
 ) -> None:
     fake_rg(tmp_path, monkeypatch, stdout="", stderr="rg: something unexpected", code=2)
-    assert server_error(repo, "grep", pattern="value") == "search could not read the repository"
+    assert (
+        server_error(repo, "grep", pattern="value")
+        == "search found no matches but could not read some paths"
+    )
 
 
 @needs_rg
 def test_an_invalid_pattern_stays_a_tool_reported_result(repo: Path) -> None:
     # The pinned rg's own wording, so a rewording on a pin bump fails here.
     assert call(repo, "grep", pattern="(") == ("invalid search pattern", True)
+
+
+@needs_rg
+@pytest.mark.parametrize("pattern", [r"value\nother", r"\w{100000}"])
+def test_every_rg_compile_error_is_an_invalid_pattern(repo: Path, pattern: str) -> None:
+    # A literal newline and the regex size limit are reported without the
+    # words "regex parse error".
+    assert call(repo, "grep", pattern=pattern) == ("invalid search pattern", True)
+
+
+@needs_rg
+@needs_unprivileged
+def test_a_path_named_like_a_pattern_error_cannot_hide_a_read_failure(repo: Path) -> None:
+    # rg's stderr names the unreadable path; it must never decide the class.
+    named = repo / "regex parse error.txt"
+    named.write_text("unrelated\n")
+    named.chmod(0)
+    try:
+        assert server_error(repo, "grep", pattern="no-such-value") == (
+            "search found no matches but could not read some paths"
+        )
+    finally:
+        named.chmod(0o644)
+
+
+def test_a_capped_search_keeps_the_incomplete_notice(
+    repo: Path, monkeypatch, tmp_path: Path
+) -> None:
+    search = tmp_path / "rg-capped"
+    search.write_text(
+        "#!/bin/sh\n"
+        "printf 'rg: pkg: Permission denied (os error 13)\\n' >&2\n"
+        "printf '123456789'\n"
+        "exec sleep 30\n"
+    )
+    search.chmod(0o755)
+    monkeypatch.setattr(tools, "RG", str(search))
+    monkeypatch.setattr(tools, "MAX_OUTPUT_BYTES", 8)
+    monkeypatch.setattr(tools, "GREP_TIMEOUT_SECONDS", 2)
+    assert call(repo, "grep", pattern="x") == (
+        f"12345678\n[output truncated at 8 bytes]\n{tools.INCOMPLETE_SEARCH_NOTE}",
+        False,
+    )
 
 
 @needs_rg
@@ -582,7 +628,7 @@ def test_real_rg_classifies_unreadable_subtrees(repo: Path) -> None:
             tools.INCOMPLETE_SEARCH_NOTE,
         ]
         assert server_error(repo, "grep", pattern="value = 1") == (
-            "search could not read the repository"
+            "search found no matches but could not read some paths"
         )
     finally:
         (repo / "pkg").chmod(0o755)

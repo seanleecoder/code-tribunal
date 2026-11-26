@@ -37,9 +37,6 @@ MAX_MATCH_CHARS = 500
 # generated code) does not spend the whole output budget.
 MAX_MATCHES_PER_FILE = 50
 GREP_TIMEOUT_SECONDS = 20
-# Enough of rg's stderr to classify an exit 2; the rest is never read.
-RG_ERROR_BYTES = 64 * 1024
-RG_PATTERN_ERROR = "regex parse error"
 INCOMPLETE_SEARCH_NOTE = "[search incomplete: some paths could not be read]"
 RG = "/usr/local/bin/rg"
 SERVER_NAME = "code-tribunal-repo-tools"
@@ -296,10 +293,10 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         # rg reads stdin for a bare "-" operand, even after "--".
         argv.append("./-" if operand == "-" else operand)
     # A file, not a pipe: rg can write many errors and must never block on them.
+    # Its text names repository paths, so only whether it is empty is ever used.
     with tempfile.TemporaryFile() as errors:
         data, returncode, stopped_at_cap, timed_out = _run_search(argv, root, errors)
-        errors.seek(0)
-        diagnostics = errors.read(RG_ERROR_BYTES).decode("utf-8", errors="replace")
+        reported_errors = errors.seek(0, os.SEEK_END) > 0
     # The timer can also fire while wait() reaps a search that already exited;
     # only a search its kill actually ended timed out.
     if timed_out and returncode == -signal.SIGKILL:
@@ -308,16 +305,39 @@ def grep(root: Path, arguments: dict[str, Any]) -> str:
         raise ServerError(f"search terminated by signal {-returncode}")
     text = _bounded(data.decode("utf-8", errors="replace"))
     # rg exits 1 for no match and 2 for an error, possibly after partial results.
-    # A search stopped at the output cap was killed after a full page of results.
-    if returncode in (0, 1) or stopped_at_cap:
+    if returncode in (0, 1) or (stopped_at_cap and not reported_errors):
         return text
-    if RG_PATTERN_ERROR in diagnostics:
+    if data:
+        # Real matches were found, so the call succeeded, but its coverage is
+        # partial. A capped search keeps its truncation marker before the notice.
+        return f"{text.removesuffix(chr(10))}\n{INCOMPLETE_SEARCH_NOTE}"
+    if not _pattern_compiles(pattern):
         raise ToolError("invalid search pattern")
-    if not data:
-        # Never echo rg's stderr: it names repository paths.
-        raise ServerError("search could not read the repository")
-    # Real matches were found, so the call succeeded, but its coverage is partial.
-    return f"{text.removesuffix(chr(10))}\n{INCOMPLETE_SEARCH_NOTE}"
+    # Never echo rg's stderr: it names repository paths.
+    raise ServerError("search found no matches but could not read some paths")
+
+
+def _pattern_compiles(pattern: str) -> bool:
+    """Whether rg accepts ``pattern``, decided without touching the snapshot.
+
+    rg searches only empty stdin here, so its diagnostics cannot name a
+    repository path. Every rg compile error (parse error, a literal newline, the
+    size limit) mentions ``regex``; any other failure is not a pattern problem.
+    """
+    try:
+        probe = subprocess.run(
+            [RG, "--no-config", "--regexp", pattern, "--", "-"],
+            cwd="/",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env={"PATH": "/usr/bin:/bin"},
+            timeout=GREP_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return True  # Not shown to be a pattern error: the search failure stands.
+    return not (probe.returncode == 2 and b"regex" in probe.stderr)
 
 
 def _run_search(argv: list[str], root: Path, errors: IO[bytes]) -> tuple[bytes, int, bool, bool]:
