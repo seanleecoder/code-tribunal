@@ -26,7 +26,6 @@ fi
 # lets the outer timeout stop the driver.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-umask 077
 container_status=0
 timeout -k 30 3900 docker run --rm --init --pull=never \
   --mount "type=tmpfs,dst=/probe-scratch,tmpfs-mode=1777" \
@@ -36,14 +35,12 @@ timeout -k 30 3900 docker run --rm --init --pull=never \
   "$image" \
   python3 /probe/probe_cursor_runtime.py run --model "$model" --scratch /probe-scratch \
   >"$work/bundle.json" 2>"$work/container.stderr" || container_status=$?
-umask 022
 
-status=0
+# The last command's status is the script's; the EXIT trap still cleans up.
 PYTHONPATH="$repo_root/ai-review/src" python3 -B "$driver" collect \
   --bundle "$work/bundle.json" \
   --container-stderr "$work/container.stderr" \
   --container-exit-code "$container_status" \
   --identity-file "$identity" \
   --image "$image" \
-  --out "$out" || status=$?
-exit "$status"
+  --out "$out"

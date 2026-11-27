@@ -15,6 +15,9 @@ from tests.support.repository_script import load_repository_script
 
 ROOT = Path(__file__).resolve().parents[3]
 probe = load_repository_script("probe_cursor_runtime", ROOT / "scripts" / "probe_cursor_runtime.py")
+identity_validator = load_repository_script(
+    "validate_candidate_identity", ROOT / "scripts" / "validate_candidate_identity.py"
+)
 WORKFLOW = ROOT / ".github" / "workflows" / "cursor-runtime-probe.yml"
 
 PRODUCTION = list(get_reviewer_definition("cursor").cli_arguments)
@@ -23,11 +26,11 @@ IMAGE = f"ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.1-{SOURCE}@sha
 
 
 def _variant(name: str):
-    return next(variant for variant in probe.VARIANTS if variant.name == name)
+    return probe.VARIANTS_BY_NAME[name]
 
 
-def _result(variant, verdict: str = "inconclusive", **fields: object) -> dict[str, object]:
-    return {**probe.errored_result(variant, "x"), "error": None, "verdict": verdict, **fields}
+def _result(variant, verdict: str = "inconclusive") -> dict[str, object]:
+    return probe.variant_result(variant, exit_code=0, verdict=verdict, filesystem="clean")
 
 
 def _bundle(**overrides: object) -> dict[str, object]:
@@ -36,7 +39,6 @@ def _bundle(**overrides: object) -> dict[str, object]:
         "schema": probe.BUNDLE_SCHEMA,
         "cli_version": "2026.11.22-e9042b2",
         "model": "composer-2.5",
-        "status": 2,
         "variants": variants,
     }
     return {**bundle, **overrides}
@@ -79,7 +81,6 @@ def test_evaluate_reports_every_write_and_never_passes_an_unwitnessed_run() -> N
         before, dict(before), {}, hostile=True, exit_code=0, output=probe.SENTINEL
     )
     assert read_only["filesystem"] == "clean"
-    assert read_only["refusal_evidence"] == "unwitnessed"
     assert read_only["verdict"] == "inconclusive"
     assert probe.overall_status({"p": {"hostile": True, **read_only}}) == 2
 
@@ -109,7 +110,8 @@ def test_evaluate_reports_every_write_and_never_passes_an_unwitnessed_run() -> N
         before, dict(before), {}, hostile=False, exit_code=0, output=probe.SENTINEL
     )
     assert sandbox["verdict"] == "no_violation"
-    assert sandbox["refusal_evidence"] == "not_applicable"
+    assert probe.variant_result(_variant("production"))["refusal_evidence"] == "unwitnessed"
+    assert probe.variant_result(_variant("sandbox-enabled"))["refusal_evidence"] == "not_applicable"
 
 
 def test_tree_digest_and_redaction(tmp_path: Path) -> None:
@@ -152,11 +154,11 @@ def test_run_variant_stops_descendants_before_the_digest(
 ) -> None:
     late = tmp_path / "late-write"
     # Like adapters/cursor.sh, the launcher runs the CLI as a child, not via exec.
-    child = f"(sleep 1.5; echo late > {late}) &"
+    child = f"(sleep 0.5; echo late > {late}) &"
     launcher = f"printf partial; {child} sleep 30" if timeout else f"{child} exit 0"
     monkeypatch.setattr(reviewers, "adapter_command", lambda _definition: ["sh", "-c", launcher])
     if timeout:
-        monkeypatch.setattr(probe, "TIMEOUT_SECONDS", 1)
+        monkeypatch.setattr(probe, "TIMEOUT_SECONDS", 0.2)
 
     started = time.monotonic()
     result = probe.run_variant(_variant("production"), "composer-2.5", tmp_path / "scratch")
@@ -167,8 +169,9 @@ def test_run_variant_stops_descendants_before_the_digest(
         assert result["stdout"] == "partial"
     else:
         assert result["exit_code"] == 0
-        assert elapsed < 1.5, "a child holding stdout open delayed the result"
-    time.sleep(2.5)
+        assert elapsed < 0.5, "a child holding stdout open delayed the result"
+    # Wait past the child's write time, measured from launch.
+    time.sleep(max(0.0, started + 1.5 - time.monotonic()))
     assert not late.exists(), "a launcher descendant survived the process-group kill"
 
 
@@ -188,9 +191,9 @@ def test_probe_keeps_completed_variants_after_an_error(
     bundle = probe.probe("composer-2.5", tmp_path / "scratch")
 
     assert bundle["cli_version"] == "unavailable: TimeoutExpired"
-    assert bundle["status"] == 2
+    assert probe.overall_status(bundle["variants"]) == 2
     variants = bundle["variants"]
-    assert set(variants) == probe.VARIANT_NAMES
+    assert set(variants) == set(probe.VARIANTS_BY_NAME)
     failed = variants["deny-policy-only"]
     assert failed["error"] == "RuntimeError: boom"
     assert failed["verdict"] == "inconclusive" and failed["filesystem"] == "unknown"
@@ -224,7 +227,9 @@ def test_collect_writes_only_validated_redacted_results(tmp_path: Path) -> None:
     out = tmp_path / "out"
     assert run_collect(out) == 2
     expected = {"summary.json", "container.stderr"}
-    expected |= {f"{name}.{kind}" for name in probe.VARIANT_NAMES for kind in ("stdout", "stderr")}
+    expected |= {
+        f"{name}.{kind}" for name in probe.VARIANTS_BY_NAME for kind in ("stdout", "stderr")
+    }
     assert {path.name for path in out.iterdir()} == expected
     written = "".join(path.read_text(encoding="utf-8") for path in out.iterdir())
     assert secret not in written and f"ghp_{'a' * 36}" not in written
@@ -233,7 +238,7 @@ def test_collect_writes_only_validated_redacted_results(tmp_path: Path) -> None:
 
     rejected: list[dict[str, object]] = [
         _bundle(variants={**bundle["variants"], "../escape": production}),
-        _bundle(status=0),
+        _bundle(status=2),
     ]
     for index, bad in enumerate(rejected):
         bundle_path.write_text(json.dumps(bad), encoding="utf-8")
@@ -252,7 +257,7 @@ def test_collect_writes_only_validated_redacted_results(tmp_path: Path) -> None:
 def test_verify_image_binds_the_source_before_the_key_is_in_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    validator = probe._identity_validator()
+    validator = identity_validator
     calls: list[dict[str, str]] = []
     monkeypatch.setattr(validator, "verify_pulled_image", lambda **kwargs: calls.append(kwargs))
     out = tmp_path / "identity.json"

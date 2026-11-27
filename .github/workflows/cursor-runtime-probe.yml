@@ -43,16 +43,14 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.15'
-      - name: Validate inputs
+      # The driver validates the model with the production model-id check.
+      - name: Validate image input
         env:
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
-          MODEL: ${{ inputs.model }}
         run: |
           printf '%s\n' "$REVIEWER_IMAGE" | grep -Eqx \
             'ghcr\.io/seanleecoder/code-tribunal/ai-review-reviewer:[0-9]+\.[0-9]+-[0-9a-f]{40}@sha256:[0-9a-f]{64}' \
             || { echo "reviewer_image must be a digest-pinned ai-review-reviewer reference" >&2; exit 1; }
-          printf '%s\n' "$MODEL" | grep -Eqx '[A-Za-z0-9][A-Za-z0-9._:/-]*' \
-            || { echo "model must be a plain Cursor selector" >&2; exit 1; }
       # Candidate Canary's identity check binds the digest to the tag's source
       # commit before the Cursor key is in scope; the probe then runs that image.
       - name: Pull and verify reviewer image
