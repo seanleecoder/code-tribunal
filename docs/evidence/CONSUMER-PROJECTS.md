@@ -305,7 +305,7 @@ IDs. GitHub summary `6276182501` and GitLab summary `3601861625` remain the stat
 containers. Both fixtures were closed again, their previous CI files restored,
 and temporary workflow/template branches deleted. Original v1 exports remain
 outside version control for the paused-review
-[rollback procedure](../operations.md#state-v2-migration). Historical multiline
+[rollback procedure](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#state-v2-migration). Historical multiline
 reader behavior also remains covered by the regression suite; these preserved
 live roots have single-line positions.
 

@@ -62,7 +62,7 @@ and resolution status remain unchanged. A rollback causes one reverse refresh
 of surfaced threads; `wontfix`, `refuted` and resolved threads are not re-rendered.
 Rolling back across the state v2 cutover requires restoring the saved v1 state with the
 old images while reviews are paused; see the
-[migration and rollback procedure](../operations.md#state-v2-migration).
+[3.0 upgrade](../operations.md#upgrade-to-30).
 
 Rollback after using `refuted` requires the
 [disposition rollback procedure](../operations.md#rollback-after-refuted-has-been-used).

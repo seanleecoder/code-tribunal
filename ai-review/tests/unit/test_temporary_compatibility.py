@@ -21,7 +21,7 @@ class TemporaryCompatibilityTests(unittest.TestCase):
         marker = re.compile(r"COMPAT-\d{3}")
         register = _REPO_ROOT / "docs/development/temporary-compatibility.md"
         documented = set(re.findall(r"(?m)^\|\s*(COMPAT-\d{3})\s*\|", register.read_text()))
-        self.assertGreater(len(documented), 1, "compatibility register table was not parsed")
+        self.assertGreaterEqual(len(documented), 1, "compatibility register table was not parsed")
 
         source_roots = (
             ("ai-review/src", {".py"}),

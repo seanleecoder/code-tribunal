@@ -456,7 +456,8 @@ that already controls a trusted job. Trusted CI delivery remains the boundary.
 ## Migrate to 3.0
 
 This is the configuration step of the [3.0 upgrade](operations.md#upgrade-to-30),
-which covers the installation, state migration and rollback. Existing v3
+whose installation, state migration and rollback procedure lives in the 3.1.1
+documentation. Existing v3
 configuration and old run artifacts are rejected; removed keys get the ordinary
 unsupported-key error.
 

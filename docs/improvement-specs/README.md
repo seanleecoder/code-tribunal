@@ -22,11 +22,7 @@ None.
 
 ## Open follow-ups
 
-- **COMPAT-009 closure.** Both demo consumers moved to 3.1.0 on 2026-11-15; see
-  the [adoption record](../evidence/CONSUMER-PROJECTS.md#resting-deployment-adoption-310-2026-11-15).
-  After 3.1.1 ships, delete the offline v1 state converter and the 3.0
-  upgrade material, as the
-  [compatibility register](../development/temporary-compatibility.md) records.
+None.
 
 ## Simplification work
 
@@ -89,13 +85,13 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | This index | Keep live decisions only | Rows about shipped work and the completed release sequence are removed; git history holds them. |
 | Legacy implementation spec and 1.0.0 walkthrough | Delete both | Neither describes the current product. The six paused plans stay under `archive/`. |
 | COMPAT-010 | Close now | 2.1.x publication retry has ended: `v2.1.0` is published and only the latest release is supported. The code path, its tests and the register row go in a separate release-tooling pull request. |
-| 3.0 upgrade material | Consolidate in `operations.md` | One "Upgrades and rollbacks" section holds it while COMPAT-009's window is open; install guides link there. The configuration key migration stays in `configuration.md`, where runtime errors point. |
+| 3.0 upgrade material | Consolidate in `operations.md` | One "Upgrades and rollbacks" section held it until COMPAT-009 closed after 3.1.1; it now points at the 3.1.1 documentation, and install guides link there. The configuration key migration stays in `configuration.md`, where runtime errors point. |
 | Shipped-change narrative | Condense to the current contract | `architecture.md` and the artifacts reference state invariants without staging rationale or version deltas. |
 | Compatibility target audit | Drop the dated section | The register table is the single source; the release checklist records why each row remains or was deleted. |
 | Historical evidence redirect | Delete | `docs/history/evidence/README.md` served one link in the frozen `release/1.0.0.md`; frozen notes are not link-checked. |
 | Cursor selector detail | Drop version-specific text | `configuration.md` points at `cursor-agent --list-models` on the pinned CLI instead of listing selectors for one CLI version. |
 | Demo consumers | Migrate before the next release | Done on 2026-11-15 at 3.1.0. The six open evidence change requests were closed rather than migrated, and GitLab pipeline variables were restricted. |
-| COMPAT-009 window | Close one release after the demo migration | The register row carries the target. |
+| COMPAT-009 window | Close one release after the demo migration | Closed after 3.1.1 shipped on 2026-11-27; the converter and its register row are deleted. |
 | Retained decision rows | Keep the eight above | Each records a rejected or deliberately limited option that current docs do not otherwise explain. |
 | ADR-0002 index row | State what is in force | Decision 1 in force, 2 withdrawn, 3 superseded, 4–5 unbuilt. The ADR text is unchanged. |
 

@@ -7,6 +7,14 @@ versioning.
 
 ## [Unreleased]
 
+### Removed
+
+- The offline v1 state converter `scripts/migrate_state_v2.py` and the 3.0
+  upgrade and state migration procedures (COMPAT-009). A deployment still on
+  2.x or earlier, or a change request with a v1 ledger, follows the 3.0 upgrade
+  in the 3.1.1 documentation with the `v3.1.1` tools first. Prepare and post
+  still reject a v1 ledger and point there.
+
 ## [3.1.1] - 2026-11-27
 
 ### Fixed

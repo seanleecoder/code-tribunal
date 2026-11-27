@@ -174,11 +174,11 @@ def decode_state_note_body(body: str) -> dict[str, Any]:
     versions = STATE_MARKER_RE.findall(body)
     if not versions:
         raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
-    # COMPAT-009: point unmigrated v1 ledgers at the offline migration script.
     explicit = [version for version in versions if version]
     if not explicit or any(version != "2" for version in explicit):
         raise ValueError(
-            "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
+            "state is not v2; a pre-3.0 ledger needs the state v2 migration from v3.1.1, "
+            "see docs/operations.md#upgrade-to-30"
         )
     matches = list(STATE_NOTE_RE.finditer(body))
     if len(matches) != 1 or len(versions) != 1:
