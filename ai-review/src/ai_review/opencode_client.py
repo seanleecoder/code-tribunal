@@ -447,10 +447,10 @@ def _normalize_message(response: dict[str, Any], *, stage: str) -> dict[str, Any
     return payload
 
 
-def _session_history(
-    base_url: str, session_id: str, input_id: str, *, password: str
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """The final answer bound to our prompt, and the repository tool parts before it."""
+def _session_answer(
+    base_url: str, session_id: str, input_id: str, *, password: str, stage: str
+) -> tuple[dict[str, Any] | list[Any], list[dict[str, Any]]]:
+    """The admitted batch, and the repository tool parts it was admitted with."""
     # Descending pagination finds the newest final answer, then proves it belongs
     # to our admitted prompt. Never accept an earlier answer after a failed run.
     # Every repository tool part between the prompt and the answer is collected
@@ -509,25 +509,17 @@ def _session_history(
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
-                return answer, list(tool_parts.values())
+                parts = list(tool_parts.values())
+                require_repository_tool_health(
+                    "OpenCode",
+                    attempts=len(parts),
+                    failed=sum(map(_repository_tool_failed, parts)),
+                )
+                return _normalize_message(answer, stage=stage), parts
         cursor = cursors.get("next")
         if not isinstance(cursor, str) or not cursor or cursor in seen:
             raise OpenCodeClientError("OpenCode completed prompt was absent from message history")
         seen.add(cursor)
-
-
-def _session_answer(
-    base_url: str, session_id: str, input_id: str, *, password: str, stage: str
-) -> tuple[dict[str, Any] | list[Any], list[dict[str, Any]]]:
-    """The admitted batch, and the repository tool parts it was admitted with."""
-    answer, parts = _session_history(base_url, session_id, input_id, password=password)
-    # Execution health precedes the answer (SPEC-69).
-    require_repository_tool_health(
-        "OpenCode",
-        attempts=len(parts),
-        failed=sum(map(_repository_tool_failed, parts)),
-    )
-    return _normalize_message(answer, stage=stage), parts
 
 
 def _create_session(
@@ -626,7 +618,6 @@ def run() -> int:
             result, parts = _session_answer(
                 base_url, session_id, input_id, password=password, stage=stage
             )
-            observed = opencode_fixture_read_observed(parts, str(root))
         finally:
             if process is not None:
                 _stop_server(process, threads)
@@ -638,6 +629,7 @@ def run() -> int:
         raise OpenCodeClientError(_clean(str(exc), password) + _server_log_detail(logs)) from exc
     if observation := os.environ.get(OPENCODE_OBSERVATION_ENV):
         # Only a canary review's runner sets this; only a successful run reports.
+        observed = opencode_fixture_read_observed(parts, str(root))
         Path(observation).write_text("true" if observed else "false", encoding="utf-8")
     sys.stderr.write(f"ai-review: {stage} adapter parsed final answer text\n")
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

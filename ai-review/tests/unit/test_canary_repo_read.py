@@ -124,12 +124,16 @@ def test_bad_canary_controls_clear_stale_evidence(review_output, monkeypatch, se
     assert not witness.exists()
 
 
+def _canary(monkeypatch, platform: str = "gitlab") -> None:
+    monkeypatch.setenv(probe.PLATFORM_ENV, platform)
+    monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
+
+
 @pytest.mark.parametrize("canary", [False, True])
 def test_failed_review_writes_no_canary_evidence(review_output, monkeypatch, canary):
     witness = review_output / probe.witness_path("codex")
     if canary:
-        monkeypatch.setenv(probe.PLATFORM_ENV, "github")
-        monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
+        _canary(monkeypatch, "github")
         witness.parent.mkdir(parents=True)
         witness.write_text("stale witness", encoding="utf-8")
 
@@ -420,11 +424,6 @@ OPENCODE_ROOT = "/w/out/.tmp/opencode-home/opencode-review-root.9"
 )
 def test_opencode_witness_requires_a_completed_content_bearing_part(part: dict, observed: bool):
     assert probe.opencode_fixture_read_observed([part], OPENCODE_ROOT) is observed
-
-
-def _canary(monkeypatch, platform: str = "gitlab") -> None:
-    monkeypatch.setenv(probe.PLATFORM_ENV, platform)
-    monkeypatch.setenv(probe.IMAGE_ENV, "candidate")
 
 
 def test_a_claude_canary_review_writes_its_own_bound_witness(review_output, monkeypatch):

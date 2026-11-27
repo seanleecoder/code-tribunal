@@ -15,7 +15,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .adapter_output import _claude_tool_result_text
+from .adapter_output import _claude_tool_result_text, _outside_root
 from .canonical import json_loads_no_duplicates
 from .reviewers import CODEX_REPO_SERVER
 
@@ -31,6 +31,9 @@ CANARY_REVIEW_ENV = frozenset({PLATFORM_ENV, IMAGE_ENV})
 # artifacts. The client writes its boolean observation there after success.
 OPENCODE_OBSERVATION_ENV = "AI_REVIEW_CANARY_OBSERVATION_FILE"
 
+# read_file numbers every source line `<n>\t<text>`; its notes, such as a
+# start_line past the end of the file, carry no helper content.
+_CODEX_READ_LINE = re.compile(r"^([0-9]+)\t(.*)$")
 _CLAUDE_READ_LINE = re.compile(r"^\s*([0-9]+)\t(.*)$")
 _CLAUDE_GREP_LINE = re.compile(r"^([0-9]+):(.*)$")
 # The notes Claude Code 2.1.332 composes around a content-mode Grep's ripgrep
@@ -57,10 +60,9 @@ def _is_fixture_path(path: str, root: str | None = None) -> bool:
     # The tools resolve paths, so `src/../src/access.py` reads it too. An
     # absolute path counts only beneath the reviewed snapshot root.
     if root is not None and posixpath.isabs(path):
-        prefix = root.rstrip("/") + "/"
-        if not path.startswith(prefix):
+        if _outside_root(path, root):
             return False
-        path = path[len(prefix) :]
+        path = posixpath.relpath(posixpath.normpath(path), posixpath.normpath(root))
     return posixpath.normpath(path) == FIXTURE_PATH.as_posix()
 
 
@@ -70,6 +72,12 @@ def _numbered_content(line_number: str, content: str) -> bool:
         and line_number.isdecimal()
         and int(line_number) >= 1
         and bool(content.strip())
+    )
+
+
+def _has_numbered_line(pattern: re.Pattern[str], lines: list[str]) -> bool:
+    return any(
+        (match := pattern.match(line)) and _numbered_content(*match.groups()) for line in lines
     )
 
 
@@ -91,13 +99,6 @@ def _jsonl(stdout: str) -> list[dict[str, Any]]:
 
 
 # Codex: the repository MCP server's own results.
-
-
-def _codex_fixture_line(line: str) -> bool:
-    # read_file numbers every source line `<n>\t<text>`; its notes, such as a
-    # start_line past the end of the file, carry no helper content.
-    line_number, tab, content = line.partition("\t")
-    return bool(tab) and _numbered_content(line_number, content)
 
 
 def _codex_fixture_result(item: dict[str, Any]) -> bool:
@@ -129,7 +130,7 @@ def _codex_fixture_result(item: dict[str, Any]) -> bool:
         and isinstance(arguments, dict)
         and isinstance(path := arguments.get("path"), str)
         and _is_fixture_path(path)
-        and any(_codex_fixture_line(line) for line in lines)
+        and _has_numbered_line(_CODEX_READ_LINE, lines)
     )
 
 
@@ -148,7 +149,6 @@ def codex_fixture_read_observed(stdout: str) -> bool:
 
 def claude_fixture_read_observed(stdout: str, root: str) -> bool:
     calls: dict[str, tuple[str, dict[str, Any]]] = {}
-    observed = False
     for event in _jsonl(stdout):
         message = event.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -167,8 +167,9 @@ def claude_fixture_read_observed(stdout: str, root: str) -> bool:
                 and block.get("tool_use_id") in calls
             ):
                 name, arguments = calls[block["tool_use_id"]]
-                observed = observed or _claude_fixture_result(name, arguments, block, root)
-    return observed
+                if _claude_fixture_result(name, arguments, block, root):
+                    return True
+    return False
 
 
 def _claude_fixture_result(
@@ -185,10 +186,7 @@ def _claude_fixture_result(
         name == "Read"
         and isinstance(path, str)
         and _is_fixture_path(path, root)
-        and any(
-            (match := _CLAUDE_READ_LINE.match(line)) and _numbered_content(*match.groups())
-            for line in lines
-        )
+        and _has_numbered_line(_CLAUDE_READ_LINE, lines)
     )
 
 
@@ -211,10 +209,7 @@ def _claude_grep_result(arguments: dict[str, Any], lines: list[str], root: str) 
         if line not in _CLAUDE_GREP_NOTES and not _CLAUDE_GREP_PAGINATION.match(line)
     ]
     if numbered is True:
-        return any(
-            (match := _CLAUDE_GREP_LINE.match(line)) and _numbered_content(*match.groups())
-            for line in body
-        )
+        return _has_numbered_line(_CLAUDE_GREP_LINE, body)
     if numbered is False:
         return any(line.strip() for line in body)
     return False
@@ -258,11 +253,21 @@ def _opencode_fixture_part(part: dict[str, Any], root: str) -> bool:
         part.get("name") == "read"
         and isinstance(path, str)
         and _is_fixture_path(path, root)
-        and any(
-            (match := _OPENCODE_READ_LINE.match(line)) and _numbered_content(*match.groups())
-            for line in lines
-        )
+        and _has_numbered_line(_OPENCODE_READ_LINE, lines)
     )
+
+
+def fixture_read_observed(
+    reviewer: str, stdout: str, *, workspace: Path | None, observation: Path | None
+) -> bool:
+    """Apply the witnessed seat's predicate to its admitted transport."""
+    if reviewer == "codex":
+        return codex_fixture_read_observed(stdout)
+    if reviewer == "claude":
+        return workspace is not None and claude_fixture_read_observed(stdout, str(workspace))
+    if reviewer == "opencode":
+        return observation is not None and observation.read_text(encoding="utf-8") == "true"
+    raise ValueError(f"{reviewer} has no repository-read witness")
 
 
 def read_witness(

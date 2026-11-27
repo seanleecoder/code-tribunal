@@ -33,8 +33,7 @@ from .canary_repo_read import (
     OPENCODE_OBSERVATION_ENV,
     PLATFORM_ENV,
     WITNESSED_REVIEWERS,
-    claude_fixture_read_observed,
-    codex_fixture_read_observed,
+    fixture_read_observed,
     read_witness,
     witness_path,
 )
@@ -299,16 +298,9 @@ def run_adapter(reviewer: str, stage: str) -> int:
         write_canonical_json(output_dir / output_file, finalized)
         if canary is not None:
             platform, reviewer_image = canary
-            if reviewer == "codex":
-                observed = codex_fixture_read_observed(result.stdout)
-            elif reviewer == "claude":
-                observed = workspace is not None and claude_fixture_read_observed(
-                    result.stdout, str(workspace)
-                )
-            else:
-                observed = observation is not None and (
-                    observation.read_text(encoding="utf-8") == "true"
-                )
+            observed = fixture_read_observed(
+                reviewer, result.stdout, workspace=workspace, observation=observation
+            )
             write_canonical_json(
                 output_dir / witness_path(reviewer),
                 read_witness(platform, reviewer, reviewer_image, finalized, observed=observed),

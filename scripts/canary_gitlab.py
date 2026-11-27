@@ -33,7 +33,6 @@ from typing import Any
 
 import yaml
 from ai_review.canary_repo_read import FIXTURE_PATH, WITNESS_DIR
-from ai_review.reviewers import REVIEWERS
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
@@ -53,6 +52,7 @@ from candidate_canary_common import (
     poll,
     read_state,
     require_demo_access,
+    reviewer_ids,
     run_lifecycle_steps,
     saved_disposition,
     witness_only_from,
@@ -398,13 +398,8 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-def _review_job_reviewer(name: object) -> str | None:
-    """The seat a parallel-matrix review job ran, from its `AI review: [<seat>]` name."""
-    if isinstance(name, str) and name.startswith("AI review: [") and name.endswith("]"):
-        reviewer = name.removeprefix("AI review: [").removesuffix("]")
-        if reviewer in REVIEWERS:
-            return reviewer
-    return None
+# The seat each parallel-matrix review job ran, by its GitLab-expanded name.
+_REVIEW_JOBS = {f"AI review: [{reviewer}]": reviewer for reviewer in reviewer_ids()}
 
 
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
@@ -426,7 +421,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
-        out_ignore = witness_only_from(_review_job_reviewer(job.get("name")))
+        out_ignore = witness_only_from(_REVIEW_JOBS.get(job.get("name")))
         for name, target, ignore in (("inputs", inputs, None), ("out", output, out_ignore)):
             source = extracted / name
             if source.is_dir():
