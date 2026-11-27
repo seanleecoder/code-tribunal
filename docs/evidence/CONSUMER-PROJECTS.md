@@ -97,8 +97,7 @@ one.
 
 PRs #9, #10, #14, #18 and #25 were closed on 2026-11-15, before the 3.1.0
 adoption. Each keeps its branch, comments and **v1** state ledger. A 3.x image
-refuses that ledger, so convert it with `scripts/migrate_state_v2.py` from the
-`v3.1.1` tag, as in [convert a v1 ledger](../operations.md#convert-a-v1-ledger),
+refuses that ledger, so [convert it](../operations.md#convert-a-v1-ledger)
 before reopening one.
 
 ### Threads that must not be deleted

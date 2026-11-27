@@ -157,13 +157,10 @@ getting-started guides.
 
 Releases after 3.1.1 do not carry the 3.0 upgrade procedure or the offline v1
 state converter. A deployment still on 2.x or earlier first follows the
-[3.0 upgrade](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#upgrade-to-30) and
-[state v2 migration](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#state-v2-migration) in the 3.1.1 documentation, running
-`scripts/migrate_state_v2.py` from a `v3.1.1` checkout, and then moves to the
-current release. Rolling back across the 3.0 cutover follows the same 3.1.1
-procedure. Prepare and post reject a v1 ledger; they never convert one. On a
-deployment already on 3.x, a change request with a v1 ledger needs only
-[convert a v1 ledger](#convert-a-v1-ledger).
+[3.0 upgrade](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#upgrade-to-30)
+in the 3.1.1 documentation, including its state migration and rollback, and then
+moves to the current release. On a deployment already on 3.x, a change request
+with a v1 ledger needs only [convert a v1 ledger](#convert-a-v1-ledger).
 
 ### Convert a v1 ledger
 
@@ -172,8 +169,8 @@ example a change last reviewed before the 3.0 cutover and reopened later.
 Prepare and post stop with `state is v1`, also for the 2.1.x layout with a
 separate summary and v1 state note. Convert only that change's ledger:
 
-1. Pause review triggers for the change, wait for active jobs to finish, and keep
-   a [state export](#state-ledger).
+1. Take a [state export](#state-ledger) of the change; that procedure pauses
+   its review triggers first.
 2. Follow the per-change
    [state v2 migration](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#state-v2-migration)
    in the 3.1.1 documentation, running `scripts/migrate_state_v2.py` from a

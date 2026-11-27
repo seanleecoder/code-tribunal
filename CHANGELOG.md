@@ -18,9 +18,7 @@ versioning.
   upgrade and state migration procedures (COMPAT-009). A deployment still on
   2.x or earlier follows the 3.0 upgrade in the 3.1.1 documentation with the
   `v3.1.1` tools first. A change request with a v1 ledger on a 3.x deployment
-  converts only that ledger with the `v3.1.1` converter. Prepare and post still
-  reject v1 ledgers, including the two-note 2.1.x layout, and point at the
-  conversion.
+  converts only that ledger with the `v3.1.1` converter.
 
 ## [3.1.1] - 2026-11-27
 
