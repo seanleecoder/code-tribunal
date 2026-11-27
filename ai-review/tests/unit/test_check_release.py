@@ -268,7 +268,10 @@ class FakeCanary:
                         "cleanup": "success",
                         "consensus": {"panel_status": "full"},
                         "posting": {"status": "success", "posted_thread_count": 3},
-                        "seats": {"codex": {"review": {"repository_read": True}}},
+                        "seats": {
+                            seat: {"review": {"repository_read": True}}
+                            for seat in ("claude", "codex", "opencode")
+                        },
                     }
                 else:
                     summary = {
@@ -320,35 +323,37 @@ class CanaryVerificationTests(unittest.TestCase):
             run.verdicts,
             (
                 "panel / github: full panel, 3 threads posted, "
-                "Codex repository read verified, cleanup succeeded",
+                "repository reads verified for claude, codex, opencode, cleanup succeeded",
                 "panel / gitlab: full panel, 3 threads posted, "
-                "Codex repository read verified, cleanup succeeded",
+                "repository reads verified for claude, codex, opencode, cleanup succeeded",
                 "lifecycle / github: 2/2 steps passed",
                 "lifecycle / gitlab: 2/2 steps passed",
                 "hostile / gitlab: 2/2 steps passed",
             ),
         )
 
-    def test_panel_summaries_must_record_the_codex_repository_read(self) -> None:
+    def test_panel_summaries_must_record_every_witnessed_repository_read(self) -> None:
         artifact = tool.CAMPAIGN_SUMMARIES["panel"]["gitlab"]
-        for seats in (
-            None,
-            {"codex": {"review": {}}},
-            *({"codex": {"review": {"repository_read": value}}} for value in (False, "true", 1)),
-        ):
-            canary = FakeCanary(self.pins)
-            if seats is None:
-                del canary.artifacts[artifact]["seats"]
-            else:
-                canary.artifacts[artifact]["seats"] = seats
-            with (
-                self.subTest(seats=seats),
-                self.assertRaisesRegex(
-                    tool.ReleaseValidationError,
-                    "panel/gitlab did not record Codex repository_read: true",
-                ),
-            ):
-                self._verify(canary)
+        for seat in ("claude", "codex", "opencode"):
+            for review in (None, {}, *({"repository_read": v} for v in (False, "true", 1))):
+                canary = FakeCanary(self.pins)
+                seats = canary.artifacts[artifact]["seats"]
+                if review is None:
+                    del seats[seat]
+                else:
+                    seats[seat]["review"] = review
+                with (
+                    self.subTest(seat=seat, review=review),
+                    self.assertRaisesRegex(
+                        tool.ReleaseValidationError,
+                        f"panel/gitlab did not record {seat} repository_read: true",
+                    ),
+                ):
+                    self._verify(canary)
+        canary = FakeCanary(self.pins)
+        del canary.artifacts[artifact]["seats"]
+        with self.assertRaisesRegex(tool.ReleaseValidationError, "did not record claude"):
+            self._verify(canary)
 
     def test_hostile_is_optional(self) -> None:
         run = self._verify(FakeCanary(self.pins, ("panel", "lifecycle")))

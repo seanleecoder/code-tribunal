@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 
 from .adapter_output import extract_json_text, require_repository_tool_health
 from .adapter_process import _OPENROUTER_BASE_URL
+from .canary_repo_read import OPENCODE_OBSERVATION_ENV, opencode_fixture_read_observed
 from .canonical import json_loads_no_duplicates
 from .config import EFFORT_LEVELS
 from .redact import redact_text
@@ -448,7 +449,8 @@ def _normalize_message(response: dict[str, Any], *, stage: str) -> dict[str, Any
 
 def _session_answer(
     base_url: str, session_id: str, input_id: str, *, password: str, stage: str
-) -> dict[str, Any] | list[Any]:
+) -> tuple[dict[str, Any] | list[Any], list[dict[str, Any]]]:
+    """The admitted batch, and the repository tool parts it was admitted with."""
     # Descending pagination finds the newest final answer, then proves it belongs
     # to our admitted prompt. Never accept an earlier answer after a failed run.
     # Every repository tool part between the prompt and the answer is collected
@@ -507,12 +509,13 @@ def _session_answer(
                     raise OpenCodeClientError(
                         "OpenCode answer was not bound to the completed prompt"
                     )
+                parts = list(tool_parts.values())
                 require_repository_tool_health(
                     "OpenCode",
-                    attempts=len(tool_parts),
-                    failed=sum(map(_repository_tool_failed, tool_parts.values())),
+                    attempts=len(parts),
+                    failed=sum(map(_repository_tool_failed, parts)),
                 )
-                return _normalize_message(answer, stage=stage)
+                return _normalize_message(answer, stage=stage), parts
         cursor = cursors.get("next")
         if not isinstance(cursor, str) or not cursor or cursor in seen:
             raise OpenCodeClientError("OpenCode completed prompt was absent from message history")
@@ -612,7 +615,9 @@ def run() -> int:
                 password=password,
                 timeout=_MESSAGE_TIMEOUT_SECONDS,
             )
-            result = _session_answer(base_url, session_id, input_id, password=password, stage=stage)
+            result, parts = _session_answer(
+                base_url, session_id, input_id, password=password, stage=stage
+            )
         finally:
             if process is not None:
                 _stop_server(process, threads)
@@ -622,6 +627,10 @@ def run() -> int:
     except Exception as exc:
         _assert_no_ripgrep_fetch(logs)
         raise OpenCodeClientError(_clean(str(exc), password) + _server_log_detail(logs)) from exc
+    if observation := os.environ.get(OPENCODE_OBSERVATION_ENV):
+        # Only a canary review's runner sets this; only a successful run reports.
+        observed = opencode_fixture_read_observed(parts, str(root))
+        Path(observation).write_text("true" if observed else "false", encoding="utf-8")
     sys.stderr.write(f"ai-review: {stage} adapter parsed final answer text\n")
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0

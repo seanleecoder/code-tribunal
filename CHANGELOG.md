@@ -74,6 +74,14 @@ versioning.
   image gate adds benign cases and a verified unreadable-file fault that the
   session survives. OpenCode reports a failing rg as an empty grep, so that case
   stays covered by the existing rg-execution gate rather than by tool health.
+- The Candidate Canary now requires a verified repository read from Claude,
+  Codex and OpenCode, not only Codex. Each seat writes its own
+  `canary/<reviewer>-repo-read.json` witness from its admitted transport. The
+  collectors accept only a seat's own review job's witness, and both the panel
+  validator and the release checker require all three. Cursor's coverage is
+  reported as `unverified`. The canary-only controls are renamed
+  `AI_REVIEW_CANARY_PLATFORM` and `AI_REVIEW_CANARY_REVIEWER_IMAGE`. They are set
+  only by the generated canary jobs, which roll together with the image.
 
 ### Changed
 

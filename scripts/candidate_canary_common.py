@@ -12,7 +12,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ai_review.canary_codex_repo_read import FIXTURE_PATH, IMAGE_ENV, PLATFORM_ENV
+from ai_review.canary_repo_read import (
+    FIXTURE_PATH,
+    IMAGE_ENV,
+    PLATFORM_ENV,
+    WITNESS_DIR,
+    WITNESSED_REVIEWERS,
+    witness_path,
+)
 from ai_review.memory import COMMAND_STATUS, decode_state_note_body, state_note_candidates
 from ai_review.notes import parse_marker
 from ai_review.reviewers import REVIEWERS
@@ -139,14 +146,34 @@ def append_lifecycle_fixture(source: str, error_type: type[RuntimeError]) -> str
 
 
 def panel_review_command(platform: str, reviewer_image: str, *, prefix: str = "") -> str:
+    """The generated review step: every witnessed seat runs with the canary controls."""
     canary_env = f"{PLATFORM_ENV}={platform} {IMAGE_ENV}={shlex.quote(reviewer_image)}"
     return (
-        'if [ "$REVIEWER" = codex ]; then\n'
-        f"  {prefix or 'env '}{canary_env} {REVIEW_COMMAND}\n"
-        "else\n"
-        f"  {prefix}{REVIEW_COMMAND}\n"
-        "fi"
+        'case "$REVIEWER" in\n'
+        f"  {'|'.join(WITNESSED_REVIEWERS)})\n"
+        f"    {prefix or 'env '}{canary_env} {REVIEW_COMMAND}\n"
+        "    ;;\n"
+        "  *)\n"
+        f"    {prefix}{REVIEW_COMMAND}\n"
+        "    ;;\n"
+        "esac"
     )
+
+
+def witness_only_from(reviewer: str | None) -> Callable[[str, list[str]], list[str]]:
+    """A copytree filter: only ``reviewer``'s own witness survives; None keeps none.
+
+    A job's artifact can hold only the witness its own seat wrote, so one seat
+    can never supply another's repository-read evidence.
+    """
+    own = witness_path(reviewer).name if reviewer is not None else None
+
+    def ignore(directory: str, names: list[str]) -> list[str]:
+        if Path(directory).name != WITNESS_DIR.name:
+            return []
+        return [name for name in names if name != own]
+
+    return ignore
 
 
 def reviewer_ids() -> tuple[str, ...]:

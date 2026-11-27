@@ -1,0 +1,301 @@
+"""Observe one fixture read per witnessed seat in a protected Candidate Canary review job.
+
+Each predicate reads only the trusted transport the seat's codec already admitted:
+Codex's exec stream, Claude's stream-json, and the OpenCode session history that
+the client inspects in-process. A requested path, a model's claim, an empty
+result or a no-match search never counts; a successful, content-bearing result
+from the fixture helper does. Cursor's text output carries no tool telemetry, so
+its repository reads stay unverified (SPEC-69).
+"""
+
+from __future__ import annotations
+
+import posixpath
+import re
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from .adapter_output import _claude_tool_result_text, _outside_root
+from .canonical import json_loads_no_duplicates
+from .reviewers import CODEX_REPO_SERVER
+
+FIXTURE_PATH = PurePosixPath("src/access.py")
+_FIXTURE_ANCESTORS = frozenset(parent.as_posix() for parent in FIXTURE_PATH.parents)
+WITNESS_DIR = Path("canary")
+# Seats whose admitted transport can prove a read. Order is the summary order.
+WITNESSED_REVIEWERS = ("claude", "codex", "opencode")
+PLATFORM_ENV = "AI_REVIEW_CANARY_PLATFORM"
+IMAGE_ENV = "AI_REVIEW_CANARY_REVIEWER_IMAGE"
+CANARY_REVIEW_ENV = frozenset({PLATFORM_ENV, IMAGE_ENV})
+# Not an operator control: the runner sets it only in a canary OpenCode review's
+# own environment, naming a runner-owned file outside the snapshot and the
+# artifacts. The client writes its boolean observation there after success.
+OPENCODE_OBSERVATION_ENV = "AI_REVIEW_CANARY_OBSERVATION_FILE"
+
+# read_file numbers every source line `<n>\t<text>`; its notes, such as a
+# start_line past the end of the file, carry no helper content.
+_CODEX_READ_LINE = re.compile(r"^([0-9]+)\t(.*)$")
+_CLAUDE_READ_LINE = re.compile(r"^\s*([0-9]+)\t(.*)$")
+_CLAUDE_GREP_LINE = re.compile(r"^([0-9]+):(.*)$")
+# The notes Claude Code 2.1.332 composes around a content-mode Grep's ripgrep
+# output (`mapToolResultToToolResultBlockParam`): a timeout prefix, the empty
+# result bodies, and a pagination trailer. None of them is fixture content.
+_CLAUDE_GREP_NOTES = frozenset(
+    {
+        "The search stopped before it finished, most likely at its time limit, so these "
+        "results are incomplete: more matches may exist. Search a more specific path or pattern.",
+        "No matches found",
+        "No entries at this offset",
+    }
+)
+_CLAUDE_GREP_PAGINATION = re.compile(r"^\[Showing results with pagination = .*\]$")
+_OPENCODE_READ_LINE = re.compile(r"^([0-9]+): (.*)$")
+_OPENCODE_GREP_LINE = re.compile(r"^\s+Line ([0-9]+): (.*)$")
+
+
+def witness_path(reviewer: str) -> Path:
+    return WITNESS_DIR / f"{reviewer}-repo-read.json"
+
+
+def _relative_path(path: str, root: str | None) -> str | None:
+    # The tools resolve paths, so `src/../src/access.py` reads it too.
+    if root is not None and posixpath.isabs(path):
+        if _outside_root(path, root):
+            return None
+        return posixpath.relpath(path, root)
+    return posixpath.normpath(path)
+
+
+def _is_fixture_path(path: str, root: str | None = None) -> bool:
+    return _relative_path(path, root) == FIXTURE_PATH.as_posix()
+
+
+def _numbered_content(line_number: str, content: str) -> bool:
+    return (
+        line_number.isascii()
+        and line_number.isdecimal()
+        and int(line_number) >= 1
+        and bool(content.strip())
+    )
+
+
+def _has_numbered_line(pattern: re.Pattern[str], lines: list[str]) -> bool:
+    return any(
+        (match := pattern.match(line)) and _numbered_content(*match.groups()) for line in lines
+    )
+
+
+def _match_line(line: str, root: str | None = None, *, numbered: bool = True) -> bool:
+    """A path-prefixed search match from the fixture helper."""
+    path, _, match = line.partition(":")
+    if not _is_fixture_path(path, root):
+        return False
+    if not numbered:
+        return bool(match.strip())
+    line_number, _, content = match.partition(":")
+    return _numbered_content(line_number, content)
+
+
+def _jsonl(stdout: str) -> list[dict[str, Any]]:
+    events = []
+    for line in stdout.split("\n"):
+        if line.strip():
+            event = json_loads_no_duplicates(line)
+            if isinstance(event, dict):
+                events.append(event)
+    return events
+
+
+# Codex: the repository MCP server's own results.
+
+
+def _codex_fixture_result(item: dict[str, Any]) -> bool:
+    if (
+        item.get("type") != "mcp_tool_call"
+        or item.get("server") != CODEX_REPO_SERVER
+        or item.get("status") != "completed"
+        or "error" not in item
+        or item["error"] is not None
+    ):
+        return False
+
+    result = item.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("content"), list):
+        return False
+    lines = [
+        line
+        for part in result["content"]
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+        for line in part["text"].split("\n")
+    ]
+    if item.get("tool") == "grep":
+        return any(_match_line(line) for line in lines)
+    arguments = item.get("arguments")
+    return (
+        item.get("tool") == "read_file"
+        and isinstance(arguments, dict)
+        and isinstance(path := arguments.get("path"), str)
+        and _is_fixture_path(path)
+        and _has_numbered_line(_CODEX_READ_LINE, lines)
+    )
+
+
+def codex_fixture_read_observed(stdout: str) -> bool:
+    """Inspect events only after the installed adapter has admitted the stream."""
+    return any(
+        event.get("type") == "item.completed"
+        and isinstance(item := event.get("item"), dict)
+        and _codex_fixture_result(item)
+        for event in _jsonl(stdout)
+    )
+
+
+# Claude: CLI-authored tool results, correlated with the model's calls by id.
+
+
+def claude_fixture_read_observed(stdout: str, root: str) -> bool:
+    calls: dict[str, tuple[str, dict[str, Any]]] = {}
+    for event in _jsonl(stdout):
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if event.get("type") == "assistant" and block.get("type") == "tool_use":
+                if isinstance(block.get("id"), str) and isinstance(block.get("input"), dict):
+                    calls.setdefault(block["id"], (str(block.get("name")), block["input"]))
+            elif (
+                event.get("type") == "user"
+                and block.get("type") == "tool_result"
+                and block.get("is_error") is not True
+                and isinstance(tool_use_id := block.get("tool_use_id"), str)
+                and tool_use_id in calls
+            ):
+                name, arguments = calls[tool_use_id]
+                if _claude_fixture_result(name, arguments, block, root):
+                    return True
+    return False
+
+
+def _claude_fixture_result(
+    name: str, arguments: dict[str, Any], block: dict[str, Any], root: str
+) -> bool:
+    content = _claude_tool_result_text(block)
+    if not content:
+        return False
+    lines = content.split("\n")
+    if name == "Grep":
+        return _claude_grep_result(arguments, lines, root)
+    path = arguments.get("file_path")
+    return (
+        name == "Read"
+        and isinstance(path, str)
+        and _is_fixture_path(path, root)
+        and _has_numbered_line(_CLAUDE_READ_LINE, lines)
+    )
+
+
+def _claude_grep_result(arguments: dict[str, Any], lines: list[str], root: str) -> bool:
+    path = arguments.get("path", ".")
+    numbered = arguments.get("-n", True)
+    if (
+        arguments.get("output_mode") != "content"
+        or not isinstance(path, str)
+        or not isinstance(numbered, bool)
+    ):
+        return False
+    scope = _relative_path(path, root)
+    body = [
+        line
+        for line in lines
+        if line not in _CLAUDE_GREP_NOTES and not _CLAUDE_GREP_PAGINATION.match(line)
+    ]
+    # Single-file results omit the filename. Only a search rooted at one of
+    # the helper's ancestor directories can yield its path-prefixed matches.
+    if scope == FIXTURE_PATH.as_posix():
+        if numbered:
+            return _has_numbered_line(_CLAUDE_GREP_LINE, body)
+        return any(line.strip() for line in body)
+    return scope in _FIXTURE_ANCESTORS and any(
+        _match_line(line, root, numbered=numbered) for line in body
+    )
+
+
+# OpenCode: completed tool parts from the prompt-bound session history.
+
+
+def opencode_fixture_read_observed(parts: list[dict[str, Any]], root: str) -> bool:
+    return any(_opencode_fixture_part(part, root) for part in parts)
+
+
+def _opencode_fixture_part(part: dict[str, Any], root: str) -> bool:
+    state = part.get("state")
+    if not isinstance(state, dict) or state.get("status") != "completed":
+        return False
+    content = state.get("content")
+    lines = [
+        line
+        for item in (content if isinstance(content, list) else ())
+        if isinstance(item, dict)
+        and item.get("type") == "text"
+        and isinstance(text := item.get("text"), str)
+        for line in text.split("\n")
+    ]
+    if part.get("name") == "grep":
+        # Matches are grouped under a `<path>:` header, as `  Line <n>: <text>`.
+        current = None
+        for line in lines:
+            if line and not line[0].isspace() and line.endswith(":"):
+                current = line[:-1]
+            elif (
+                current is not None
+                and _is_fixture_path(current, root)
+                and (match := _OPENCODE_GREP_LINE.match(line))
+                and _numbered_content(*match.groups())
+            ):
+                return True
+        return False
+    arguments = state.get("input")
+    path = arguments.get("path") if isinstance(arguments, dict) else None
+    return (
+        part.get("name") == "read"
+        and isinstance(path, str)
+        and _is_fixture_path(path, root)
+        and _has_numbered_line(_OPENCODE_READ_LINE, lines)
+    )
+
+
+def fixture_read_observed(
+    reviewer: str, stdout: str, *, workspace: Path | None, observation: Path | None
+) -> bool:
+    """Apply the witnessed seat's predicate to its admitted transport."""
+    if reviewer == "codex":
+        return codex_fixture_read_observed(stdout)
+    if reviewer == "claude":
+        return workspace is not None and claude_fixture_read_observed(stdout, str(workspace))
+    if reviewer == "opencode":
+        return observation is not None and observation.read_text(encoding="utf-8") == "true"
+    raise ValueError(f"{reviewer} has no repository-read witness")
+
+
+def read_witness(
+    platform: str,
+    reviewer: str,
+    reviewer_image: str,
+    artifact: dict[str, Any],
+    *,
+    observed: bool,
+) -> dict[str, Any]:
+    return {
+        "platform": platform,
+        "reviewer": reviewer,
+        "reviewer_image": reviewer_image,
+        "fixture": "demo-access-policy",
+        "run_id": artifact["run_id"],
+        "effective_config_sha256": artifact["effective_config_sha256"],
+        "observed": observed,
+    }

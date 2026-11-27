@@ -126,7 +126,8 @@ row whose target has arrived, and remove completed spec files from the active
      and every selected campaign job green. Its `candidate-canary-identity`
      artifact must name exactly `P`'s `R` and both image references, and must list
      `panel` and `lifecycle`. Every campaign summary must name the same candidate,
-     and both panel summaries must record `repository_read: true` for Codex.
+     and both panel summaries must record `repository_read: true` for Claude,
+     Codex and OpenCode.
    - The `## [X.Y.Z]` section of `P`'s `CHANGELOG.md` must exist.
 
    It then writes the release body: the CHANGELOG section, with its
@@ -179,7 +180,8 @@ applied, and the review checks the evidence it cites.
   probes. CLI upgrades must pass the same gates before the runtime is frozen.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references. Both panel summaries must record `repository_read: true`
-  for Codex and identify the model used.
+  for Claude, Codex and OpenCode, and identify each model used. Cursor's read
+  coverage is reported as `unverified`.
 - [ ] **Hostile campaign:** required when `git diff --name-only v<previous> R`
   touches `ai-review/ci/review.gitlab-ci.yml`, `scripts/pipeline_trust.py`, or how
   prepare obtains credentials (`ai-review/src/ai_review/input_bundle.py` prepare,

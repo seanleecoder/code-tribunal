@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from ai_review.canary_repo_read import WITNESS_DIR, WITNESSED_REVIEWERS, witness_path
 from ai_review.reviewers import REVIEWERS
 
 from tests.support.canary_fixture import DEMO_ACCESS_SOURCE
@@ -273,13 +274,16 @@ class CandidateCanaryValidationTests(unittest.TestCase):
         self.validator = load_repository_script("validate_candidate_canary", VALIDATOR)
         self.manifest = {"run_id": "run-1", "effective_config_sha256": "a" * 64}
         self.reviewer_image = "reviewer@sha256:" + "c" * 64
-        self.witness = {
-            **self.manifest,
-            "platform": "github",
-            "reviewer": "codex",
-            "reviewer_image": self.reviewer_image,
-            "fixture": "demo-access-policy",
-            "observed": True,
+        self.witnesses = {
+            reviewer: {
+                **self.manifest,
+                "platform": "github",
+                "reviewer": reviewer,
+                "reviewer_image": self.reviewer_image,
+                "fixture": "demo-access-policy",
+                "observed": True,
+            }
+            for reviewer in WITNESSED_REVIEWERS
         }
 
     def _artifact(self, path: Path, _schema: str):
@@ -318,12 +322,14 @@ class CandidateCanaryValidationTests(unittest.TestCase):
             }
         return {}
 
-    def _validate(self, *, missing: bool = False):
+    def _validate(self, *, missing: str | None = None):
+        witnesses = [
+            FileNotFoundError() if reviewer == missing else self.witnesses[reviewer]
+            for reviewer in WITNESSED_REVIEWERS
+        ]
         with (
             mock.patch.object(
-                self.validator,
-                "load_json_file",
-                side_effect=[self.manifest, FileNotFoundError() if missing else self.witness],
+                self.validator, "load_json_file", side_effect=[self.manifest, *witnesses]
             ),
             mock.patch.object(self.validator, "_load", side_effect=self._artifact),
         ):
@@ -344,24 +350,43 @@ class CandidateCanaryValidationTests(unittest.TestCase):
         self.assertEqual(set(summary["seats"]), set(REVIEWERS))
         self.assertEqual(summary["posting"]["posted_thread_count"], 1)
         self.assertEqual(summary["cleanup"], "success")
-        self.assertIs(summary["seats"]["codex"]["review"]["repository_read"], True)
+        for reviewer in WITNESSED_REVIEWERS:
+            self.assertIs(summary["seats"][reviewer]["review"]["repository_read"], True)
+        self.assertEqual(summary["seats"]["cursor"]["review"]["repository_read"], "unverified")
         self.assertNotIn("redacted-by-summary", repr(summary))
         self.assertNotIn("model finding visible in the diff", repr(summary))
 
     def test_healthy_panel_with_findings_fails_without_a_bound_repository_read(self) -> None:
-        with self.assertRaisesRegex(
-            self.validator.CanaryValidationError, "read evidence is missing"
-        ):
-            self._validate(missing=True)
-        for field in self.witness:
+        for reviewer in WITNESSED_REVIEWERS:
             with (
-                self.subTest(field=field),
-                mock.patch.dict(self.witness, {field: "wrong"}),
+                self.subTest(missing=reviewer),
                 self.assertRaisesRegex(
-                    self.validator.CanaryValidationError, "read was not verified"
+                    self.validator.CanaryValidationError,
+                    f"{reviewer} repository read evidence is missing",
                 ),
             ):
-                self._validate()
+                self._validate(missing=reviewer)
+            for field, value in (
+                *((field, "wrong") for field in self.witnesses[reviewer]),
+                ("observed", 1),  # 1 == True, but is not a verified boolean
+                ("observed", False),
+            ):
+                with (
+                    self.subTest(reviewer=reviewer, field=field, value=value),
+                    mock.patch.dict(self.witnesses[reviewer], {field: value}),
+                    self.assertRaisesRegex(
+                        self.validator.CanaryValidationError,
+                        f"{reviewer} repository read was not verified",
+                    ),
+                ):
+                    self._validate()
+
+    def test_one_seat_cannot_supply_another_seats_witness(self) -> None:
+        self.witnesses["claude"] = dict(self.witnesses["codex"])
+        with self.assertRaisesRegex(
+            self.validator.CanaryValidationError, "claude repository read was not verified"
+        ):
+            self._validate()
 
     def test_incomplete_summary_has_one_redacted_shape(self) -> None:
         summary = self.validator.build_incomplete_summary(
@@ -674,7 +699,7 @@ class CandidateCollectionTests(unittest.TestCase):
             self.assertEqual(discovery_requests, 1)
             self.assertEqual(result["external_run_url"], "pipeline")
 
-    def test_github_takes_witness_only_from_codex_review_artifact(self) -> None:
+    def test_github_takes_each_witness_only_from_its_own_review_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state = root / "state.json"
@@ -691,11 +716,13 @@ class CandidateCollectionTests(unittest.TestCase):
                 ),
             ):
                 (artifacts / name).mkdir(parents=True)
-            path = self.github.WITNESS_PATH
-            for job, value in (("review-codex", "expected"), ("critique-codex", "wrong job")):
-                witness = artifacts / f"ai-review-{job}" / path
-                witness.parent.mkdir()
-                witness.write_text(value, encoding="utf-8")
+            # Every job tries to supply every seat's witness.
+            for seat in REVIEWERS:
+                for stage in ("review", "critique"):
+                    for claimed in WITNESSED_REVIEWERS:
+                        witness = artifacts / f"ai-review-{stage}-{seat}" / witness_path(claimed)
+                        witness.parent.mkdir(exist_ok=True)
+                        witness.write_text(f"{stage}-{seat}", encoding="utf-8")
             args = argparse.Namespace(
                 state=state, destination=root / "collected", timeout_seconds=10
             )
@@ -705,9 +732,13 @@ class CandidateCollectionTests(unittest.TestCase):
                 mock.patch.object(self.github, "download_run", return_value=artifacts),
             ):
                 self.github.collect_campaign(args)
-            self.assertEqual((args.destination / "out" / path).read_text(), "expected")
+            collected = args.destination / "out" / WITNESS_DIR
+            self.assertEqual(
+                {path.name: path.read_text() for path in collected.iterdir()},
+                {witness_path(seat).name: f"review-{seat}" for seat in WITNESSED_REVIEWERS},
+            )
 
-    def test_gitlab_takes_witness_only_from_codex_review_job(self) -> None:
+    def test_gitlab_takes_each_witness_only_from_its_own_review_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state = root / "state.json"
@@ -719,14 +750,21 @@ class CandidateCollectionTests(unittest.TestCase):
                     "status": "success",
                     "artifacts_file": {"filename": "artifacts.zip"},
                 }
-                for job_id, name in enumerate(("AI review: [codex]", "AI critique: [codex]"), 1)
+                for job_id, name in enumerate(
+                    (
+                        *(f"AI review: [{seat}]" for seat in REVIEWERS),
+                        *(f"AI critique: [{seat}]" for seat in REVIEWERS),
+                        "AI consensus",
+                    ),
+                    1,
+                )
             ]
-            path = self.gitlab.WITNESS_PATH
 
             def artifact(job):
                 content = io.BytesIO()
                 with zipfile.ZipFile(content, "w") as archive:
-                    archive.writestr(f"out/{path}", str(job["id"]))
+                    for claimed in WITNESSED_REVIEWERS:
+                        archive.writestr(f"out/{witness_path(claimed)}", job["name"])
                 return content.getvalue()
 
             args = argparse.Namespace(
@@ -741,7 +779,11 @@ class CandidateCollectionTests(unittest.TestCase):
                 mock.patch.object(self.gitlab, "_artifacts", side_effect=artifact),
             ):
                 self.gitlab.collect_campaign(args)
-            self.assertEqual((args.destination / "out" / path).read_text(), "1")
+            collected = args.destination / "out" / WITNESS_DIR
+            self.assertEqual(
+                {path.name: path.read_text() for path in collected.iterdir()},
+                {witness_path(seat).name: f"AI review: [{seat}]" for seat in WITNESSED_REVIEWERS},
+            )
 
 
 class CandidateCanaryCleanupTests(unittest.TestCase):

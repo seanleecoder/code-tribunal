@@ -18,9 +18,7 @@ sequence.
 
 ## Open specifications
 
-- [SPEC-69](spec-69-repository-tool-health.md): reject a review whose
-  repository-read tools all failed, uniformly across seats, and require a Candidate
-  Canary read witness from Claude, Codex and OpenCode. Five pull requests, none merged.
+None.
 
 ## Open follow-ups
 

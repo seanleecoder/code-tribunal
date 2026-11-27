@@ -32,7 +32,7 @@ from textwrap import indent
 from typing import Any
 
 import yaml
-from ai_review.canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
+from ai_review.canary_repo_read import FIXTURE_PATH, WITNESS_DIR
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
     DEMO_PROJECT,
@@ -52,8 +52,10 @@ from candidate_canary_common import (
     poll,
     read_state,
     require_demo_access,
+    reviewer_ids,
     run_lifecycle_steps,
     saved_disposition,
+    witness_only_from,
     write_state,
 )
 from pipeline_trust import REVIEW_DAG_PATH, ROOT, find_trust_issues
@@ -381,7 +383,7 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     command = indent(panel_review_command("gitlab", args.reviewer_image, prefix=prefix), "      ")
     review = review.replace(image_line, f"  image: {json.dumps(args.reviewer_image)}\n", 1)
     review = review.replace(review_line, f"    - |\n{command}\n", 1)
-    review = review.replace(review_paths, f"{review_paths}      - out/{WITNESS_PATH}\n", 1)
+    review = review.replace(review_paths, f"{review_paths}      - out/{WITNESS_DIR}/\n", 1)
     template = before + review_header + review + matrix_header + after
     require_demo_access(_raw_file(DEMO_PROJECT, str(FIXTURE_PATH)), GitLabCanaryError)
     # Checked before any branch exists; the "create" action stays the race backstop.
@@ -396,6 +398,10 @@ def create_campaign(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+# The seat each parallel-matrix review job ran, by its GitLab-expanded name.
+_REVIEW_JOBS = {f"AI review: [{reviewer}]": reviewer for reviewer in reviewer_ids()}
+
+
 def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     state = read_state(args.state)
     deadline = time.monotonic() + args.timeout_seconds
@@ -406,8 +412,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     output = destination / "out"
     inputs.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    # Only the Codex review job may carry the read witness.
-    ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
+    # Each review job may carry only its own seat's read witness.
     for job in _jobs(pipeline["id"]):
         if job.get("status") != "success" or not job.get("artifacts_file", {}).get("filename"):
             continue
@@ -416,7 +421,7 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
         extracted = destination / f"job-{job['id']}"
         with zipfile.ZipFile(archive) as zipped:
             zipped.extractall(extracted)
-        out_ignore = None if job.get("name") == "AI review: [codex]" else ignore_canary
+        out_ignore = witness_only_from(_REVIEW_JOBS.get(job.get("name")))
         for name, target, ignore in (("inputs", inputs, None), ("out", output, out_ignore)):
             source = extracted / name
             if source.is_dir():

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from ai_review.canary_codex_repo_read import CANARY_REVIEW_ENV
+from ai_review.canary_repo_read import CANARY_REVIEW_ENV
 from ai_review.config import unknown_environment_overrides
 from candidate_canary_common import (
     DEMO_PROJECT,

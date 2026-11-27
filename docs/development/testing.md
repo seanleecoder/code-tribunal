@@ -117,12 +117,20 @@ called into, and completed without command execution.
 The Candidate Canary panel adds a gateway caller whose behavior depends on the
 unchanged demo access helper on GitHub and GitLab. The generated panel jobs pin
 the candidate reviewer image and invoke the shipped launcher. The trusted runner
-asks Codex to inspect the helper and records the result from its execution stream
-in memory after normal review admission. A completed `read_file` or `grep` result
-must contain content from the helper. The panel validator checks the result
-against the run, effective configuration, platform, fixture, and reviewer image.
-The canary artifact contains only the bound verdict. The panel summary identifies
-the tested model and reports `repository_read: true` when the proof succeeds.
+asks Claude, Codex and OpenCode to inspect the helper. After normal review
+admission it records each seat's result from the transport that seat's codec
+already admitted. That is Codex's execution stream, Claude's stream-json, or the
+OpenCode session history, which the client reports as one boolean through a
+runner-owned file outside the snapshot and the artifacts. A completed,
+content-bearing `Read`/`read`/`read_file` or search result must contain content
+from the helper. A requested path, a model's claim, an empty result or a no-match
+search does not count. Each seat writes `canary/<reviewer>-repo-read.json`, and
+each collector accepts only the matching review job's own file. The panel
+validator checks every witness against the seat, run, effective configuration,
+platform, fixture and reviewer image. The panel summary identifies each tested
+model and reports `repository_read: true` for the three seats. Cursor's text
+output carries no tool telemetry, so its read coverage is reported as
+`unverified`.
 Build the candidate images from a source revision that includes the runner's
 canary capture. Ordinary reviews may complete with no findings or tool calls.
 The separate lifecycle campaign exercises live inline anchoring on a modified

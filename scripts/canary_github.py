@@ -23,7 +23,7 @@ from pathlib import Path
 from textwrap import indent
 from typing import Any
 
-from ai_review.canary_codex_repo_read import FIXTURE_PATH, WITNESS_PATH
+from ai_review.canary_repo_read import FIXTURE_PATH
 from ai_review.schema import load_json_file
 from candidate_canary_common import (
     DEMO_CALLER_EXISTS_GUARD,
@@ -49,6 +49,7 @@ from candidate_canary_common import (
     reviewer_ids,
     run_lifecycle_steps,
     saved_disposition,
+    witness_only_from,
     write_state,
 )
 from release_common import GITHUB_CALLER, GITHUB_WORKFLOW, ROOT
@@ -307,20 +308,19 @@ def collect_campaign(args: argparse.Namespace) -> dict[str, Any]:
     inputs = destination / "inputs"
     output = destination / "out"
     shutil.copytree(artifacts / "ai-review-inputs", inputs, dirs_exist_ok=True)
-    # Only the Codex review artifact may carry the read witness.
-    ignore_canary = shutil.ignore_patterns(WITNESS_PATH.parts[0])
+    # Each review artifact may carry only its own seat's read witness.
     for reviewer in reviewer_ids():
         shutil.copytree(
             artifacts / f"ai-review-review-{reviewer}",
             output,
             dirs_exist_ok=True,
-            ignore=None if reviewer == "codex" else ignore_canary,
+            ignore=witness_only_from(reviewer),
         )
         shutil.copytree(
             artifacts / f"ai-review-critique-{reviewer}",
             output,
             dirs_exist_ok=True,
-            ignore=ignore_canary,
+            ignore=witness_only_from(None),
         )
     shutil.copytree(artifacts / "ai-review-consensus", output / "consensus", dirs_exist_ok=True)
     shutil.copytree(artifacts / "ai-review-post", output / "post", dirs_exist_ok=True)

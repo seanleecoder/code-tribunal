@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from ai_review.canary_codex_repo_read import WITNESS_PATH, read_witness
+from ai_review.canary_repo_read import WITNESSED_REVIEWERS, read_witness, witness_path
 from ai_review.reviewers import REVIEWERS
 from ai_review.schema import (
     batch_usable,
@@ -137,19 +137,21 @@ def validate_run(
     if not post.get("posted_discussions"):
         raise CanaryValidationError(f"{platform} posted no finding thread")
 
-    try:
-        witness = load_json_file(output / WITNESS_PATH)
-    except OSError, ValueError:
-        raise CanaryValidationError(
-            f"{platform} Codex repository read evidence is missing or invalid"
-        ) from None
-    # Equality alone would accept `observed: 1`, since 1 == True.
-    if (
-        witness != read_witness(platform, reviewer_image, manifest, observed=True)
-        or witness["observed"] is not True
-    ):
-        raise CanaryValidationError(f"{platform} Codex repository read was not verified")
-    seats["codex"]["review"]["repository_read"] = True
+    for reviewer in WITNESSED_REVIEWERS:
+        try:
+            witness = load_json_file(output / witness_path(reviewer))
+        except OSError, ValueError:
+            raise CanaryValidationError(
+                f"{platform} {reviewer} repository read evidence is missing or invalid"
+            ) from None
+        expected_witness = read_witness(platform, reviewer, reviewer_image, manifest, observed=True)
+        # Equality alone would accept `observed: 1`, since 1 == True.
+        if witness != expected_witness or witness["observed"] is not True:
+            raise CanaryValidationError(f"{platform} {reviewer} repository read was not verified")
+        seats[reviewer]["review"]["repository_read"] = True
+    # Cursor's text output carries no tool telemetry to witness (SPEC-69).
+    for reviewer in set(REVIEWERS) - set(WITNESSED_REVIEWERS):
+        seats[reviewer]["review"]["repository_read"] = "unverified"
 
     return {
         **_summary_base(

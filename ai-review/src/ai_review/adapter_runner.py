@@ -6,7 +6,9 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +29,14 @@ from .adapter_process import (
     _model_id_validation_error,
     _run_adapter_process,
 )
-from .canary_codex_repo_read import (
+from .canary_repo_read import (
     IMAGE_ENV,
+    OPENCODE_OBSERVATION_ENV,
     PLATFORM_ENV,
-    WITNESS_PATH,
+    WITNESSED_REVIEWERS,
     fixture_read_observed,
     read_witness,
+    witness_path,
 )
 from .config import (
     ConfigError,
@@ -102,7 +106,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
         return exit_code
 
     canary = None
-    if reviewer == "codex" and stage == "review":
+    observation: Path | None = None
+    if reviewer in WITNESSED_REVIEWERS and stage == "review":
         canary_platform = os.environ.get(PLATFORM_ENV)
         canary_image = os.environ.get(IMAGE_ENV)
     else:
@@ -111,7 +116,7 @@ def run_adapter(reviewer: str, stage: str) -> int:
 
     try:
         if canary_requested:
-            (output_dir / WITNESS_PATH).unlink(missing_ok=True)
+            (output_dir / witness_path(reviewer)).unlink(missing_ok=True)
         manifest = _load_manifest(input_dir)
         config = config_from_manifest(manifest)
         manifest_run_id = manifest.get("run_id")
@@ -136,10 +141,11 @@ def run_adapter(reviewer: str, stage: str) -> int:
                 or not canary_image.strip()
             ):
                 raise ConfigError(
-                    f"Codex canary requires {PLATFORM_ENV} (github or gitlab) and {IMAGE_ENV}"
+                    f"repository-read canary requires {PLATFORM_ENV} (github or gitlab) "
+                    f"and {IMAGE_ENV}"
                 )
             if mock_requested:
-                raise ConfigError("Codex canary requires a real review")
+                raise ConfigError("repository-read canary requires a real review")
             canary = (canary_platform, canary_image)
         # GitLab project/pipeline variables can override the template's mock=0
         # default. Keep the explicit companion guard in this single selection
@@ -199,6 +205,13 @@ def run_adapter(reviewer: str, stage: str) -> int:
             prompt_tmp=prompt_tmp,
             mock=mock_requested,
         )
+        if canary is not None and reviewer == "opencode":
+            # A fresh runner-owned file outside the snapshot and the artifacts;
+            # only the client's post-success boolean is ever read from it.
+            handle, name = tempfile.mkstemp(prefix="ai-review-canary-read-")
+            os.close(handle)
+            observation = Path(name)
+            env[OPENCODE_OBSERVATION_ENV] = str(observation)
         workspace: Path | None = None
         if not mock_requested and reviewer_definition.adapter_path is not None:
             arguments, workspace = prepare_shell_adapter(reviewer_definition, stage, env)
@@ -286,15 +299,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
         write_canonical_json(output_dir / output_file, finalized)
         if canary is not None:
             platform, reviewer_image = canary
-            write_canonical_json(
-                output_dir / WITNESS_PATH,
-                read_witness(
-                    platform,
-                    reviewer_image,
-                    finalized,
-                    observed=fixture_read_observed(result.stdout),
-                ),
-            )
+            witness = output_dir / witness_path(reviewer)
+            try:
+                observed = fixture_read_observed(
+                    reviewer, result.stdout, workspace=workspace, observation=observation
+                )
+                write_canonical_json(
+                    witness,
+                    read_witness(platform, reviewer, reviewer_image, finalized, observed=observed),
+                )
+            except Exception as exc:
+                # Canary validation rejects absent evidence independently of the batch.
+                with suppress(OSError):
+                    witness.unlink(missing_ok=True)
+                diagnostic = bounded_diagnostic(str(exc), ERROR_MESSAGE_LIMIT) or type(exc).__name__
+                sys.stderr.write(
+                    f"ai-review adapter: {reviewer} canary witness failed: "
+                    f"{escape_legacy_workflow_commands(diagnostic)}\n"
+                )
         return 0
     except subprocess.TimeoutExpired as exc:
         # Preserve bounded, redacted diagnostics for a stuck reviewer.
@@ -330,6 +352,10 @@ def run_adapter(reviewer: str, stage: str) -> int:
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )
+    finally:
+        if observation is not None:
+            with suppress(OSError):
+                observation.unlink(missing_ok=True)
 
 
 def cli(argv: list[str] | None = None) -> int:

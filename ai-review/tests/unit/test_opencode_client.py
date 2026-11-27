@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 
 import pytest
 from ai_review import opencode_client as client
+from ai_review.canary_repo_read import OPENCODE_OBSERVATION_ENV
 from ai_review.schema import AdapterModelError
 
 
@@ -53,7 +54,7 @@ def test_captured_v2_image_message_pages(name: str, stage: str, accepted: bool) 
     captured = json.loads(fixture.read_text())
     with mock.patch.object(client, "_request_json", return_value=captured["page"]):
         if accepted:
-            result = client._session_answer(
+            result, _parts = client._session_answer(
                 "http://127.0.0.1:1/",
                 "captured",
                 captured["prompt_id"],
@@ -164,7 +165,7 @@ def test_answer_is_bound_to_our_prompt_across_descending_pages() -> None:
     ) as request:
         assert client._session_answer(
             "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage="review"
-        ) == {"findings": []}
+        )[0] == {"findings": []}
     assert request.call_args_list[0].args[2].endswith("message?order=desc")
     assert request.call_args_list[1].args[2].endswith("message?cursor=older")
 
@@ -227,7 +228,7 @@ def test_successful_continuation_can_follow_an_errored_assistant(stage: str) -> 
         assert (
             client._session_answer(
                 "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage=stage
-            )
+            )[0]
             == batch
         )
 
@@ -633,7 +634,7 @@ def admit(*pages: dict) -> dict:
     with mock.patch.object(client, "_request_json", side_effect=list(pages)):
         return client._session_answer(
             "http://127.0.0.1:1/", "ses_test", "msg_input", password="private", stage="review"
-        )
+        )[0]
 
 
 @pytest.mark.parametrize(
@@ -727,3 +728,65 @@ def test_tool_parts_inside_the_final_answer_message_are_counted() -> None:
     )
     with pytest.raises(AdapterModelError, match="all failed"):
         admit(page(IDLE, final, USER))
+
+
+def run_canary_review(tmp_path: Path, part: dict) -> list[dict]:
+    """Run one canary review whose history holds ``part``; return the server envs."""
+    (tmp_path / "inputs" / "repo_snapshot").mkdir(parents=True)
+    prompt = tmp_path / "prompt"
+    prompt.write_text("trusted stage prompt")
+    (tmp_path / "observation").write_text("")
+    server_envs = []
+
+    def start(_root, _executable, env, _log):
+        server_envs.append(env)
+        return fake_process(""), "http://127.0.0.1:1/", ()
+
+    responses = [
+        {"data": {"id": "ses_test"}},
+        {"data": {"id": "msg_input", "sessionID": "ses_test"}},
+        {},
+        page(IDLE, answer(), calls(part), USER),
+    ]
+    env = {
+        "AI_REVIEW_STAGE": "review",
+        "PATH": os.environ.get("PATH", ""),
+        "AI_REVIEW_MODEL": "google/test",
+        "AI_REVIEW_RENDERED_PROMPT": str(prompt),
+        "OPENROUTER_API_KEY": "selected-key",
+        "AI_REVIEW_INPUT_DIR": str(tmp_path / "inputs"),
+        "AI_REVIEW_OUTPUT_DIR": str(tmp_path / "out"),
+        OPENCODE_OBSERVATION_ENV: str(tmp_path / "observation"),
+    }
+    with (
+        mock.patch.dict(os.environ, env, clear=True),
+        mock.patch.object(client, "_resolve_opencode_executable", return_value="/pinned"),
+        mock.patch.object(client, "_start_server", side_effect=start),
+        mock.patch.object(client, "_request_json", side_effect=responses),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
+        assert client.run() == 0
+    return server_envs
+
+
+@pytest.mark.parametrize("observed", [True, False])
+def test_a_canary_review_reports_its_fixture_read_only_after_success(
+    tmp_path: Path, observed: bool
+) -> None:
+    read = tool(
+        "completed",
+        name="read",
+        input={"path": "src/access.py" if observed else "src/other.py"},
+        content=[{"type": "text", "text": "Read file src/access.py\n1: def is_allowed():"}],
+    )
+    server_envs = run_canary_review(tmp_path, read)
+    assert (tmp_path / "observation").read_text() == ("true" if observed else "false")
+    # The scratch path is the runner's channel to this trusted client only.
+    assert OPENCODE_OBSERVATION_ENV not in server_envs[0]
+
+
+def test_a_failed_canary_review_reports_nothing(tmp_path: Path) -> None:
+    with pytest.raises(client.OpenCodeClientError, match="all failed"):
+        run_canary_review(tmp_path, tool("error", error=RG_FAILED))
+    assert (tmp_path / "observation").read_text() == ""

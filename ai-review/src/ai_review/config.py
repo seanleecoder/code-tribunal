@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import Any, get_args, get_type_hints
 
 from .anchors import is_sha256
-from .canary_codex_repo_read import CANARY_REVIEW_ENV
+from .canary_repo_read import CANARY_REVIEW_ENV
 from .canonical import stable_json_hash
 from .reviewers import REVIEWER_IDS, REVIEWERS, trusted_runtime_root
 
