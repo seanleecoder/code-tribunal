@@ -39,9 +39,15 @@ launcher rewrite is planned.
   - dropping per-seat effort settings;
   - one canary covering both platforms.
 - **Deferred until run-health data exists:**
-  - Claude's JSON envelope versus stream-json, which trades the timeout trace for
-    about 400 lines;
-  - making Codex and OpenCode structured-output only.
+  - making Codex structured-output only.
+- **Overtaken (closed 2026-11-27):**
+  - Claude's JSON envelope versus stream-json: stream-json now also carries the
+    repository-tool health correlation in `adapter_output.py` and the canary
+    read witness in `canary_repo_read.py`, so the envelope would drop required
+    evidence, not only the timeout trace;
+  - making OpenCode structured-output only: `@opencode/cli` v2 has no
+    generation-time schema enforcement (see
+    [configuration](../../configuration.md#reviewers)).
 
 ## S08 evidence
 
