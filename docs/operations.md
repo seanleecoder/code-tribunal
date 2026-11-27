@@ -10,7 +10,7 @@
 | No usable reviewer succeeds | Consensus exits 3; no posting decision | Restore provider/adapter availability |
 | Run/config/artifact identity mismatch | The first stage to see it stops before consequential work ([stage integrity](configuration.md#stage-visibility-and-integrity)) | Rerun from prepare with the intended operator overrides |
 | GitLab source commit unavailable, stale detached checkout, or revision changes during prepare | Prepare fails without a usable input manifest | Start a pipeline on the current MR source ref with its source commit available locally; see [source snapshots](getting-started/gitlab.md#source-revision-and-snapshot) |
-| State is inaccessible, corrupt, duplicated, or still v1 | Prepare/post stop before publication | Restore state/API access or complete the explicit v2 migration |
+| State is inaccessible, corrupt, duplicated, or still v1 | Prepare/post stop before publication | Restore state/API access; a v1 ledger needs [conversion](#convert-a-v1-ledger) |
 | Post is `failed`, `partial_failed`, or `state_overflow` | `post` exits nonzero and the job fails | Repair API/state capacity and rerun post |
 | Head changes before posting | No stale mutation; `post` reports `stale_head` and exits 0 | Let the newer revision's run own the review |
 | Consensus surfaces a `blocker` finding | A thread is posted; `post` exits 0 | Treat it as review input. Merge policy is the repository's, not Code Tribunal's |
@@ -155,98 +155,47 @@ getting-started guides.
 
 ### Upgrade to 3.0
 
-1. Save the current workflow/include SHA, image digests, custom configuration
-   and CI variables for rollback.
-2. Pause reviews and complete the [state v2 migration](#state-v2-migration).
-   Preserve its exports through the rollback window.
-3. Remove retired settings using the
-   [configuration migration](configuration.md#migrate-to-30). Remove `--state`
-   from custom consensus commands and `--config` from custom consensus and post
-   commands.
-4. Replace the installation:
-   - **GitHub:** replace the copied workflow with the SHA-pinned caller from the
-     [installation guide](getting-started/github.md#install-the-workflow). Remove
-     the old `post` requirement from rulesets or branch protection before
-     switching, then select `ai-review / post` after the first run.
-   - **GitLab:** [protect the composition](getting-started/gitlab.md#protect-the-ci-composition)
-     and restrict pipeline variables first. Replace the `ai_review` trigger job
-     and its two nested includes with the top-level
-     [direct include](getting-started/examples/gitlab-direct.yml), pinned to the
-     reviewed template project's full SHA, and keep `ai_review` in the stage
-     list. Review jobs run in the merge-request pipeline itself. Remove `--mode`
-     from trust-auditor commands; the auditor accepts only the direct include.
-5. Upgrade the workflow/include and both images together, then resume with fresh
-   artifacts from prepare through post. Verify thread identity and human
-   dispositions. The runtime does not replay pre-cutover artifacts.
+Releases after 3.1.1 do not carry the 3.0 upgrade procedure or the offline v1
+state converter. A deployment still on 2.x or earlier first follows the
+[3.0 upgrade](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#upgrade-to-30)
+in the 3.1.1 documentation, including its state migration and rollback, and then
+moves to the current release. On a deployment already on 3.x, a change request
+with a v1 ledger needs only [convert a v1 ledger](#convert-a-v1-ledger).
 
-A rollback restores the complete saved deployment, configuration and v1 state
-together: the previous caller or copied workflow on GitHub, the previous
-template SHA and composition on GitLab.
+### Convert a v1 ledger
 
-For a 1.x deployment, also remove the retired merge-gate job, any required
-`gate` check, and custom jobs, `needs` or rules that reference `ai_review_gate`
-before upgrading; Code Tribunal publishes informational review output and never
-decides whether a change may merge.
+On a deployment already on 3.x, a change request can still hold a v1 ledger, for
+example a change last reviewed before the 3.0 cutover and reopened later.
+Prepare and post stop with `state is v1`, also for the 2.1.x layout with a
+separate summary and v1 state note. Convert only that change's ledger:
 
-### State v2 migration
+1. Take a [state export](#state-ledger) of the change; that procedure pauses
+   its review triggers first.
+2. Follow the per-change
+   [state v2 migration](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#state-v2-migration)
+   in the 3.1.1 documentation, running `scripts/migrate_state_v2.py` from a
+   `v3.1.1` checkout. It sends no requests; apply and read back its update as that
+   procedure describes.
+3. Rerun from prepare on the existing deployment.
 
-Version 3.0 stores its checksummed ledger inside the bot's summary,
-with one top-level bot comment per change request. Runtime accepts only v2.
-Existing v1 ledgers must be converted before switching images; never delete a
-ledger and start empty. Keep the original export for rollback. State v2 cannot
-be read by 2.1.x: rollback requires restoring the exported v1 note and summary
-while reviews are paused. Keep reviews paused while restoring the original v1
-summary and state-note bodies from the exports, read each restored body back,
-remove the v2 container only when it is a separate newly created note, then
-restore the old workflow/include and images together. Verify there is exactly
-one authenticated v1 ledger before resuming. Restore the saved note IDs where
-possible; if the old state note was deleted, inspect any recreated-note ID
-binding before running 2.1.x. Do not run an old image against v2 or synthesize an
-empty ledger. If reviews have already recorded new dispositions after migration,
-reconcile those decisions before restoring an older export.
+Do not run the full 3.0 upgrade or its rollback for this. They replace the
+workflow and image pins, and restoring a saved v1 ledger under 3.x leaves state
+that 3.x rejects. If the conversion is abandoned, restore the exported bodies;
+the change stays refused, as it was before.
 
-The 3.0.0 release rehearsed this migration on both platforms; the retained
-[cutover acceptance](evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance)
-records what was verified.
+### State ledger
 
-For each open change request with previous state:
+Code Tribunal stores its checksummed v2 ledger inside the bot's summary, with
+one top-level bot comment per change request. Never delete a ledger and start
+empty.
 
-1. Pause all review triggers and wait for active prepare/post jobs to finish.
-2. Export **all pages** of top-level comments/notes from the platform API using
-   the bot identity. Keep author IDs and note IDs. For GitHub, for example:
-   `gh api --paginate --slurp repos/OWNER/REPO/issues/NUMBER/comments > notes.json`.
-   For GitLab, export every page of
-   `projects/PROJECT/merge_requests/IID/notes` into one JSON array. Keep this
-   original export until the upgrade and any rollback window have closed.
-3. From the new source checkout, run the offline converter:
-
-   ```sh
-   PYTHONPATH=ai-review/src .venv/bin/python scripts/migrate_state_v2.py \
-     --notes notes.json --bot-author-id BOT_USER_ID \
-     --project-id OWNER/REPO --change-id NUMBER \
-     --posting-mode github_reviews --out update.json
-   ```
-
-   For GitLab, use the ledger's project ID and MR IID and
-   `--posting-mode gitlab_discussions`. The command emits a `{"body": ...}`
-   API update payload and prints the existing target note ID and obsolete IDs.
-   It sends no requests. Missing/ambiguous ledgers, corrupt checksums, wrong
-   change identities, invalid records, and oversized summaries stop conversion
-   without writing an update. Resolve ambiguity from the preserved evidence;
-   the converter never guesses which ledger to keep.
-4. Review `update.json`. Update the printed target through the platform API,
-   read it back, and verify its body equals the emitted body. Then delete only
-   the printed obsolete state-note IDs. The existing summary is reused when
-   present; otherwise the old state note becomes the summary. Resume with the
-   new images only after both steps succeed. A failed update leaves the v1
-   ledger intact; a failed deletion leaves reviews paused until cleanup finishes.
-5. Remove the retired state controls listed in the
-   [configuration migration](configuration.md#migrate-to-30),
-   rerun from prepare, and verify thread IDs and human dismissals remain intact.
-
-The conversion preserves every record and disposition, maps old `drop` decisions
-to `fyi`, removes unused aliases/history, and checks the resulting v2 schema.
-No online legacy decoder or automatic migration runs during prepare/post.
+To export review state before a repair or rollback, pause all review triggers
+and wait for active prepare/post jobs to finish. Then export **all pages** of
+top-level comments/notes from the platform API using the bot identity, keeping
+author IDs and note IDs. For GitHub, for example:
+`gh api --paginate --slurp repos/OWNER/REPO/issues/NUMBER/comments > notes.json`.
+For GitLab, export every page of `projects/PROJECT/merge_requests/IID/notes`
+into one JSON array. Keep the export until the repair or rollback is verified.
 
 If publication fails after creating threads but before writing the combined
 summary, a retry reconciles bot-authored thread roots on that same revision.
@@ -265,18 +214,20 @@ treated as absence.
 
 A failed first summary write can leave inline threads without any ledger, and a
 2.1.x failed state write can leave a summary without its separate v1 state note.
-After another push, neither case can be repaired by the v1 converter: there is
-no ledger to convert. The `missing-ledger-repair` error identifies this path.
+In either case, after another push there is no ledger to load. The
+`missing-ledger-repair` error identifies this path.
 Prepare raises it before any reviewer runs: when no ledger loads, it lists the
 change's threads and applies the rule post applies. Post keeps the same check for
 history that changes after prepare.
 
 1. Pause review triggers and wait for active jobs to finish. Export all bot
    comments, inline thread roots, replies and human commands across every page.
-   The migration's top-level-comment export alone does not include GitHub inline
-   review threads. Keep the exports until the repair is verified.
+   A [state export](#state-ledger) of top-level comments alone does not include
+   GitHub inline review threads. Keep the exports until the repair is verified.
 2. If a ledger previously existed, restore that authenticated ledger from the
-   latest good export. Do not replace durable dispositions with empty state.
+   latest good export. Do not replace durable dispositions with empty state. If
+   that export holds a v1 ledger, convert it as in
+   [convert a v1 ledger](#convert-a-v1-ledger) before applying it.
 3. If the first ledger was never written, inspect the orphaned findings and
    record any human dispositions and command replies. Delete only the bot's
    orphaned inline root comments using the platform's comment deletion action.
@@ -305,7 +256,7 @@ posted, use this procedure while still running the new images:
 
 1. Pause automatic triggers and drain jobs.
 2. Export each affected summary and ledger with note and author identities,
-   following the [state v2 migration](#state-v2-migration) backup procedure.
+   as described under [state ledger](#state-ledger).
 3. Post an authorized `/ai-review wontfix` on every refuted finding and run
    controlled reviews until neither ledger field contains `refuted`. Include
    absent findings and threads with earlier `resolve`, `reopen` or `wontfix`

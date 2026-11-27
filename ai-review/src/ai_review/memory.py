@@ -170,20 +170,31 @@ def encode_state_note(state: Mapping[str, Any]) -> str:
     return f"<!-- ai-review-state:v2 {encoded} -->"
 
 
+# COMPAT-014: point a v1 ledger at the v3.1.1 per-change converter.
+_V1_STATE_ERROR = (
+    "state is v1; convert it with the v3.1.1 offline converter, "
+    "see docs/operations.md#convert-a-v1-ledger"
+)
+
+
 def decode_state_note_body(body: str) -> dict[str, Any]:
     versions = STATE_MARKER_RE.findall(body)
     if not versions:
         raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
-    # COMPAT-009: point unmigrated v1 ledgers at the offline migration script.
-    explicit = [version for version in versions if version]
-    if not explicit or any(version != "2" for version in explicit):
+    if not all(versions):
         raise ValueError(
-            "state requires the explicit v2 migration; run scripts/migrate_state_v2.py"
+            "state marker is malformed or missing a version; repair state before retrying"
         )
-    matches = list(STATE_NOTE_RE.finditer(body))
-    if len(matches) != 1 or len(versions) != 1:
+    if len(versions) != 1:
         raise ValueError("expected exactly one state v2 marker")
-    encoded = matches[0].group("payload")
+    if versions[0] == "1":
+        raise ValueError(_V1_STATE_ERROR)
+    if versions[0] != "2":
+        raise ValueError(f"unsupported state version v{versions[0]}; expected v2")
+    match = STATE_NOTE_RE.search(body)
+    if match is None:
+        raise ValueError("state v2 marker payload is malformed")
+    encoded = match.group("payload")
     try:
         payload = base64.b64decode(
             encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
@@ -207,8 +218,8 @@ def state_note_candidates(
     warnings = []
     for note in notes:
         body = note.get("body")
-        # Recognize malformed and old markers too: corruption or an outstanding
-        # migration must never look like an initial empty ledger.
+        # Recognize malformed and old markers too: corruption or an unconverted
+        # v1 ledger must never look like an initial empty ledger.
         if not isinstance(body, str) or LEDGER_CONTAINER_RE.search(body) is None:
             continue
         if expected_author_id is not None and note_author_id(note) != expected_author_id:
@@ -251,9 +262,11 @@ def load_state_from_notes(
             )
         return None, warnings
     if len(candidates) != 1:
-        raise ValueError(
-            "multiple bot state/summary notes; migrate or repair state before retrying"
-        )
+        # COMPAT-014: a 2.1.x change keeps a ledger-free summary beside its v1 state note.
+        ledgers = [v for note in candidates for v in STATE_MARKER_RE.findall(note["body"])]
+        if ledgers == ["1"]:
+            raise ValueError(_V1_STATE_ERROR)
+        raise ValueError("multiple bot state/summary notes; repair state before retrying")
     note = candidates[0]
     if not isinstance(note.get("id"), int):
         raise ValueError("bot summary note has no numeric id")

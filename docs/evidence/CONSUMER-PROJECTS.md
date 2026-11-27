@@ -97,8 +97,8 @@ one.
 
 PRs #9, #10, #14, #18 and #25 were closed on 2026-11-15, before the 3.1.0
 adoption. Each keeps its branch, comments and **v1** state ledger. A 3.x image
-refuses that ledger, so convert it with `scripts/migrate_state_v2.py` from the
-`v3.1.0` tag before reopening one.
+refuses that ledger, so [convert it](../operations.md#convert-a-v1-ledger)
+before reopening one.
 
 ### Threads that must not be deleted
 
@@ -305,7 +305,7 @@ IDs. GitHub summary `6276182501` and GitLab summary `3601861625` remain the stat
 containers. Both fixtures were closed again, their previous CI files restored,
 and temporary workflow/template branches deleted. Original v1 exports remain
 outside version control for the paused-review
-[rollback procedure](../operations.md#state-v2-migration). Historical multiline
+[rollback procedure](https://github.com/seanleecoder/code-tribunal/blob/v3.1.1/docs/operations.md#state-v2-migration). Historical multiline
 reader behavior also remains covered by the regression suite; these preserved
 live roots have single-line positions.
 

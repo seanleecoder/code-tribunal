@@ -166,8 +166,7 @@ release instead.
 The one-time 3.0.0 cutovers are recorded in the retained
 [exact-pair acceptance](../evidence/CONSUMER-PROJECTS.md#exact-pair-30-cutover-acceptance);
 upgrades from older releases follow the
-[state migration](../operations.md#state-v2-migration) and platform installation
-guides.
+[3.0 upgrade](../operations.md#upgrade-to-30) and platform installation guides.
 
 Copy this into the release pull-request description. Each item records whether it
 applied, and the review checks the evidence it cites.

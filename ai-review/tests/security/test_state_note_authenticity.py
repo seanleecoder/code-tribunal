@@ -63,7 +63,9 @@ class StateNoteAuthenticityTests(unittest.TestCase):
     def test_author_mismatch_summary_warning_omitted_if_notes_survive_check(self) -> None:
         # A note that matches the marker regex but fails validation (e.g. checksum/base64)
         corrupt_body = f"<!-- ai-review-state:v1 invalid_payload state_hash={'0' * 64} -->"
-        with self.assertRaisesRegex(ValueError, "migration"):
+        with self.assertRaisesRegex(
+            ValueError, r"state is v1.*v3\.1\.1.*docs/operations\.md#convert-a-v1-ledger"
+        ):
             load_state_from_notes(
                 [
                     {
