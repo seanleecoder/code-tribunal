@@ -11,7 +11,7 @@ rather than archived. `git log` holds them, and a completed spec describes work
 already visible in the code, tests, and [`CHANGELOG.md`](../../CHANGELOG.md).
 Read those for current behavior.
 
-Last reviewed against main at `778f055` on 2026-11-27. Decisions about shipped
+Last reviewed against main at `828c074` on 2026-11-27. Decisions about shipped
 work were pruned from this page on 2026-11-15; the previous revision in git
 history holds the full 2026-10-13 to 2026-10-26 log and the completed release
 sequence.
@@ -58,6 +58,15 @@ unanchored advisories and review-scope exclusions. They are not on the roadmap.
 | State overflow (2026-10-16) | Fix the causes; do not shed | The SPEC-52 draft's shed ladder, backend-aware ceilings and shed provenance are not adopted. |
 | Marker `source=` (2026-10-19) | Permanently optional in the marker grammar | No longer written since 3.0.0. Threads that are never refreshed keep it indefinitely, so the reader stays. |
 | Dependency release age (2026-10-19) | No minimum release age | Renovate opens an update as soon as it is released, and manual refreshes take the latest release, including the `.pin` files. |
+
+## Post-3.1.1 decisions (2026-11-27)
+
+| Question | Decision | Consequence |
+|---|---|---|
+| Enforce `hostile` at publication | Keep checklist-only | ADR-0004 decision 2 stands: `check_release.py` requires only `panel` and `lifecycle`, and the release review checks `hostile` when its trigger paths changed. Changing this needs an ADR-0004 amendment. |
+| Deferred output-format calls | Close two as overtaken | Claude keeps stream-json and OpenCode stays text-answer; see the [simplification audit](simplification-audit/README.md). Structured-only Codex stays deferred. |
+| Cursor investment | Pin refresh plus scoped evidence | After the next `cursor-agent.pin` refresh: drop `--sandbox disabled` if the nested-container sandbox works, otherwise one deny-policy probe; a structured codec and canary witness only if the pinned CLI reports correlatable tool outcomes. Cursor stays opt-in. |
+| Self-review Cursor model | Keep `grok-4.7-high-fast` | This repository's self-review runs are not evidence for the documented Value/Balance `grok-4.7-medium` route. |
 
 ## Repository-tool health decisions (2026-11-26)
 

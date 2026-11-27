@@ -9,6 +9,7 @@ versioning.
 
 ### Changed
 
+- Upgrade Cursor Agent to 2026.11.22-e9042b2.
 - State errors now tell a v1 ledger apart from a malformed or unsupported state
   marker. Only a v1 ledger points at the v1 conversion.
 

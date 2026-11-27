@@ -8,7 +8,7 @@ release — re-creating them from scratch each release wastes hours and loses th
 older-format threads that the body-refresh check depends on.
 
 Deployment observations below are dated evidence, the latest being the
-[3.1.0 adoption](#resting-deployment-adoption-310-2026-11-15) on 2026-11-15, not
+[3.1.1 adoption](#resting-deployment-adoption-311-2026-11-27) on 2026-11-27, not
 a fresh inspection of either service. Before each campaign, run
 `make demo-preflight` (step 0 of the
 [per-release setup checklist](#per-release-setup-checklist)) for credentials and variables, and recheck by
@@ -67,9 +67,9 @@ live in the called workflow. Do not paste the reusable implementation into a
 caller file; it has no automatic trigger. Temporary mock checks use the canary's
 caller/reusable pair instead of enabling mocks through the production caller.
 
-**Resting deployment:** as of 2026-11-15 `main` calls the reusable workflow at
-`ef8a13b49c08e625b026f391c646f51a0d012888` (`v3.1.0`), adopted by PR #59 (merge
-`f557518`). The previous deployment was the copied 2.0.0 workflow at `b44ab38`.
+**Resting deployment:** as of 2026-11-27 `main` calls the reusable workflow at
+`37b1fcca602b4c1b87d66285171822b9e9ed06c5` (`v3.1.1`), adopted by PR #62 (merge
+`5f50d63`). The previous deployment was `v3.1.0` at `ef8a13b`, from PR #59.
 This is recorded evidence, not a current pin recommendation.
 
 ### Branch and PR conventions
@@ -144,9 +144,9 @@ Public, project id `84667714`. Recorded configuration:
   and a stale `AI_REVIEW_LOCAL_MOCK=1` silently invalidates a real run.
 - `.gitlab-ci.yml` on `main` is the documented
   [direct include](../getting-started/examples/gitlab-direct.yml) of the template
-  at `370da58647aaa88332c4345fbc6d6f31b8859d5e` (3.1.0), adopted by MR `!65`
-  (merge `0197be8`). The previous deployment was the 2.0.0 child trigger at
-  template `f8ae213`, consumer commit `5900e34`. The canary's temporary branches
+  at `0d34d2c0296032cbc43a47855feeb64757d3e8e5` (3.1.1), adopted by MR `!69`
+  (merge `4587f6c`). The previous deployment was template `370da58` (3.1.0),
+  from MR `!65`. The canary's temporary branches
   install a direct include at the candidate template SHA, independently of this
   resting deployment.
 
