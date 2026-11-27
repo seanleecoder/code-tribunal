@@ -233,9 +233,8 @@ your own GitLab deployment, or for a fork-based variant.
 
 ## Carried coverage gaps
 
-Reviewed for 3.1.0 on 2026-11-15: the gaps below remain. The separate
-[refuted rollback rehearsal](CONSUMER-PROJECTS.md#refuted-rollback-rehearsal-310-2026-11-15)
-passed on both platforms.
+Reviewed for 3.1.1 on 2026-11-27: the gaps below remain, and Cursor's
+repository-read coverage is added.
 
 Live-coverage paths no run has exercised yet. The release pull-request checklist's
 **Known limitations** item keeps this table current. Claim limits that no live run
@@ -245,7 +244,8 @@ the [security model](../SECURITY_MODEL.md).
 | Gap | Why it is unproven | How to close it |
 |---|---|---|
 | GitLab fork-based merge request | the hostile probe uses an unprotected in-project branch | run the [hostile-MR checklist](#gitlab-hostile-mr-checklist) from a fork |
-| GitLab source snapshots on web/API, merged results, merge trains, stale queued inputs, inherited caches and runner LFS/submodule setup | regression tests cover local source materialization and rejection, but no live run has exercised these modes; the demo forbids pipeline variables, including a supplied MR IID | retain the demo's variable restriction; record these gaps until separately authorized evidence covers the modes. Existing panel/lifecycle/hostile campaigns validate the detached-MR path on the next candidate image/template pair |
+| GitLab source snapshots on web/API, merged results, merge trains, stale queued inputs, inherited caches and runner LFS/submodule setup | regression tests cover local source materialization and rejection, but no live run has exercised these modes; the demo forbids pipeline variables, including a supplied MR IID | retain the demo's variable restriction; record these gaps until separately authorized evidence covers the modes. The 3.1.1 panel, lifecycle and hostile campaigns cover only the detached-MR path |
+| Cursor repository reads | Cursor's CLI emits no structured tool telemetry, so neither run health nor the canary can witness a read; Cursor is reported as `unverified` and admitted on its exit rule alone (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a pinned structured output mode that reports correlatable tool outcomes, then a Cursor witness in the canary |
 | Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a hostile permission-denial prompt against the pinned CLI; required before Cursor joins the default roster |
 | Paths the uniform mock cannot reach: below-quorum FYI, the inline-unmappable summary fallback, a noise-demoted FYI entry (SPEC-67) | the mock emits identical, always-anchorable findings on every seat and no critiques | per-seat, unmappable-anchor and noise-voting mock scenarios; regression tests cover all three meanwhile |
 | Invalid-location finding loss | location rejection is regression-covered; the summary's run details post each job's dropped and cap-omitted counts (SPEC-66), but no live run has produced a loss | a mock scenario with an invalid location beside a valid finding |
