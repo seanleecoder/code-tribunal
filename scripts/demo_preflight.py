@@ -118,9 +118,7 @@ def github_checks(runner: Runner, now: datetime) -> list[Check]:
     required = protection.get("required_status_checks") or {}
     contexts = required.get("contexts") or []
     if contexts:
-        checks.append(
-            Check("FAIL", f"github: main requires status checks {contexts}; none report in 2.0")
-        )
+        checks.append(Check("FAIL", f"github: main requires status checks {contexts}; none report"))
     rulesets = _github_inventory(runner, f"{repo}/rulesets")
     for ruleset in rulesets:
         if ruleset.get("enforcement") == "active":
