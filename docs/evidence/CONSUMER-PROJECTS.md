@@ -345,6 +345,32 @@ an external caller was last exercised in the 3.0 acceptance. `make
 demo-preflight` passed before and after. Rollback points: GitHub demo `main` at
 `b44ab38`, GitLab demo `main` at `5900e34`, template `main` at `f8ae213`.
 
+## Resting deployment adoption (3.1.1, 2026-11-27)
+
+Both resting deployments moved from 3.1.0 to the released 3.1.1 pair
+(runtime `778f055`, release commit `37b1fcc`), after the
+[Candidate Canary run 45997574010](https://github.com/seanleecoder/code-tribunal/actions/runs/45997574010)
+that the `v3.1.1` tag cites.
+
+- **Template project:** commit `0d34d2c0296032cbc43a47855feeb64757d3e8e5` holds
+  `ai-review/ci/review.gitlab-ci.yml` byte-identical to `v3.1.1`.
+- **GitHub:** [PR #62](https://github.com/seanleecoder/code-tribunal-demo/pull/62)
+  pinned the caller to `37b1fcca602b4c1b87d66285171822b9e9ed06c5`. Its automatic
+  [run 46012116698](https://github.com/seanleecoder/code-tribunal-demo/actions/runs/46012116698)
+  completed review and critique on all four seats with full health, posted one
+  thread and one summary holding state v2, and its consensus and post jobs
+  succeeded.
+- **GitLab:** [MR `!69`](https://gitlab.com/seanleecoder/code-tribunal-demo/-/merge_requests/69),
+  from a protected branch, pointed the direct include at the new template commit
+  after `scripts/pipeline_trust.py` accepted it.
+  [Pipeline 3123737003](https://gitlab.com/seanleecoder/code-tribunal-demo/-/pipelines/3123737003)
+  gave the same result: four seats in both stages, full health, one thread and a
+  state v2 summary.
+
+Both runs pulled the `v3.1.1` base image digest. `make demo-preflight` passed
+before and after. Rollback points: GitHub demo `main` at `c599dac`, GitLab demo
+`main` at `6e457b1`, template `main` at `370da58`.
+
 ## Refuted rollback rehearsal (3.1.0, 2026-11-15)
 
 The isolated [GitHub PR #56](https://github.com/seanleecoder/code-tribunal-demo/pull/56)
