@@ -45,7 +45,8 @@ row whose target has arrived, and remove completed spec files from the active
    `ai-review/src` is copied into the base image, and the reviewer is built `FROM`
    that base, so any change to `ai-review/src` needs both images rebuilt from `R`.
    Image preflight must pass the unconditional Linux/amd64 Codex gate,
-   `scripts/smoke_codex_batch_output.sh <reviewer-image>`, as well as the OpenCode
+   `scripts/smoke_codex_batch_output.sh <reviewer-image>`, the Claude gate,
+   `scripts/smoke_claude_batch_output.sh <reviewer-image>`, and the OpenCode
    probes. A local Termux CLI run does not replace image acceptance. The Codex
    probe needs no credentials or external network; it proves no-shell repository
    reads through code mode, containment and the pinned tool set, and rejects
@@ -69,8 +70,8 @@ row whose target has arrived, and remove completed spec files from the active
    ```
 
    `panel` and `lifecycle` are required on every release. The panel must record
-   a successful Codex read of the unchanged demo access helper on GitHub and
-   GitLab. Build both candidate images from a runtime source that includes the
+   a successful Claude, Codex and OpenCode read of the unchanged demo access
+   helper on GitHub and GitLab. Build both candidate images from a runtime source that includes the
    shipped runner's canary capture. Include `hostile` when the
    [checklist](#release-pull-request-checklist) says it applies. Publication
    accepts only a run whose first attempt succeeded, so after a failure fix forward
@@ -176,8 +177,8 @@ applied, and the review checks the evidence it cites.
   remains or that it reached its removal condition and was deleted before
   freezing `R`.
 - [ ] **Image tool gates:** cite the green image preflight, including real Codex
-  code-mode sentinel retrieval, negative execution controls, and both OpenCode
-  probes. CLI upgrades must pass the same gates before the runtime is frozen.
+  code-mode sentinel retrieval, negative execution controls, the Claude
+  repository-tool gate, and both OpenCode probes. CLI upgrades must pass the same gates before the runtime is frozen.
 - [ ] **Canary:** link the green run, with `panel` and `lifecycle`, on the exact
   pinned references. Both panel summaries must record `repository_read: true`
   for Claude, Codex and OpenCode, and identify each model used. Cursor's read
@@ -186,7 +187,8 @@ applied, and the review checks the evidence it cites.
   touches `ai-review/ci/review.gitlab-ci.yml`, `scripts/pipeline_trust.py`, or how
   prepare obtains credentials (`ai-review/src/ai_review/input_bundle.py` prepare,
   `ai-review/src/ai_review/platform/runtime.py`). Confirm the cited run includes
-  `hostile`, or state why it does not apply.
+  `hostile`, or state why it does not apply. Publication enforces only `panel`
+  and `lifecycle`, so this review is the only check.
 - [ ] **Body-format refresh:** when the rendered inline body or its marker changes
   for an unchanged finding (the `render_body_hostile.json` golden changes), one
   [refresh run](../evidence/RUNBOOK.md#body-format-refresh) against a bot thread

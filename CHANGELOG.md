@@ -7,6 +7,8 @@ versioning.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-27
+
 ### Fixed
 
 - Codex reviews could not read repository files in v3.1.0. The image pruned
@@ -85,6 +87,11 @@ versioning.
 
 ### Changed
 
+- Upgrade reviewer CLIs to Claude Code 2.1.332, Codex 0.172.0 and OpenCode
+  (`@opencode/cli`) 2.4.2. Refresh the Python base, Node builder and Debian
+  image digests, PyYAML to 6.0.4, certifi to 2026.11.20 and charset-normalizer
+  to 3.5.3; Ruff to 0.17.6, types-PyYAML to 6.0.12.20261122 and zizmor to
+  1.33.1 for contributors.
 - `make quality` now also runs `ruff format --check`. The Python sources were
   reformatted once with the pinned Ruff, with no behavior change, so formatting
   stays consistent from here on.
@@ -126,6 +133,28 @@ versioning.
 - Release publication accepts tags from `v3.0.0` on. The copied-template checks
   kept for retrying 2.1.x publication (COMPAT-010) are removed; `v2.1.0` is
   published and is never republished.
+
+### Upgrade
+
+Take the base image, reviewer image and canonical template together: GitHub
+callers re-pin the reusable workflow to the release commit, and GitLab
+deployments copy `ai-review/ci/review.gitlab-ci.yml` from `v3.1.1` unchanged.
+The Codex repository-read fix lives in the images, so pinning only the template
+does not restore Codex reads. Prepare can now stop before any reviewer runs:
+older bot review threads without a ledger report `missing-ledger-repair` (see
+the [repair procedure](docs/operations.md#missing-ledger-repair)), and a stale
+detached GitLab run or a symlinked output directory fails early.
+
+### Known limitations
+
+Cursor's repository reads are reported as `unverified`: only Claude, Codex and
+OpenCode reads are witnessed by the canary and rejected when they all fail.
+Cursor remains outside the default roster, and its runtime deny policy is still
+unproven live. GitLab source snapshots are live-tested only on detached merge
+request pipelines; web/API pipelines, merged results, merge trains and runner
+LFS/submodule setup are not. The other
+[carried live-coverage gaps](docs/evidence/RUNBOOK.md#carried-coverage-gaps)
+remain, including fork-based platform checks.
 
 ## [3.1.0] - 2026-11-15
 

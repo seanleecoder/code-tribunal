@@ -11,8 +11,8 @@ rather than archived. `git log` holds them, and a completed spec describes work
 already visible in the code, tests, and [`CHANGELOG.md`](../../CHANGELOG.md).
 Read those for current behavior.
 
-Last reviewed against main at `ef8a13b` on 2026-11-15. Decisions about shipped
-work were pruned from this page on that date; the previous revision in git
+Last reviewed against main at `778f055` on 2026-11-27. Decisions about shipped
+work were pruned from this page on 2026-11-15; the previous revision in git
 history holds the full 2026-10-13 to 2026-10-26 log and the completed release
 sequence.
 
@@ -24,7 +24,7 @@ None.
 
 - **COMPAT-009 closure.** Both demo consumers moved to 3.1.0 on 2026-11-15; see
   the [adoption record](../evidence/CONSUMER-PROJECTS.md#resting-deployment-adoption-310-2026-11-15).
-  After the next release ships, delete the offline v1 state converter and the 3.0
+  After 3.1.1 ships, delete the offline v1 state converter and the 3.0
   upgrade material, as the
   [compatibility register](../development/temporary-compatibility.md) records.
 
