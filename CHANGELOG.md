@@ -7,13 +7,20 @@ versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- State errors now tell a v1 ledger apart from a malformed or unsupported state
+  marker. Only a v1 ledger points at the v1 conversion.
+
 ### Removed
 
 - The offline v1 state converter `scripts/migrate_state_v2.py` and the 3.0
   upgrade and state migration procedures (COMPAT-009). A deployment still on
-  2.x or earlier, or a change request with a v1 ledger, follows the 3.0 upgrade
-  in the 3.1.1 documentation with the `v3.1.1` tools first. Prepare and post
-  still reject a v1 ledger and point there.
+  2.x or earlier follows the 3.0 upgrade in the 3.1.1 documentation with the
+  `v3.1.1` tools first. A change request with a v1 ledger on a 3.x deployment
+  converts only that ledger with the `v3.1.1` converter. Prepare and post still
+  reject v1 ledgers, including the two-note 2.1.x layout, and point at the
+  conversion.
 
 ## [3.1.1] - 2026-11-27
 

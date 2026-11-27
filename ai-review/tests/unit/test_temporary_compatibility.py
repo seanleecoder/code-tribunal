@@ -13,15 +13,18 @@ class TemporaryCompatibilityTests(unittest.TestCase):
 
         The link checker cannot see this: an ID is inline text in one column and a
         comment in the other direction, so a path deleted with its row left
-        standing — or a seventh compatibility path added with no owner and no
+        standing — or an unregistered compatibility path added with no owner and no
         removal target — passes docs-check untouched. The register's only value is
         being accurate at release time, when it is read to decide what to delete.
         This compares two sets of identifiers; it is not a prose rule.
         """
         marker = re.compile(r"COMPAT-\d{3}")
         register = _REPO_ROOT / "docs/development/temporary-compatibility.md"
-        documented = set(re.findall(r"(?m)^\|\s*(COMPAT-\d{3})\s*\|", register.read_text()))
-        self.assertGreaterEqual(len(documented), 1, "compatibility register table was not parsed")
+        text = register.read_text()
+        self.assertRegex(
+            text, r"(?m)^\|\s*ID\s*\|\s*Owner\s*\|", "compatibility register table was not found"
+        )
+        documented = set(re.findall(r"(?m)^\|\s*(COMPAT-\d{3})\s*\|", text))
 
         source_roots = (
             ("ai-review/src", {".py"}),

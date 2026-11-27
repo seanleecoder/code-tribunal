@@ -45,8 +45,8 @@ state; posting alone matches a group to historical state and chooses a reusable
 thread. Producers and consumers must run from one pinned image pair with fresh
 artifacts from prepare: artifacts of an earlier schema version are rejected.
 Persisted state uses version 2 inside the summary comment, and a v1 ledger must
-be converted first; see the
-[3.0 upgrade](../operations.md#upgrade-to-30).
+be converted first; see
+[convert a v1 ledger](../operations.md#convert-a-v1-ledger).
 
 `post_result.json` is the terminal artifact: nothing downstream reads it, and
 `post` validates it against its schema on write. It is operator diagnostics plus

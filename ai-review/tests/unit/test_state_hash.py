@@ -106,6 +106,34 @@ class StateHashTests(unittest.TestCase):
                 bind_project_id=True,
             )
 
+    def test_two_note_v1_layout_points_to_v1_conversion(self) -> None:
+        summary = {"id": 1, "body": "Summary\n<!-- ai-review-summary:v1 run_id=r -->"}
+        v1_state = {"id": 2, "body": "<!-- ai-review-state:v1 payload state_hash=0 -->"}
+        v2_summary = {
+            "id": 3,
+            "body": "Summary\n<!-- ai-review-summary:v2 -->\n<!-- ai-review-state:v2 payload -->",
+        }
+        cases = (
+            ("2.1.x layout", [v1_state, summary], "convert-a-v1-ledger"),
+            ("half-migrated", [v2_summary, v1_state], "multiple bot"),
+        )
+        for name, notes, message in cases:
+            with self.subTest(name), self.assertRaisesRegex(ValueError, message):
+                load_state_from_notes(notes, project_id="1", change_id="2", bind_project_id=True)
+
+    def test_non_v1_state_markers_do_not_point_to_v1_conversion(self) -> None:
+        cases = (
+            ("versionless", "<!-- ai-review-state: payload -->", "missing a version"),
+            ("malformed version", "<!-- ai-review-state:v2bad payload -->", "missing a version"),
+            ("future version", "<!-- ai-review-state:v3 payload -->", "unsupported state version"),
+        )
+        for name, body, message in cases:
+            with self.subTest(name), self.assertRaises(ValueError) as raised:
+                decode_state_note_body(body)
+            self.assertRegex(str(raised.exception), message)
+            self.assertNotIn("v3.1.1", str(raised.exception))
+            self.assertNotIn("convert-a-v1-ledger", str(raised.exception))
+
     def test_newest_valid_state_ignores_non_bot_authors(self) -> None:
         bot_state = attach_state_hash(
             {

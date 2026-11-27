@@ -181,8 +181,9 @@ Git checkouts cannot create them.
 
 State v2 is accepted only from the expected bot author and carries a mandatory
 payload checksum inside the summary comment. Inaccessible, corrupt, duplicate,
-or unmigrated state stops prepare/post. The v1 decoder exists only in the
-explicit offline migration command.
+or unmigrated state stops prepare/post. No current release decodes v1 state;
+the offline converter ships only in `v3.1.1`, has no platform access, and is
+described in [convert a v1 ledger](operations.md#convert-a-v1-ledger).
 Post reads and updates only a summary comment the bot authored; another
 participant's note carrying the summary marker is ignored with a warning.
 Human commands require platform authorization. Cross-stage run/config bindings

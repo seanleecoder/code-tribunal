@@ -125,8 +125,9 @@ These rules are worth stating because breaking them is silent:
   validates reads and writes and defines the supported ID bounds used by
   preflight. Change binding lives in `memory.load_state_from_notes`: GitLab
   project IDs remain strict, while GitHub's authenticated PR comment binds the
-  repository and its mutable owner/name slug is refreshed on load. The v1
-  decoder exists only in the offline converter, which has no platform access.
+  repository and its mutable owner/name slug is refreshed on load. Prepare and
+  post carry no v1 decoder and reject v1 ledgers; the offline converter ships
+  only in `v3.1.1` (see [convert a v1 ledger](../operations.md#convert-a-v1-ledger)).
 - Each finding/critique batch is the complete execution outcome. `schema`
   constructs and validates outcomes, with count arithmetic in `validate_outcome`;
   `outcomes` admits transported files for both critique pooling and consensus.

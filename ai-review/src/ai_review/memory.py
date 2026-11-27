@@ -170,18 +170,28 @@ def encode_state_note(state: Mapping[str, Any]) -> str:
     return f"<!-- ai-review-state:v2 {encoded} -->"
 
 
+_V1_STATE_ERROR = (
+    "state is v1; convert it with the v3.1.1 offline converter, "
+    "see docs/operations.md#convert-a-v1-ledger"
+)
+
+
 def decode_state_note_body(body: str) -> dict[str, Any]:
     versions = STATE_MARKER_RE.findall(body)
     if not versions:
         raise ValueError("summary has no ledger; see docs/operations.md#missing-ledger-repair")
-    explicit = [version for version in versions if version]
-    if not explicit or any(version != "2" for version in explicit):
+    if not all(versions):
         raise ValueError(
-            "state is not v2; a pre-3.0 ledger needs the state v2 migration from v3.1.1, "
-            "see docs/operations.md#upgrade-to-30"
+            "state marker is malformed or missing a version; repair state before retrying"
         )
+    if versions == ["1"]:
+        raise ValueError(_V1_STATE_ERROR)
+    if len(versions) != 1:
+        raise ValueError("expected exactly one state v2 marker")
+    if versions[0] != "2":
+        raise ValueError(f"unsupported state version v{versions[0]}; expected v2")
     matches = list(STATE_NOTE_RE.finditer(body))
-    if len(matches) != 1 or len(versions) != 1:
+    if len(matches) != 1:
         raise ValueError("expected exactly one state v2 marker")
     encoded = matches[0].group("payload")
     try:
@@ -251,9 +261,10 @@ def load_state_from_notes(
             )
         return None, warnings
     if len(candidates) != 1:
-        raise ValueError(
-            "multiple bot state/summary notes; migrate or repair state before retrying"
-        )
+        # A 2.1.x change keeps a ledger-free summary beside its separate v1 state note.
+        if sorted(STATE_MARKER_RE.findall(note["body"]) for note in candidates) == [[], ["1"]]:
+            raise ValueError(_V1_STATE_ERROR)
+        raise ValueError("multiple bot state/summary notes; repair state before retrying")
     note = candidates[0]
     if not isinstance(note.get("id"), int):
         raise ValueError("bot summary note has no numeric id")

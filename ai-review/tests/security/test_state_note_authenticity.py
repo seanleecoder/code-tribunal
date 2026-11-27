@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import unittest
 
+from ai_review.canonical import canonical_json_text, sha256_hex
 from ai_review.memory import attach_state_hash, encode_state_note, load_state_from_notes
 
 
@@ -63,7 +65,7 @@ class StateNoteAuthenticityTests(unittest.TestCase):
     def test_author_mismatch_summary_warning_omitted_if_notes_survive_check(self) -> None:
         # A note that matches the marker regex but fails validation (e.g. checksum/base64)
         corrupt_body = f"<!-- ai-review-state:v1 invalid_payload state_hash={'0' * 64} -->"
-        with self.assertRaisesRegex(ValueError, "migration"):
+        with self.assertRaisesRegex(ValueError, "state is v1"):
             load_state_from_notes(
                 [
                     {
@@ -72,6 +74,22 @@ class StateNoteAuthenticityTests(unittest.TestCase):
                         "author": {"id": 10},
                     }
                 ],
+                expected_author_id=10,
+                project_id="1",
+                change_id="2",
+                bind_project_id=True,
+            )
+
+    def test_well_formed_v1_ledger_is_rejected_with_conversion_pointer(self) -> None:
+        state = attach_state_hash(dict(self._state("old"), state_schema_version=1))
+        payload = canonical_json_text(state)
+        encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+        body = f"<!-- ai-review-state:v1 {encoded} state_hash={sha256_hex(payload)} -->"
+        with self.assertRaisesRegex(
+            ValueError, r"state is v1.*v3\.1\.1.*docs/operations\.md#convert-a-v1-ledger"
+        ):
+            load_state_from_notes(
+                [{"id": 2, "body": body, "author": {"id": 10}}],
                 expected_author_id=10,
                 project_id="1",
                 change_id="2",
