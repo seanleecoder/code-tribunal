@@ -304,12 +304,22 @@ READ = {"file_path": f"{ROOT_DIR}/src/access.py"}
         (_claude_stream("Read", {"file_path": f"{ROOT_DIR}/src/other.py"}, "1\tx = 1"), False),
         # An absolute path counts only beneath the reviewed snapshot.
         (_claude_stream("Read", {"file_path": "/elsewhere/src/access.py"}, "1\tx = 1"), False),
-        (_claude_stream("Grep", {"pattern": "def"}, "src/access.py:1:def is_allowed():"), True),
         (
-            _claude_stream("Grep", {"pattern": "def"}, f"{ROOT_DIR}/src/access.py:3:def f():"),
+            _claude_stream(
+                "Grep",
+                {"pattern": "def", "output_mode": "content"},
+                "src/access.py:1:def is_allowed():",
+            ),
             True,
         ),
-        (_claude_stream("Grep", {"pattern": "def"}, "No matches found"), False),
+        (
+            _claude_stream(
+                "Grep",
+                {"pattern": "def", "output_mode": "content"},
+                f"{ROOT_DIR}/src/access.py:3:def f():",
+            ),
+            True,
+        ),
         (_claude_stream("Glob", {"pattern": "**"}, "src/access.py"), False),
         # The model's own text naming the helper is not a read.
         (
@@ -333,7 +343,7 @@ GREP_TIMEOUT = (
 )
 
 
-def _file_grep(path: str = f"{ROOT_DIR}/src/access.py", **options) -> dict:
+def _content_grep(path: str = f"{ROOT_DIR}/src/access.py", **options) -> dict:
     return {"pattern": "def", "path": path, "output_mode": "content", **options}
 
 
@@ -341,31 +351,48 @@ def _file_grep(path: str = f"{ROOT_DIR}/src/access.py", **options) -> dict:
     ("arguments", "text", "observed"),
     [
         # Claude Code 2.1.332 omits the filename when Grep searches one file.
-        (_file_grep(), "1:def is_allowed(user, allowed):", True),
-        (_file_grep("src/access.py"), "7:    return user == allowed", True),
-        (_file_grep("src/../src/access.py", **{"-n": True}), "1:def is_allowed():", True),
-        (_file_grep(**{"-n": False}), "def is_allowed(user, allowed):", True),
-        (_file_grep(), "No matches found", False),
-        (_file_grep(**{"-n": False}), "No matches found", False),
-        (_file_grep(**{"-n": False}), f"{GREP_TIMEOUT}\n\nNo matches found", False),
+        (_content_grep(), "1:def is_allowed(user, allowed):", True),
+        (_content_grep("src/access.py"), "7:    return user == allowed", True),
+        (_content_grep("src/../src/access.py", **{"-n": True}), "1:def is_allowed():", True),
+        (_content_grep(**{"-n": False}), "def is_allowed(user, allowed):", True),
+        (_content_grep(), "No matches found", False),
+        (_content_grep(**{"-n": False}), "No matches found", False),
+        (_content_grep(**{"-n": False}), f"{GREP_TIMEOUT}\n\nNo matches found", False),
         (
-            _file_grep(**{"-n": False}),
+            _content_grep(**{"-n": False}),
             "No entries at this offset\n\n[Showing results with pagination = offset: 5]",
             False,
         ),
-        (_file_grep(), "", False),
-        (_file_grep(), "1:", False),
-        (_file_grep(**{"-n": False}), "\n  \n", False),
-        (_file_grep(**{"-C": 1}), "3-def is_allowed():", False),
-        (_file_grep(**{"-n": 1}), "1:def is_allowed():", False),
-        (_file_grep(output_mode="files_with_matches"), "src/access.py", False),
+        (_content_grep(), "", False),
+        (_content_grep(), "1:", False),
+        (_content_grep(**{"-n": False}), "\n  \n", False),
+        (_content_grep(**{"-C": 1}), "3-def is_allowed():", False),
+        (_content_grep(**{"-n": 1}), "1:def is_allowed():", False),
+        (_content_grep(output_mode="files_with_matches"), "src/access.py", False),
         ({"pattern": "def", "path": "src/access.py"}, "src/access.py", False),
-        (_file_grep(output_mode="count"), "src/access.py:2", False),
-        (_file_grep("src/other.py"), "1:def is_allowed():", False),
-        (_file_grep("/elsewhere/src/access.py"), "1:def is_allowed():", False),
+        (_content_grep(output_mode="count"), "src/access.py:2", False),
+        (_content_grep("src/other.py"), "1:def is_allowed():", False),
+        (_content_grep("/elsewhere/src/access.py"), "1:def is_allowed():", False),
+        (_content_grep("src"), "src/access.py:1:def is_allowed():", True),
+        (_content_grep("src", **{"-n": False}), "src/access.py:def is_allowed():", True),
+        (
+            _content_grep(f"{ROOT_DIR}/src", **{"-n": False}),
+            f"{ROOT_DIR}/src/access.py:def is_allowed():",
+            True,
+        ),
+        (
+            {"pattern": "def", "output_mode": "content", "-n": False},
+            "src/access.py:def is_allowed():",
+            True,
+        ),
+        (_content_grep("src", **{"-n": False}), "src/access.py: ", False),
+        (_content_grep("src", **{"-n": False}), "No matches found", False),
+        (_content_grep("src/other.py", **{"-n": False}), "src/access.py:1:def f():", False),
+        (_content_grep("/elsewhere/src"), "src/access.py:1:def f():", False),
+        (_content_grep("src", output_mode="files_with_matches"), "src/access.py:1:def f():", False),
     ],
 )
-def test_claude_witness_accepts_single_file_content_grep(
+def test_claude_witness_parses_grep_by_scope_and_options(
     arguments: dict, text: str, observed: bool
 ) -> None:
     stdout = _claude_stream("Grep", arguments, text)
@@ -379,8 +406,9 @@ def test_claude_witness_ignores_a_result_without_its_call():
     assert probe.claude_fixture_read_observed(stdout, ROOT_DIR) is False
 
 
-def _part(name: str, text: str, *, status: str = "completed", **inputs: str) -> dict:
-    state = {"status": status, "input": inputs, "content": [{"type": "text", "text": text}]}
+def _part(name: str, *texts: str, status: str = "completed", **inputs: str) -> dict:
+    content = [{"type": "text", "text": text} for text in texts]
+    state = {"status": status, "input": inputs, "content": content}
     return {"type": "tool", "id": "call_1", "name": name, "state": state}
 
 
@@ -399,6 +427,15 @@ OPENCODE_ROOT = "/w/out/.tmp/opencode-home/opencode-review-root.9"
             True,
         ),
         (_part("read", "1: def is_allowed():", path=f"{OPENCODE_ROOT}/src/access.py"), True),
+        (
+            _part(
+                "read",
+                "Read file src/access.py, lines 1-1",
+                "1: def is_allowed():",
+                path="src/access.py",
+            ),
+            True,
+        ),
         (_part("read", "1: def is_allowed():", path="src/other.py"), False),
         (_part("read", "Read file src/access.py, lines 1-0", path="src/access.py"), False),
         (_part("read", "1: def is_allowed():", status="error", path="src/access.py"), False),
@@ -413,7 +450,18 @@ OPENCODE_ROOT = "/w/out/.tmp/opencode-home/opencode-review-root.9"
         (
             _part(
                 "grep",
-                f"Found 1 matches\n{OPENCODE_ROOT}/src/other.py:\n  Line 3: return x\n",
+                "Found 1 matches",
+                f"{OPENCODE_ROOT}/src/access.py:",
+                "  Line 3: return x",
+                pattern="x",
+            ),
+            True,
+        ),
+        (
+            _part(
+                "grep",
+                f"Found 1 matches\n{OPENCODE_ROOT}/src/other.py:",
+                "  Line 3: return x",
                 pattern="x",
             ),
             False,
@@ -426,7 +474,10 @@ def test_opencode_witness_requires_a_completed_content_bearing_part(part: dict, 
     assert probe.opencode_fixture_read_observed([part], OPENCODE_ROOT) is observed
 
 
-def test_a_claude_canary_review_writes_its_own_bound_witness(review_output, monkeypatch):
+@pytest.mark.parametrize("malformed_result", [False, True])
+def test_a_claude_canary_review_writes_its_own_bound_witness(
+    review_output, monkeypatch, malformed_result
+):
     _canary(monkeypatch)
     stale = review_output / probe.witness_path("claude")
     stale.parent.mkdir(parents=True)
@@ -438,15 +489,14 @@ def test_a_claude_canary_review_writes_its_own_bound_witness(review_output, monk
         assert not stale.exists()
         read = {"file_path": f"{cwd}/src/access.py"}
         init = {"type": "system", "subtype": "init", "tools": sorted(CLAUDE_REPOSITORY_TOOLS)}
-        stream = (
-            json.dumps(init)
-            + "\n"
-            + _claude_stream("Read", read, "1\tdef is_allowed():")
-            + "\n"
-            + json.dumps(
-                {"type": "result", "subtype": "success", "structured_output": {"findings": []}}
-            )
-        )
+        call, result = _claude_stream("Read", read, "1\tdef is_allowed():").split("\n")
+        events = [json.dumps(init), call]
+        if malformed_result:
+            malformed = json.loads(result)
+            malformed["message"]["content"][0]["tool_use_id"] = ["toolu_1"]
+            events.append(json.dumps(malformed))
+        terminal = {"type": "result", "subtype": "success", "structured_output": {"findings": []}}
+        stream = "\n".join([*events, result, json.dumps(terminal)])
         return SimpleNamespace(returncode=0, stdout=stream, stderr="", stderr_matched=False)
 
     with patch.object(adapter_runner, "_run_adapter_process", side_effect=run):
@@ -454,6 +504,49 @@ def test_a_claude_canary_review_writes_its_own_bound_witness(review_output, monk
     witness = json.loads(stale.read_text(encoding="utf-8"))
     assert witness["reviewer"] == "claude" and witness["observed"] is True
     assert not (review_output / probe.witness_path("codex")).exists()
+
+
+@pytest.mark.parametrize("failure", ["observation_read", "witness_write"])
+def test_canary_witness_failure_preserves_the_admitted_batch(
+    review_output, monkeypatch, capsys, failure
+):
+    _canary(monkeypatch)
+    witness = review_output / probe.witness_path("opencode")
+    observations = []
+
+    def run(_command, env, *_args, **_kwargs):
+        observation = Path(env[probe.OPENCODE_OBSERVATION_ENV])
+        observations.append(observation)
+        if failure == "observation_read":
+            observation.unlink()
+        else:
+            observation.write_text("true", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0, stdout='{"findings":[]}', stderr="", stderr_matched=False
+        )
+
+    write_json = adapter_runner.write_canonical_json
+
+    def write_with_fault(path, value):
+        if path == witness:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{", encoding="utf-8")
+            raise OSError("##[error] token=canary-secret\n::warning::details")
+        write_json(path, value)
+
+    monkeypatch.setattr(adapter_runner, "_run_adapter_process", run)
+    monkeypatch.setattr(adapter_runner, "write_canonical_json", write_with_fault)
+    assert adapter_runner.run_adapter("opencode", "review") == 0
+    batch = json.loads((review_output / "findings" / "opencode.json").read_text())
+    assert batch["adapter_status"] == "success"
+    assert not witness.exists()
+    assert not observations[0].exists()
+    diagnostic = capsys.readouterr().err
+    assert "opencode canary witness failed" in diagnostic
+    if failure == "witness_write":
+        assert "## [error]" in diagnostic
+        assert "canary-secret" not in diagnostic
+        assert "\n::warning::" not in diagnostic
 
 
 @pytest.mark.parametrize("reported", ["true", "false", ""])

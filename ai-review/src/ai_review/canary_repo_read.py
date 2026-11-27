@@ -20,6 +20,7 @@ from .canonical import json_loads_no_duplicates
 from .reviewers import CODEX_REPO_SERVER
 
 FIXTURE_PATH = PurePosixPath("src/access.py")
+_FIXTURE_ANCESTORS = frozenset(parent.as_posix() for parent in FIXTURE_PATH.parents)
 WITNESS_DIR = Path("canary")
 # Seats whose admitted transport can prove a read. Order is the summary order.
 WITNESSED_REVIEWERS = ("claude", "codex", "opencode")
@@ -56,14 +57,17 @@ def witness_path(reviewer: str) -> Path:
     return WITNESS_DIR / f"{reviewer}-repo-read.json"
 
 
-def _is_fixture_path(path: str, root: str | None = None) -> bool:
-    # The tools resolve paths, so `src/../src/access.py` reads it too. An
-    # absolute path counts only beneath the reviewed snapshot root.
+def _relative_path(path: str, root: str | None) -> str | None:
+    # The tools resolve paths, so `src/../src/access.py` reads it too.
     if root is not None and posixpath.isabs(path):
         if _outside_root(path, root):
-            return False
-        path = posixpath.relpath(posixpath.normpath(path), posixpath.normpath(root))
-    return posixpath.normpath(path) == FIXTURE_PATH.as_posix()
+            return None
+        return posixpath.relpath(path, root)
+    return posixpath.normpath(path)
+
+
+def _is_fixture_path(path: str, root: str | None = None) -> bool:
+    return _relative_path(path, root) == FIXTURE_PATH.as_posix()
 
 
 def _numbered_content(line_number: str, content: str) -> bool:
@@ -81,11 +85,15 @@ def _has_numbered_line(pattern: re.Pattern[str], lines: list[str]) -> bool:
     )
 
 
-def _match_line(line: str, root: str | None = None) -> bool:
-    """A `path:line:text` search match from the fixture helper."""
+def _match_line(line: str, root: str | None = None, *, numbered: bool = True) -> bool:
+    """A path-prefixed search match from the fixture helper."""
     path, _, match = line.partition(":")
+    if not _is_fixture_path(path, root):
+        return False
+    if not numbered:
+        return bool(match.strip())
     line_number, _, content = match.partition(":")
-    return _is_fixture_path(path, root) and _numbered_content(line_number, content)
+    return _numbered_content(line_number, content)
 
 
 def _jsonl(stdout: str) -> list[dict[str, Any]]:
@@ -164,9 +172,10 @@ def claude_fixture_read_observed(stdout: str, root: str) -> bool:
                 event.get("type") == "user"
                 and block.get("type") == "tool_result"
                 and block.get("is_error") is not True
-                and block.get("tool_use_id") in calls
+                and isinstance(tool_use_id := block.get("tool_use_id"), str)
+                and tool_use_id in calls
             ):
-                name, arguments = calls[block["tool_use_id"]]
+                name, arguments = calls[tool_use_id]
                 if _claude_fixture_result(name, arguments, block, root):
                     return True
     return False
@@ -191,28 +200,29 @@ def _claude_fixture_result(
 
 
 def _claude_grep_result(arguments: dict[str, Any], lines: list[str], root: str) -> bool:
-    if any(_match_line(line, root) for line in lines):
-        return True
-    # A content-mode search of the fixture file itself omits the filename:
-    # `<n>:<text>`, or bare source text when `-n` is false.
-    path = arguments.get("path")
-    if not (
-        arguments.get("output_mode") == "content"
-        and isinstance(path, str)
-        and _is_fixture_path(path, root)
+    path = arguments.get("path", ".")
+    numbered = arguments.get("-n", True)
+    if (
+        arguments.get("output_mode") != "content"
+        or not isinstance(path, str)
+        or not isinstance(numbered, bool)
     ):
         return False
-    numbered = arguments.get("-n", True)
+    scope = _relative_path(path, root)
     body = [
         line
         for line in lines
         if line not in _CLAUDE_GREP_NOTES and not _CLAUDE_GREP_PAGINATION.match(line)
     ]
-    if numbered is True:
-        return _has_numbered_line(_CLAUDE_GREP_LINE, body)
-    if numbered is False:
+    # Single-file results omit the filename. Only a search rooted at one of
+    # the helper's ancestor directories can yield its path-prefixed matches.
+    if scope == FIXTURE_PATH.as_posix():
+        if numbered:
+            return _has_numbered_line(_CLAUDE_GREP_LINE, body)
         return any(line.strip() for line in body)
-    return False
+    return scope in _FIXTURE_ANCESTORS and any(
+        _match_line(line, root, numbered=numbered) for line in body
+    )
 
 
 # OpenCode: completed tool parts from the prompt-bound session history.
@@ -227,12 +237,14 @@ def _opencode_fixture_part(part: dict[str, Any], root: str) -> bool:
     if not isinstance(state, dict) or state.get("status") != "completed":
         return False
     content = state.get("content")
-    text = "".join(
-        str(item.get("text", ""))
+    lines = [
+        line
         for item in (content if isinstance(content, list) else ())
-        if isinstance(item, dict) and item.get("type") == "text"
-    )
-    lines = text.split("\n")
+        if isinstance(item, dict)
+        and item.get("type") == "text"
+        and isinstance(text := item.get("text"), str)
+        for line in text.split("\n")
+    ]
     if part.get("name") == "grep":
         # Matches are grouped under a `<path>:` header, as `  Line <n>: <text>`.
         current = None

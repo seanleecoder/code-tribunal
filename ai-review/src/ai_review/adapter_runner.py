@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -298,13 +299,24 @@ def run_adapter(reviewer: str, stage: str) -> int:
         write_canonical_json(output_dir / output_file, finalized)
         if canary is not None:
             platform, reviewer_image = canary
-            observed = fixture_read_observed(
-                reviewer, result.stdout, workspace=workspace, observation=observation
-            )
-            write_canonical_json(
-                output_dir / witness_path(reviewer),
-                read_witness(platform, reviewer, reviewer_image, finalized, observed=observed),
-            )
+            witness = output_dir / witness_path(reviewer)
+            try:
+                observed = fixture_read_observed(
+                    reviewer, result.stdout, workspace=workspace, observation=observation
+                )
+                write_canonical_json(
+                    witness,
+                    read_witness(platform, reviewer, reviewer_image, finalized, observed=observed),
+                )
+            except Exception as exc:
+                # Canary validation rejects absent evidence independently of the batch.
+                with suppress(OSError):
+                    witness.unlink(missing_ok=True)
+                diagnostic = bounded_diagnostic(str(exc), ERROR_MESSAGE_LIMIT) or type(exc).__name__
+                sys.stderr.write(
+                    f"ai-review adapter: {reviewer} canary witness failed: "
+                    f"{escape_legacy_workflow_commands(diagnostic)}\n"
+                )
         return 0
     except subprocess.TimeoutExpired as exc:
         # Preserve bounded, redacted diagnostics for a stuck reviewer.
@@ -342,7 +354,8 @@ def run_adapter(reviewer: str, stage: str) -> int:
         )
     finally:
         if observation is not None:
-            observation.unlink(missing_ok=True)
+            with suppress(OSError):
+                observation.unlink(missing_ok=True)
 
 
 def cli(argv: list[str] | None = None) -> int:
