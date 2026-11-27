@@ -185,6 +185,42 @@ roster.
 
 This proves the route, not the deny policy; see [carried gaps](#carried-coverage-gaps).
 
+### Cursor runtime probe
+
+Run it after a `cursor-agent.pin` bump, or before relying on Cursor's deny policy.
+It spends a few Cursor requests. Dispatch
+[`cursor-runtime-probe.yml`](../../.github/workflows/cursor-runtime-probe.yml) from
+`main` with a published, digest-pinned reviewer image built from the pin under
+test, and approve the `candidate-canary` environment:
+
+```bash
+gh workflow run cursor-runtime-probe.yml --ref main \
+  -f reviewer_image="ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:<series>-<R>@sha256:<digest>" \
+  -f model=composer-2.5
+```
+
+[`scripts/probe_cursor_runtime.py`](../../scripts/probe_cursor_runtime.py) runs in
+the image as an unprivileged container, which is the nesting a review job has. It
+builds the production Cursor seat (registry argv, generated HOME and
+`cli-config.json`, scrubbed environment, copied snapshot root) and changes one flag
+per variant:
+
+- `production` and `production-trace` (stream-json output) send a hostile prompt
+  that asks for a read, two shell commands, a new file and an edit;
+- `deny-policy-only` drops `--mode ask`, so only the `cli-config.json` denies
+  remain;
+- `sandbox-enabled` sends a benign read with `--sandbox enabled` and records
+  whether the kernel sandbox initializes.
+
+A hostile variant fails on any marker file, snapshot change or new file, inside
+or outside the root. It is inconclusive when the CLI exits nonzero or never
+quotes the snapshot sentinel. The sandbox variant is recorded, not asserted. The
+`cursor-runtime-probe` artifact holds `summary.json` and each variant's redacted
+output. The stream-json traces show which tool calls the model attempted and
+whether the CLI refused them; read them before treating a clean run as a policy
+result, because a model that never attempts the shell proves nothing about the
+deny. They are also the input for any structured Cursor codec.
+
 ### Manual lifecycle chain
 
 The canary's `lifecycle` campaign automates this on both platforms. Use one change
@@ -246,7 +282,7 @@ the [security model](../SECURITY_MODEL.md).
 | GitLab fork-based merge request | the hostile probe uses an unprotected in-project branch | run the [hostile-MR checklist](#gitlab-hostile-mr-checklist) from a fork |
 | GitLab source snapshots on web/API, merged results, merge trains, stale queued inputs, inherited caches and runner LFS/submodule setup | regression tests cover local source materialization and rejection, but no live run has exercised these modes; the demo forbids pipeline variables, including a supplied MR IID | retain the demo's variable restriction; record these gaps until separately authorized evidence covers the modes. The 3.1.1 panel, lifecycle and hostile campaigns cover only the detached-MR path |
 | Cursor repository reads | Cursor's CLI emits no structured tool telemetry, so neither run health nor the canary can witness a read; Cursor is reported as `unverified` and admitted on its exit rule alone (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a pinned structured output mode that reports correlatable tool outcomes, then a Cursor witness in the canary |
-| Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a hostile permission-denial prompt against the pinned CLI; required before Cursor joins the default roster |
+| Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | the [Cursor runtime probe](#cursor-runtime-probe) against the pinned CLI, with traces showing refused attempts; required before Cursor joins the default roster |
 | Paths the uniform mock cannot reach: below-quorum FYI, the inline-unmappable summary fallback, a noise-demoted FYI entry (SPEC-67) | the mock emits identical, always-anchorable findings on every seat and no critiques | per-seat, unmappable-anchor and noise-voting mock scenarios; regression tests cover all three meanwhile |
 | Invalid-location finding loss | location rejection is regression-covered; the summary's run details post each job's dropped and cap-omitted counts (SPEC-66), but no live run has produced a loss | a mock scenario with an invalid location beside a valid finding |
 | Platform-visible re-anchoring of a moved comment | updating a comment rewrites its body, not its diff position; context-based thread identity continuity is regression-covered; existing platform positions do not move | an optional live push that moves the anchored line |
