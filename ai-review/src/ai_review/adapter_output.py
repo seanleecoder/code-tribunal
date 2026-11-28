@@ -333,7 +333,9 @@ def _load_claude_stream(stdout: str, *, stage: str) -> Any:
     denied: dict[str, object] = {}
     init_tools: list[Any] | None = None
     init_cwd: str | None = None
-    for line in stdout.splitlines():
+    # JSONL ends records only at "\n"; str.splitlines() would also split at
+    # U+2028, U+2029 and U+0085 left unescaped inside model or tool text.
+    for line in stdout.split("\n"):
         if not line.strip():
             continue
         try:
@@ -637,7 +639,7 @@ def _load_codex_stream(
 
 def _last_claude_result(stdout: str) -> dict[str, Any] | None:
     """The stream's last terminal result event; malformed lines are skipped."""
-    for line in reversed(stdout.splitlines()):
+    for line in reversed(stdout.split("\n")):
         try:
             event = json.loads(line)
         except ValueError:

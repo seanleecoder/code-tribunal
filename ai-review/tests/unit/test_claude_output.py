@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 
 import pytest
-from ai_review.adapter_output import _load_adapter_json
+from ai_review.adapter_output import _load_adapter_json, adapter_exit_message
 from ai_review.adapter_process import _AdapterResult
 from ai_review.config import load_config
 from ai_review.consensus import build_consensus
 from ai_review.reviewers import CLAUDE_REPOSITORY_TOOLS
-from ai_review.schema import AdapterModelError, batch_quality_fields
+from ai_review.schema import AdapterModelError, SchemaValidationError, batch_quality_fields
 
 from tests.support.adapter_inputs import run_captured_adapter
 from tests.support.config_yaml import SHIPPED_CONFIG_PATH
@@ -68,6 +68,41 @@ def renamed(items: list[dict], old: str, new: str) -> list[dict]:
 )
 def test_captured_healthy_and_benign_runs_are_admitted(label: str) -> None:
     assert load(capture(label)["stdout"]) == {"findings": []}
+
+
+SEPARATORS = ["", "\x85", "\u2028", "\u2029"]
+
+
+def with_terminal_text(label: str, text: str, **changes: object) -> str:
+    """The capture with a new terminal result text, separators left raw as Claude emits them."""
+    items = events(label)
+    assert items[-1]["type"] == "result"
+    items[-1] = {**items[-1], "result": text, **changes}
+    return "\n".join(json.dumps(item, ensure_ascii=False) for item in items)
+
+
+@pytest.mark.parametrize("separator", SEPARATORS)
+def test_events_split_only_at_newlines(separator: str) -> None:
+    stdout = with_terminal_text("grep-success", f"done{separator}here")
+    assert separator in stdout
+    assert load(stdout) == {"findings": []}
+    # The health checks still see the same execution: a failed capture stays unusable.
+    with pytest.raises(AdapterModelError, match=FAILED):
+        load(with_terminal_text("read-eacces", f"done{separator}here"))
+
+
+@pytest.mark.parametrize("separator", SEPARATORS)
+def test_terminal_error_diagnostic_survives_separators(separator: str) -> None:
+    stdout = with_terminal_text("grep-success", f"credit{separator}exhausted", is_error=True)
+    message = adapter_exit_message("claude_stream_json", returncode=1, stdout=stdout, stderr="")
+    assert message.startswith("adapter exited 1: ")
+    assert "credit" in message and "exhausted" in message
+
+
+def test_a_malformed_line_still_fails_with_separators_elsewhere() -> None:
+    stdout = with_terminal_text("grep-success", "done\u2028here") + "\n{not json"
+    with pytest.raises(SchemaValidationError, match="non-JSON line"):
+        load(stdout)
 
 
 def test_a_captured_filesystem_failure_is_unusable() -> None:

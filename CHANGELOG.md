@@ -21,6 +21,13 @@ versioning.
   `v3.1.1` tools first. A change request with a v1 ledger on a 3.x deployment
   converts only that ledger with the `v3.1.1` converter.
 
+### Fixed
+
+- The Claude stream reader and the nonzero-exit diagnostic split stream-json
+  records only at newlines. A literal U+0085, U+2028 or U+2029 in model or tool
+  text no longer breaks a record and rejects a usable review with
+  `SchemaValidationError`, matching the Codex codec.
+
 ## [3.1.1] - 2026-11-27
 
 ### Fixed
