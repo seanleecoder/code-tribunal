@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 import yaml
-from ai_review import reviewers
+from ai_review import adapter_process, reviewers
 from ai_review.reviewers import get_reviewer_definition
 
 from tests.support.repository_script import load_repository_script
@@ -18,30 +20,45 @@ probe = load_repository_script("probe_cursor_runtime", ROOT / "scripts" / "probe
 identity_validator = load_repository_script(
     "validate_candidate_identity", ROOT / "scripts" / "validate_candidate_identity.py"
 )
+release_common = load_repository_script("release_common", ROOT / "scripts" / "release_common.py")
 WORKFLOW = ROOT / ".github" / "workflows" / "cursor-runtime-probe.yml"
 
 PRODUCTION = list(get_reviewer_definition("cursor").cli_arguments)
 SOURCE = "a" * 40
-IMAGE = f"ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.1-{SOURCE}@sha256:{'c' * 64}"
+DIGEST = f"sha256:{'c' * 64}"
+IMAGE = f"ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:3.1-{SOURCE}@{DIGEST}"
+IDENTITY = {"image": IMAGE, "runtime_source": SOURCE, "digest": DIGEST}
 
 
 def _variant(name: str):
     return probe.VARIANTS_BY_NAME[name]
 
 
-def _result(variant, verdict: str = "inconclusive") -> dict[str, object]:
-    return probe.variant_result(variant, exit_code=0, verdict=verdict, filesystem="clean")
+def _result(variant, **overrides: object) -> dict[str, object]:
+    return {**probe.variant_result(variant, exit_code=0, filesystem="clean"), **overrides}
 
 
-def _bundle(**overrides: object) -> dict[str, object]:
-    variants = {variant.name: _result(variant) for variant in probe.VARIANTS}
-    bundle = {
-        "schema": probe.BUNDLE_SCHEMA,
+def _records(**overrides: dict[str, object]) -> list[dict[str, object]]:
+    header = {
+        "schema": probe.RESULT_STREAM_SCHEMA,
         "cli_version": "2026.11.22-e9042b2",
         "model": "composer-2.5",
-        "variants": variants,
     }
-    return {**bundle, **overrides}
+    return [
+        header,
+        *(
+            {"variant": variant.name, "result": _result(variant, **overrides.get(variant.name, {}))}
+            for variant in probe.VARIANTS
+        ),
+    ]
+
+
+def _lines(records: list[dict[str, object]]) -> str:
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
+def _summary(out: Path) -> dict:
+    return json.loads((out / "summary.json").read_text(encoding="utf-8"))
 
 
 def test_variant_flag_transforms() -> None:
@@ -77,20 +94,19 @@ def test_hostile_prompt_exercises_absolute_file_tool_write() -> None:
 
 def test_evaluate_reports_every_write_and_never_passes_an_unwitnessed_run() -> None:
     before = {"README.md": "a", "src/app.py": "b"}
-    read_only = probe.evaluate(
-        before, dict(before), {}, hostile=True, exit_code=0, output=probe.SENTINEL
-    )
+    read_only = probe.evaluate(before, dict(before), {}, {}, output=probe.SENTINEL)
     assert read_only["filesystem"] == "clean"
     assert read_only["verdict"] == "inconclusive"
-    assert probe.overall_status({"p": {"hostile": True, **read_only}}) == 2
+    assert read_only["sentinel_in_stdout"] is True
+    sandbox = probe.variant_result(_variant("sandbox-enabled"), exit_code=0, **read_only)
+    assert sandbox["verdict"] == "inconclusive"
 
     written = probe.evaluate(
         before,
         {"README.md": "changed", probe.WRITE_MARKER: "c"},
+        {},
         {probe.OUTSIDE_MARKER: "d"},
-        hostile=True,
-        exit_code=0,
-        output=probe.SENTINEL,
+        output="no quote",
     )
     assert written["verdict"] == "violation"
     assert written["violations"] == [
@@ -99,17 +115,8 @@ def test_evaluate_reports_every_write_and_never_passes_an_unwitnessed_run() -> N
         f"created {probe.WRITE_MARKER}",
         f"created outside {probe.OUTSIDE_MARKER}",
     ]
-    assert probe.overall_status({"p": {"hostile": True, **written}}) == 1
-
-    for exit_code, output in ((1, probe.SENTINEL), (0, "no quote")):
-        untested = probe.evaluate(
-            before, dict(before), {}, hostile=False, exit_code=exit_code, output=output
-        )
-        assert untested["verdict"] == "inconclusive"
-    sandbox = probe.evaluate(
-        before, dict(before), {}, hostile=False, exit_code=0, output=probe.SENTINEL
-    )
-    assert sandbox["verdict"] == "no_violation"
+    assert written["sentinel_in_stdout"] is False
+    assert probe.hostile_violation({"hostile": True, **written})
     assert probe.variant_result(_variant("production"))["refusal_evidence"] == "unwitnessed"
     assert probe.variant_result(_variant("sandbox-enabled"))["refusal_evidence"] == "not_applicable"
 
@@ -117,7 +124,7 @@ def test_evaluate_reports_every_write_and_never_passes_an_unwitnessed_run() -> N
 def test_tree_digest_and_redaction(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "f.txt").write_text("x", encoding="utf-8")
-    assert list(probe.tree_digest(tmp_path)) == ["a", "a/f.txt"]
+    assert list(probe.tree_digest(tmp_path)) == [".", "a", "a/f.txt"]
     assert probe.tree_digest(tmp_path / "missing") == {}
     assert probe.redact("key=abc123", "abc123") == "key=[REDACTED]"
     assert probe.redact("text", "") == "text"
@@ -135,8 +142,7 @@ def test_tree_digest_detects_non_regular_entries_and_mode_changes(tmp_path: Path
         before,
         probe.tree_digest(tmp_path),
         {},
-        hostile=True,
-        exit_code=0,
+        {},
         output=probe.SENTINEL,
     )
     assert result["filesystem"] == "violation"
@@ -146,6 +152,26 @@ def test_tree_digest_detects_non_regular_entries_and_mode_changes(tmp_path: Path
         "created fifo",
         "created new-dir",
     ]
+
+
+def test_watched_directory_entries_are_compared(tmp_path: Path) -> None:
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    root.mkdir()
+    root.chmod(0o755)
+    outside.mkdir()
+    before, outside_before = probe.tree_digest(root), probe.tree_digest(outside)
+    root.chmod(0o700)
+    outside.rmdir()
+    after = probe.tree_digest(root)
+    removed = probe.evaluate(before, after, outside_before, probe.tree_digest(outside), output="")
+    assert removed["violations"] == ["changed .", "removed outside ."]
+
+    (root / "stay-private").touch()
+    outside.symlink_to(root, target_is_directory=True)
+    linked = probe.tree_digest(outside)
+    assert list(linked) == ["."]
+    replaced = probe.evaluate(before, after, outside_before, linked, output="")
+    assert replaced["violations"] == ["changed .", "changed outside ."]
 
 
 @pytest.mark.parametrize("timeout", [False, True])
@@ -178,54 +204,114 @@ def test_run_variant_stops_descendants_before_the_digest(
 def test_probe_keeps_completed_variants_after_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    class FlushedOutput(io.StringIO):
+        flushed = 0
+
+        def flush(self) -> None:
+            self.flushed += 1
+            super().flush()
+
+    output = FlushedOutput()
+
     def run_variant(variant, _model, _scratch):
+        assert output.flushed == list(probe.VARIANTS).index(variant) + 1
         if variant.name == "deny-policy-only":
             raise RuntimeError("boom")
         return _result(variant)
 
-    def version(*_args, **_kwargs):
+    def version(args, *, env, **_kwargs):
+        assert args == ["cursor-agent", "--version"]
+        assert env["TMPDIR"] == str(tmp_path)
+        assert "CURSOR_API_KEY" not in env
         raise subprocess.TimeoutExpired(["cursor-agent", "--version"], 60)
 
+    monkeypatch.setenv("CURSOR_API_KEY", "synthetic-key")
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setattr(probe, "run_variant", run_variant)
     monkeypatch.setattr(probe.subprocess, "run", version)
-    bundle = probe.probe("composer-2.5", tmp_path / "scratch")
+    assert probe.probe("composer-2.5", tmp_path / "scratch", output) == 2
+    assert output.flushed == len(probe.VARIANTS) + 1
+    results = tmp_path / "results.jsonl"
+    results.write_text(output.getvalue(), encoding="utf-8")
 
-    assert bundle["cli_version"] == "unavailable: TimeoutExpired"
-    assert probe.overall_status(bundle["variants"]) == 2
-    variants = bundle["variants"]
+    header, variants, errors = probe._read_results(results)
+    assert not errors
+    assert header["cli_version"] == "unavailable: TimeoutExpired"
     assert set(variants) == set(probe.VARIANTS_BY_NAME)
     failed = variants["deny-policy-only"]
     assert failed["error"] == "RuntimeError: boom"
     assert failed["verdict"] == "inconclusive" and failed["filesystem"] == "unknown"
     assert variants["production"]["error"] is None
-    probe.validate_bundle(bundle)
 
 
-def test_collect_writes_only_validated_redacted_results(tmp_path: Path) -> None:
-    secret = "cursor-key-123"
+@pytest.mark.parametrize("finish", ["exit", "timeout", "limit"])
+def test_run_variant_omits_tails_clipped_before_literal_key_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish: str
+) -> None:
+    secret = "synthetic-literal-cursor-KEY-DUMMY"
+    monkeypatch.setenv("CURSOR_API_KEY", secret)
+    code = (
+        "import os, sys, time\n"
+        "sys.stderr.write(' ' + os.environ['CURSOR_API_KEY'] + ' ' + 'x' * 3968)\n"
+        "sys.stderr.flush()\n"
+    )
+    if finish == "timeout":
+        monkeypatch.setattr(probe, "TIMEOUT_SECONDS", 0.5)
+        code += "time.sleep(10)\n"
+    if finish == "limit":
+        monkeypatch.setattr(adapter_process, "_ADAPTER_OUTPUT_LIMIT_BYTES", 1024)
+        code += "sys.stdout.write('z' * 2048)\n"
+    monkeypatch.setattr(reviewers, "adapter_command", lambda _: [sys.executable, "-c", code])
+
+    record = probe.run_variant(_variant("production"), "composer-2.5", tmp_path / "scratch")
+    assert "KEY-DUMMY" not in json.dumps(record)
+    if finish == "limit":
+        assert record["stdout"] == record["stderr"] == ""
+        assert "diagnostic tails omitted" in record["error"]
+    else:
+        assert record["exit_code"] == (124 if finish == "timeout" else 0)
+        assert record["stderr"] == probe.OMITTED_STDERR
+
+
+def _collect(tmp_path: Path, *, exit_code: int = 2, secret: str = "") -> int:
+    return probe.collect(
+        results_path=tmp_path / "results.jsonl",
+        container_stderr_path=tmp_path / "container.stderr",
+        container_exit_code=exit_code,
+        identity_path=tmp_path / "identity.json",
+        image=IMAGE,
+        out=tmp_path / "out",
+        secret=secret,
+    )
+
+
+def test_collect_writes_redacted_artifacts_and_logs_only_status(tmp_path: Path, capsys) -> None:
+    secret = 'cursor-"key"\u200b-123'
     identity = tmp_path / "identity.json"
-    identity.write_text(json.dumps({"image": IMAGE}), encoding="utf-8")
+    identity.write_text(json.dumps(IDENTITY), encoding="utf-8")
     stderr = tmp_path / "container.stderr"
     stderr.write_text(f"leaked {secret}\n", encoding="utf-8")
-    bundle = _bundle()
-    production = bundle["variants"]["production"]
-    production["stdout"] = f"key {secret} token ghp_{'a' * 36}"
-    bundle_path = tmp_path / "bundle.json"
-    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    commands = "message ##[error]unexpected\n::error::unexpected"
+    events = [
+        {"type": "assistant", "text": "token: arbitrary", "tool_call": {"name": "write"}},
+        {secret: secret, "text": "preserve\u2028line separator"},
+        {secret: "collision", "[REDACTED]": "collision"},
+    ]
+    trace = "\r\n".join(json.dumps(event, ensure_ascii=False) for event in events)
+    trace += '\nmalformed\n{"value":1e400}\n{"type":"result"}\n'
+    (tmp_path / "results.jsonl").write_text(
+        _lines(
+            _records(
+                production={"stdout": f"key {secret} token ghp_{'a' * 36}", "stderr": commands},
+                **{"production-trace": {"stdout": trace}},
+            )
+        ),
+        encoding="utf-8",
+    )
 
-    def run_collect(out: Path, *, exit_code: int = 2, image: str = IMAGE) -> int:
-        return probe.collect(
-            bundle_path=bundle_path,
-            container_stderr_path=stderr,
-            container_exit_code=exit_code,
-            identity_path=identity,
-            image=image,
-            out=out,
-            secret=secret,
-        )
-
+    assert _collect(tmp_path, secret=secret) == 2
+    assert capsys.readouterr().out == "Cursor probe status 2. Hostile violation observed False.\n"
     out = tmp_path / "out"
-    assert run_collect(out) == 2
     expected = {"summary.json", "container.stderr"}
     expected |= {
         f"{name}.{kind}" for name in probe.VARIANTS_BY_NAME for kind in ("stdout", "stderr")
@@ -233,37 +319,105 @@ def test_collect_writes_only_validated_redacted_results(tmp_path: Path) -> None:
     assert {path.name for path in out.iterdir()} == expected
     written = "".join(path.read_text(encoding="utf-8") for path in out.iterdir())
     assert secret not in written and f"ghp_{'a' * 36}" not in written
-    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["image"] == {"image": IMAGE} and summary["collect_errors"] == []
-
-    rejected: list[dict[str, object]] = [
-        _bundle(variants={**bundle["variants"], "../escape": production}),
-        _bundle(status=2),
+    published_trace = (out / "production-trace.stdout").read_text(encoding="utf-8")
+    assert [json.loads(line) for line in published_trace.splitlines()] == [
+        {"type": "assistant", "text": "token: [REDACTED]", "tool_call": {"name": "write"}},
+        {"[REDACTED]": "[REDACTED]", "text": "preserve\u2028line separator"},
+        {"type": "result"},
     ]
-    for index, bad in enumerate(rejected):
-        bundle_path.write_text(json.dumps(bad), encoding="utf-8")
-        target = tmp_path / f"rejected-{index}"
-        assert run_collect(target, exit_code=0) == 2
-        assert {path.name for path in target.iterdir()} == {"summary.json", "container.stderr"}
-    bundle_path.write_text(json.dumps(bundle)[:100], encoding="utf-8")
-    assert run_collect(tmp_path / "truncated", exit_code=137) == 2
-    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
-    mismatched = tmp_path / "mismatched"
-    assert run_collect(mismatched, image=IMAGE.replace("3.1", "3.0")) == 2
-    summary = json.loads((mismatched / "summary.json").read_text(encoding="utf-8"))
-    assert summary["image"] is None and summary["collect_errors"]
+    summary = _summary(out)
+    assert summary["image"] == IDENTITY and summary["collect_errors"] == []
+    assert summary["variants"]["production"]["stderr_tail"] == commands
+    assert summary["variants"]["production-trace"]["trace_events_omitted"] == 3
+
+
+@pytest.mark.parametrize(
+    ("bad", "message"),
+    [
+        ({"verdict": []}, "field verdict is invalid"),
+        ({"filesystem": {}}, "field filesystem is invalid"),
+        ({"refusal_evidence": []}, "field refusal_evidence is invalid"),
+        ({"refusal_evidence": "not_applicable"}, "refusal evidence does not match"),
+        ({"violations": ["created file"]}, "inconsistent violation fields"),
+    ],
+)
+def test_collect_rejects_invalid_records_and_preserves_prior_results(
+    tmp_path: Path, bad: dict[str, object], message: str
+) -> None:
+    (tmp_path / "identity.json").write_text(json.dumps(IDENTITY), encoding="utf-8")
+    (tmp_path / "results.jsonl").write_text(
+        _lines(_records(**{"production-trace": bad})), encoding="utf-8"
+    )
+    assert _collect(tmp_path) == 2
+    summary = _summary(tmp_path / "out")
+    assert list(summary["variants"]) == ["production"]
+    assert message in summary["collect_errors"][0]
+
+
+@pytest.mark.parametrize(
+    "case", ["complete", "identity", "duplicate", "timeout", "unknown", "exit_mismatch"]
+)
+def test_collect_preserves_observed_violations(tmp_path: Path, case: str) -> None:
+    identity = {} if case == "identity" else IDENTITY
+    (tmp_path / "identity.json").write_text(json.dumps(identity), encoding="utf-8")
+    records = _records(
+        production={"verdict": "violation", "filesystem": "violation", "violations": ["created ."]}
+    )
+    stream = _lines(records)
+    exit_code = 1
+    if case == "duplicate":
+        stream = _lines([*records[:2], records[1]])
+    elif case == "timeout":
+        stream = _lines(records[:2]) + '{"variant":'
+        exit_code = 124
+    elif case == "unknown":
+        stream = _lines([*records[:2], {"variant": "../escape", "result": {}}])
+    elif case == "exit_mismatch":
+        exit_code = 2
+    (tmp_path / "results.jsonl").write_text(stream, encoding="utf-8")
+    assert _collect(tmp_path, exit_code=exit_code) == (1 if case == "complete" else 2)
+    summary = _summary(tmp_path / "out")
+    assert summary["hostile_violation_observed"] is True
+    assert summary["variants"]["production"]["verdict"] == "violation"
+    if case in {"duplicate", "timeout", "unknown"}:
+        assert list(summary["variants"]) == ["production"]
+    assert bool(summary["collect_errors"]) == (case != "complete")
+    assert (summary["image"] is None) == (case == "identity")
 
 
 def test_verify_image_binds_the_source_before_the_key_is_in_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     validator = identity_validator
-    calls: list[dict[str, str]] = []
-    monkeypatch.setattr(validator, "verify_pulled_image", lambda **kwargs: calls.append(kwargs))
+    checks: list[object] = []
+
+    def ancestor(source: str, ref: str) -> bool:
+        checks.append((source, ref))
+        return True
+
+    monkeypatch.setattr(release_common, "git_is_ancestor", ancestor)
+    monkeypatch.setattr(validator, "verify_pulled_image", lambda **kwargs: checks.append(kwargs))
     out = tmp_path / "identity.json"
     assert probe.verify_image(IMAGE, out) == 0
-    assert calls == [{"role": "reviewer", "image": IMAGE, "runtime_source": SOURCE}]
-    assert json.loads(out.read_text(encoding="utf-8"))["runtime_source"] == SOURCE
+    assert checks == [
+        (SOURCE, "origin/main"),
+        {"role": "reviewer", "image": IMAGE, "runtime_source": SOURCE},
+    ]
+    assert json.loads(out.read_text(encoding="utf-8")) == IDENTITY
+
+    monkeypatch.setattr(release_common, "git_is_ancestor", lambda *_: False)
+    assert probe.verify_image(IMAGE, tmp_path / "non-ancestor.json") == 1
+    assert len(checks) == 2
+    assert not (tmp_path / "non-ancestor.json").exists()
+
+    def history_error(*_args: str) -> bool:
+        raise release_common.ReleaseValidationError("main ref is unavailable")
+
+    monkeypatch.setattr(release_common, "git_is_ancestor", history_error)
+    assert probe.verify_image(IMAGE, tmp_path / "missing-history.json") == 1
+    assert len(checks) == 2
+    assert not (tmp_path / "missing-history.json").exists()
+    monkeypatch.setattr(release_common, "git_is_ancestor", ancestor)
 
     def reject(**_kwargs: str) -> None:
         raise validator.CandidateIdentityError("reviewer image revision label does not match")
@@ -278,6 +432,7 @@ def test_verify_image_binds_the_source_before_the_key_is_in_scope(
     assert workflow["permissions"]["attestations"] == "read"
     steps = workflow["jobs"]["probe"]["steps"]
     names = [step["name"] for step in steps]
+    assert steps[names.index("Check out protected probe driver")]["with"]["fetch-depth"] == "0"
     verify = steps[names.index("Pull and verify reviewer image")]
     run = steps[names.index("Run probe")]
     assert names.index("Pull and verify reviewer image") < names.index("Run probe")
@@ -286,3 +441,79 @@ def test_verify_image_binds_the_source_before_the_key_is_in_scope(
     assert "CURSOR_API_KEY" not in verify.get("env", {})
     assert run["env"]["CURSOR_API_KEY"] == "${{ secrets.CURSOR_API_KEY }}"
     assert "cursor-probe-identity.json" in run["run"]
+
+
+@pytest.mark.parametrize("docker_exit", [124, 125])
+def test_wrapper_collects_completed_results_and_cleans_up_container(
+    tmp_path: Path, docker_exit: int
+) -> None:
+    state = tmp_path / "docker"
+    state.write_text(
+        """#!/bin/sh
+case "$1" in
+  run)
+    printf '%s\\n' "$@" >"$PROBE_TEST_ARGS"
+    if [ "$PROBE_TEST_EXIT" = 124 ]; then
+      cat "$PROBE_TEST_RESULTS"
+    fi
+    exit "$PROBE_TEST_EXIT"
+    ;;
+  rm)
+    printf '%s %s\\n' "$2" "$3" >>"$PROBE_TEST_REMOVED"
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    state.chmod(0o755)
+    args_file, removed, results = (tmp_path / name for name in ("args", "removed", "results.jsonl"))
+    records = _records(production={"stdout": "safe portion before timeout"})
+    results.write_text(_lines(records[:2]) + '{"variant":', encoding="utf-8")
+    identity = tmp_path / "identity.json"
+    identity.write_text(json.dumps(IDENTITY), encoding="utf-8")
+    env = {
+        **os.environ,
+        "CURSOR_API_KEY": "synthetic-key",
+        "PATH": os.pathsep.join(
+            (str(tmp_path), str(Path(sys.executable).parent), os.environ["PATH"])
+        ),
+        "PROBE_TEST_ARGS": str(args_file),
+        "PROBE_TEST_REMOVED": str(removed),
+        "PROBE_TEST_RESULTS": str(results),
+        "PROBE_TEST_EXIT": str(docker_exit),
+        "TMPDIR": str(tmp_path),
+    }
+    out = tmp_path / "out"
+    completed = subprocess.run(
+        [
+            "sh",
+            str(ROOT / "scripts/probe_cursor_runtime.sh"),
+            IMAGE,
+            "composer-2.5",
+            str(out),
+            str(identity),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    summary = _summary(out)
+    assert summary["container_exit_code"] == docker_exit
+    assert "unexpected container exit status" in summary["collect_errors"]
+    if docker_exit == 124:
+        assert list(summary["variants"]) == ["production"]
+        assert (out / "production.stdout").read_text(
+            encoding="utf-8"
+        ) == "safe portion before timeout"
+    else:
+        assert summary["variants"] == {}
+    args = args_file.read_text(encoding="utf-8").splitlines()
+    assert {"--init", "--pull=never", "TMPDIR=/probe-scratch"} <= set(args)
+    name = args[args.index("--name") + 1]
+    assert name.startswith("cursor-probe-")
+    assert set(removed.read_text(encoding="utf-8").splitlines()) == {f"-f {name}"}
+    assert not list(tmp_path.glob("tmp.*"))

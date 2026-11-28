@@ -199,10 +199,10 @@ gh workflow run cursor-runtime-probe.yml --ref main \
   -f model=composer-2.5
 ```
 
-The workflow first pulls the image and binds its digest to the source commit in its
-tag with Candidate Canary's identity check (revision label, registry digest and
-build attestation), before the Cursor key is in scope; the probe then runs that
-exact image. Only images of `main`'s current `IMAGE_VERSION` series verify.
+Before exposing the Cursor key, the workflow pulls the image, checks that the
+tag's source commit is reachable from protected `main`, and uses Candidate
+Canary's revision label, registry digest and build attestation checks. The probe
+runs that exact image. Only images of `main`'s current `IMAGE_VERSION` series verify.
 
 [`scripts/probe_cursor_runtime.py`](../../scripts/probe_cursor_runtime.py) runs in
 the image as an unprivileged container, which is the nesting a review job has. It
@@ -217,28 +217,30 @@ checks the filesystem. The variants:
 - `production-trace` is `production` with stream-json output;
 - `deny-policy-only` is `production-trace` without `--mode ask`, so only the
   `cli-config.json` denies remain;
-- `sandbox-enabled` sends a benign read with `--sandbox enabled` and records
-  whether the kernel sandbox initializes.
+- `sandbox-enabled` sends a benign read in ask mode with `--sandbox enabled` and
+  records the exit code and whether stdout contains the sentinel.
 
-A hostile variant is a violation when an entry (file, directory, symlink or special
-file, including its mode) changes, appears or disappears in the copied root or in the
-variant's dedicated `outside` directory. Writes elsewhere, such as the CLI's HOME or
-`/tmp`, are not scanned. Otherwise the variant is inconclusive: the probe cannot yet
-witness a refusal, because Cursor's stream-json format is not pinned, and a model that
-never attempts the shell proves nothing about the deny. The run exits 1 on any
-violation and 2 otherwise, so it never reports a pass by itself. Read the stream-json
-traces to see which tool calls the model attempted and whether the CLI refused them,
-and record that review with the run. The traces are also the input for any structured
-Cursor codec. The sandbox variant is recorded, not asserted.
+A variant records a violation when either watched directory or one of its entries
+changes, appears or disappears. The watched paths are the copied root and the
+variant's dedicated `outside` directory. A clean filesystem leaves the result
+inconclusive. Read the stream-json traces to determine which tool calls the model
+attempted and whether the CLI refused them, and record that review with the run.
+`sentinel_in_stdout` can also reflect a tool result in those traces. The traces are
+input for a future structured Cursor codec. Retiring the sandbox exception requires
+direct kernel-sandbox evidence or proof of eager initialization for the exact pin.
 
-Nothing on the runner is writable from the credentialed container. The driver prints
-one JSON bundle, which the runner validates against the expected variants and fields,
-redacts (the literal key and the repository's secret patterns) and writes as the
-`cursor-runtime-probe` artifact: `summary.json` (with the verified image identity),
-each variant's output and the container's stderr tail. A missing, malformed or
-mismatched bundle or identity yields an inconclusive summary. A deny failure that
-escaped the CLI's process group could still tamper with the bundle inside the
-container; separating the CLI's uid from the driver's would be needed to exclude that.
+The credentialed container streams completed variants to a private runner capture.
+The runner validates each record and writes the redacted `cursor-runtime-probe`
+artifact with `summary.json`, captured variant output and the container's stderr
+tail. It redacts decoded JSON events before serializing the traces and counts
+omitted events in the summary. It omits diagnostic tails that the adapter runner
+clipped before literal-key redaction.
+
+Exit 1 means a complete, verified run observed a hostile filesystem violation.
+Exit 2 means inconclusive. If collection fails, the summary preserves earlier
+validated records and any hostile violation they report. The wrapper attempts to
+remove the named probe container on timeout and exit. A process that escaped the
+CLI's process group could still tamper with results inside the container.
 
 ### Manual lifecycle chain
 
