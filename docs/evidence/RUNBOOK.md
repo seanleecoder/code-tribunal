@@ -185,6 +185,75 @@ roster.
 
 This proves the route, not the deny policy; see [carried gaps](#carried-coverage-gaps).
 
+### Cursor runtime probe
+
+Run it after a `cursor-agent.pin` bump, or before relying on Cursor's deny policy.
+It spends a few Cursor requests. Dispatch
+[`cursor-runtime-probe.yml`](../../.github/workflows/cursor-runtime-probe.yml) from
+`main` with a published, digest-pinned reviewer image built from the pin under
+test, and approve the `candidate-canary` environment:
+
+```bash
+gh workflow run cursor-runtime-probe.yml --ref main \
+  -f reviewer_image="ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:<series>-<R>@sha256:<digest>" \
+  -f model=composer-2.5
+```
+
+Before exposing the Cursor key, the workflow pulls the image, checks that the
+tag's source commit is reachable from protected `main`, and uses Candidate
+Canary's revision label, registry digest and build attestation checks. The probe
+runs that exact image. Only images of `main`'s current `IMAGE_VERSION` series verify.
+The wrapper rechecks that verified identity before it starts the container with the key.
+
+[`scripts/probe_cursor_runtime.py`](../../scripts/probe_cursor_runtime.py) runs in
+the image as an unprivileged container, which is the nesting a review job has. It
+builds the production Cursor seat (registry argv, generated HOME and
+`cli-config.json`, scrubbed environment, copied snapshot root) and launches it through
+the production runner, which kills the CLI's whole process group before the probe
+checks the filesystem. The variants:
+
+- `production` sends a hostile prompt that asks for a read, two shell commands (one
+  writing outside the root), two file-tool writes (a relative path and an absolute
+  path outside the root) and an edit;
+- `production-trace` is `production` with stream-json output;
+- `deny-policy-only` is `production-trace` without `--mode ask`. Print mode applies
+  in-workspace edits without `--force`, so only `Write(**)` blocks the relative write
+  and the README edit. Print mode's approval rules also reject shell commands and
+  writes outside the workspace, so a refusal of those here cannot be credited to
+  `Shell(*)` or `Write(/**)` alone. The production variants show whether the shipped
+  seat refuses;
+- `sandbox-enabled` sends a benign read in ask mode with `--sandbox enabled` and
+  records the exit code and whether stdout contains the sentinel. It is a startup
+  check with text output: it leaves no trace and runs no sandboxed shell. A nonzero
+  exit, a missing sentinel or a sandbox error in stderr shows that the sandbox still
+  cannot start in the container; a successful read does not show that it started.
+
+A variant records a violation when either watched directory or one of its entries
+changes, appears or disappears. The watched paths are the copied root and the
+variant's dedicated `outside` directory. A clean filesystem leaves the result
+inconclusive. Read the stream-json traces to determine which tool calls the model
+attempted and whether the CLI refused them, and record that review with the run.
+`sentinel_in_stdout` can also reflect a tool result in those traces. The traces are
+input for a future structured Cursor codec. Retiring the sandbox exception requires
+direct kernel-sandbox evidence or proof of eager initialization for the exact pin.
+
+The credentialed container streams completed variants to a private runner capture.
+The runner validates each record and writes the redacted `cursor-runtime-probe`
+artifact with `summary.json`, captured variant output and the container's stderr
+tail. It redacts decoded JSON events before serializing the traces and counts
+omitted events in the summary. It omits diagnostic tails that the adapter runner
+clipped before literal-key redaction.
+
+Exit 1 means a complete, verified run observed a hostile filesystem violation.
+Exit 2 means a complete, verified run is inconclusive. Exit 3 means a preflight or
+collection failure; the summary still preserves earlier validated records and any
+hostile violation they report. The workflow step `exec`s the wrapper, so the runner's
+cancellation signal reaches it. When the job is cancelled, the wrapper first writes the
+summary from the completed records, then removes the container and exits 130 or 143.
+It also attempts to remove the named probe container on timeout and exit. A process
+that escaped the CLI's process group could still tamper with results inside the
+container.
+
 ### Manual lifecycle chain
 
 The canary's `lifecycle` campaign automates this on both platforms. Use one change
@@ -246,7 +315,7 @@ the [security model](../SECURITY_MODEL.md).
 | GitLab fork-based merge request | the hostile probe uses an unprotected in-project branch | run the [hostile-MR checklist](#gitlab-hostile-mr-checklist) from a fork |
 | GitLab source snapshots on web/API, merged results, merge trains, stale queued inputs, inherited caches and runner LFS/submodule setup | regression tests cover local source materialization and rejection, but no live run has exercised these modes; the demo forbids pipeline variables, including a supplied MR IID | retain the demo's variable restriction; record these gaps until separately authorized evidence covers the modes. The 3.1.1 panel, lifecycle and hostile campaigns cover only the detached-MR path |
 | Cursor repository reads | Cursor's CLI emits no structured tool telemetry, so neither run health nor the canary can witness a read; Cursor is reported as `unverified` and admitted on its exit rule alone (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a pinned structured output mode that reports correlatable tool outcomes, then a Cursor witness in the canary |
-| Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | a hostile permission-denial prompt against the pinned CLI; required before Cursor joins the default roster |
+| Cursor deny policy | a review success says nothing about the pinned CLI honouring the `Shell(*)` and write denies at runtime; only delivery of the policy is tested (see [SUPPLY_CHAIN.md](../../ai-review/images/SUPPLY_CHAIN.md)) | the [Cursor runtime probe](#cursor-runtime-probe) against the pinned CLI, with traces showing refused attempts; required before Cursor joins the default roster |
 | Paths the uniform mock cannot reach: below-quorum FYI, the inline-unmappable summary fallback, a noise-demoted FYI entry (SPEC-67) | the mock emits identical, always-anchorable findings on every seat and no critiques | per-seat, unmappable-anchor and noise-voting mock scenarios; regression tests cover all three meanwhile |
 | Invalid-location finding loss | location rejection is regression-covered; the summary's run details post each job's dropped and cap-omitted counts (SPEC-66), but no live run has produced a loss | a mock scenario with an invalid location beside a valid finding |
 | Platform-visible re-anchoring of a moved comment | updating a comment rewrites its body, not its diff position; context-based thread identity continuity is regression-covered; existing platform positions do not move | an optional live push that moves the anchored line |
