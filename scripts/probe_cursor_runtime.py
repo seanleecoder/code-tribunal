@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Probe the pinned Cursor CLI's runtime isolation inside the reviewer image.
 
-This driver never ships in the image. It has three subcommands:
+This driver never ships in the image. It has four subcommands:
 
 - ``verify-image`` (runner, no Cursor key): binds the digest-pinned reviewer image to
   the source commit in its tag and checks that it is reachable from protected main.
+- ``check-identity`` (runner): rechecks that identity before the wrapper starts the
+  container with the key.
 - ``run`` (inside the image, with ``CURSOR_API_KEY``): flushes a JSON header and one
   result per completed variant to stdout. Driver files and captures use scratch.
 - ``collect`` (runner): validates the records, redacts them and writes the only files
@@ -141,7 +143,8 @@ def _entry(path: Path, info: os.stat_result) -> str:
         return f"dir:{mode}"
     if stat.S_ISREG(info.st_mode):
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
         except OSError:
             digest = "unreadable"
         return f"file:{mode}:{digest}"
@@ -153,7 +156,8 @@ def tree_digest(root: Path) -> dict[str, str]:
     """Snapshot the root itself and its descendants without following symlinks."""
     try:
         info = root.lstat()
-    except FileNotFoundError:
+    except FileNotFoundError, NotADirectoryError:
+        # A replaced ancestor removes the watched tree just as deletion does.
         return {}
     entries = {".": _entry(root, info)}
     if stat.S_ISDIR(info.st_mode):
@@ -488,6 +492,30 @@ def _image_identity(image: str, runtime_source: str) -> dict[str, str]:
     return {"image": image, "runtime_source": runtime_source, "digest": image.rsplit("@", 1)[1]}
 
 
+def _load_verified_identity(
+    identity_path: Path, image: str
+) -> tuple[dict[str, str] | None, str | None]:
+    """Return verify-image's stored identity if it names exactly ``image``."""
+    from ai_review.canonical import json_loads_no_duplicates
+
+    try:
+        stored_identity = json_loads_no_duplicates(identity_path.read_text(encoding="utf-8"))
+    except OSError, ValueError, RecursionError:
+        return None, "image identity file is missing or malformed"
+    match = SOURCE_TAGGED_IMAGE.fullmatch(image)
+    if match and stored_identity == _image_identity(image, match["source"]):
+        return stored_identity, None
+    return None, "image identity does not match the probed image"
+
+
+def check_identity(identity_path: Path, image: str) -> int:
+    _identity, error = _load_verified_identity(identity_path, image)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return 3
+    return 0
+
+
 def collect(
     *,
     results_path: Path,
@@ -499,24 +527,15 @@ def collect(
     secret: str,
 ) -> int:
     """Write the only uploaded files from the container's output, failing closed."""
-    from ai_review.canonical import json_loads_no_duplicates
     from ai_review.redact import redact_text
 
     def redactor(text: str) -> str:
         return redact_text(redact(text, secret))
 
     errors: list[str] = []
-    identity = None
-    try:
-        stored_identity = json_loads_no_duplicates(identity_path.read_text(encoding="utf-8"))
-    except OSError, ValueError, RecursionError:
-        errors.append("image identity file is missing or malformed")
-    else:
-        match = SOURCE_TAGGED_IMAGE.fullmatch(image)
-        if match and stored_identity == _image_identity(image, match["source"]):
-            identity = stored_identity
-        else:
-            errors.append("image identity does not match the probed image")
+    identity, identity_error = _load_verified_identity(identity_path, image)
+    if identity_error is not None:
+        errors.append(identity_error)
 
     header, variants, stream_errors = _read_results(results_path)
     errors.extend(stream_errors)
@@ -548,7 +567,9 @@ def collect(
         (out / "container.stderr").write_text(
             container_stderr[-STDERR_TAIL_CHARS:], encoding="utf-8"
         )
-    status = 2 if errors else expected_exit
+    # 1: complete run with a hostile violation; 2: complete and inconclusive;
+    # 3: collection failed (validated records and any violation are still kept).
+    status = 3 if errors else expected_exit
     summary = {
         "status": status,
         "image": _redact_tree(identity, redactor),
@@ -600,6 +621,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify = commands.add_parser("verify-image", help="on the runner: bind image to source")
     verify.add_argument("--image", required=True)
     verify.add_argument("--json-out", type=Path, required=True)
+    check = commands.add_parser("check-identity", help="on the runner: recheck the identity")
+    check.add_argument("--identity-file", type=Path, required=True)
+    check.add_argument("--image", required=True)
     gather = commands.add_parser("collect", help="on the runner: validate and redact results")
     gather.add_argument("--results", type=Path, required=True)
     gather.add_argument("--container-stderr", type=Path, required=True)
@@ -610,6 +634,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "verify-image":
         return verify_image(args.image, args.json_out)
+    if args.command == "check-identity":
+        return check_identity(args.identity_file, args.image)
     if args.command == "collect":
         return collect(
             results_path=args.results,

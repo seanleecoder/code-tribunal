@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -59,6 +61,36 @@ def _lines(records: list[dict[str, object]]) -> str:
 
 def _summary(out: Path) -> dict:
     return json.loads((out / "summary.json").read_text(encoding="utf-8"))
+
+
+def _wrapper(
+    tmp_path: Path, docker: str, identity: object = IDENTITY
+) -> tuple[list[str], dict[str, str]]:
+    """Argv and environment for the real wrapper with a scripted fake ``docker``."""
+    fake = tmp_path / "docker"
+    fake.write_text("#!/bin/sh\n" + docker, encoding="utf-8")
+    fake.chmod(0o755)
+    identity_file = tmp_path / "identity.json"
+    if identity is not None:
+        text = identity if isinstance(identity, str) else json.dumps(identity)
+        identity_file.write_text(text, encoding="utf-8")
+    env = {
+        **os.environ,
+        "CURSOR_API_KEY": "synthetic-key",
+        "PATH": os.pathsep.join(
+            (str(tmp_path), str(Path(sys.executable).parent), os.environ["PATH"])
+        ),
+        "TMPDIR": str(tmp_path),
+    }
+    argv = [
+        "sh",
+        str(ROOT / "scripts/probe_cursor_runtime.sh"),
+        IMAGE,
+        "composer-2.5",
+        str(tmp_path / "out"),
+        str(identity_file),
+    ]
+    return argv, env
 
 
 def test_variant_flag_transforms() -> None:
@@ -152,6 +184,66 @@ def test_tree_digest_detects_non_regular_entries_and_mode_changes(tmp_path: Path
         "created fifo",
         "created new-dir",
     ]
+
+
+def test_tree_digest_reports_replaced_ancestor_as_removed(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    watched = parent / "watched"
+    watched.mkdir(parents=True)
+    (watched / "README.md").write_text("x", encoding="utf-8")
+    before = probe.tree_digest(watched)
+    (watched / "README.md").unlink()
+    watched.rmdir()
+    parent.rmdir()
+    parent.write_text("file", encoding="utf-8")
+
+    after = probe.tree_digest(watched)
+    assert after == {}
+    result = probe.evaluate(before, after, {}, {}, output="")
+    assert result["verdict"] == "violation"
+    assert result["violations"] == ["removed .", "removed README.md"]
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"linux", "android"}, reason="RLIMIT_AS is enforced on Linux kernels"
+)
+def test_tree_digest_hashes_large_files_in_bounded_memory(tmp_path: Path) -> None:
+    size = 1 << 30
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    with (watched / "sparse").open("wb") as stream:
+        stream.truncate(size)
+    zeros = hashlib.sha256()
+    block = bytes(1 << 20)
+    for _ in range(size // len(block)):
+        zeros.update(block)
+    # Allow half the file's size beyond the address space already mapped (Android's
+    # allocator reserves gigabytes up front): a whole-file read raises MemoryError.
+    code = (
+        "import pathlib, resource, runpy, sys\n"
+        "probe = runpy.run_path(sys.argv[1])\n"
+        "status = pathlib.Path('/proc/self/status').read_text()\n"
+        "limit = int(status.split('VmSize:')[1].split()[0]) * 1024 + (1 << 29)\n"
+        "resource.setrlimit(resource.RLIMIT_AS, (limit, limit))\n"
+        "print(probe['tree_digest'](pathlib.Path(sys.argv[2]))['sparse'])\n"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            code,
+            str(ROOT / "scripts/probe_cursor_runtime.py"),
+            str(watched),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().endswith(f":{zeros.hexdigest()}")
 
 
 def test_watched_directory_entries_are_compared(tmp_path: Path) -> None:
@@ -326,6 +418,7 @@ def test_collect_writes_redacted_artifacts_and_logs_only_status(tmp_path: Path, 
         {"type": "result"},
     ]
     summary = _summary(out)
+    assert summary["status"] == 2
     assert summary["image"] == IDENTITY and summary["collect_errors"] == []
     assert summary["variants"]["production"]["stderr_tail"] == commands
     assert summary["variants"]["production-trace"]["trace_events_omitted"] == 3
@@ -348,8 +441,9 @@ def test_collect_rejects_invalid_records_and_preserves_prior_results(
     (tmp_path / "results.jsonl").write_text(
         _lines(_records(**{"production-trace": bad})), encoding="utf-8"
     )
-    assert _collect(tmp_path) == 2
+    assert _collect(tmp_path) == 3
     summary = _summary(tmp_path / "out")
+    assert summary["status"] == 3
     assert list(summary["variants"]) == ["production"]
     assert message in summary["collect_errors"][0]
 
@@ -375,7 +469,7 @@ def test_collect_preserves_observed_violations(tmp_path: Path, case: str) -> Non
     elif case == "exit_mismatch":
         exit_code = 2
     (tmp_path / "results.jsonl").write_text(stream, encoding="utf-8")
-    assert _collect(tmp_path, exit_code=exit_code) == (1 if case == "complete" else 2)
+    assert _collect(tmp_path, exit_code=exit_code) == (1 if case == "complete" else 3)
     summary = _summary(tmp_path / "out")
     assert summary["hostile_violation_observed"] is True
     assert summary["variants"]["production"]["verdict"] == "violation"
@@ -443,65 +537,59 @@ def test_verify_image_binds_the_source_before_the_key_is_in_scope(
     assert "cursor-probe-identity.json" in run["run"]
 
 
-@pytest.mark.parametrize("docker_exit", [124, 125])
-def test_wrapper_collects_completed_results_and_cleans_up_container(
-    tmp_path: Path, docker_exit: int
-) -> None:
-    state = tmp_path / "docker"
-    state.write_text(
-        """#!/bin/sh
-case "$1" in
+_RECORDING_DOCKER = """case "$1" in
   run)
     printf '%s\\n' "$@" >"$PROBE_TEST_ARGS"
-    if [ "$PROBE_TEST_EXIT" = 124 ]; then
-      cat "$PROBE_TEST_RESULTS"
-    fi
-    exit "$PROBE_TEST_EXIT"
+    RUN_BEHAVIOUR
     ;;
   rm)
     printf '%s %s\\n' "$2" "$3" >>"$PROBE_TEST_REMOVED"
     ;;
 esac
-""",
-        encoding="utf-8",
+"""
+
+
+def _recording_wrapper(
+    tmp_path: Path, run_behaviour: str, identity: object = IDENTITY
+) -> tuple[list[str], dict[str, str], Path, Path]:
+    args_file, removed = tmp_path / "args", tmp_path / "removed"
+    argv, env = _wrapper(
+        tmp_path, _RECORDING_DOCKER.replace("RUN_BEHAVIOUR", run_behaviour), identity
     )
-    state.chmod(0o755)
-    args_file, removed, results = (tmp_path / name for name in ("args", "removed", "results.jsonl"))
+    env |= {"PROBE_TEST_ARGS": str(args_file), "PROBE_TEST_REMOVED": str(removed)}
+    return argv, env, args_file, removed
+
+
+def _assert_container_cleaned_up(tmp_path: Path, args_file: Path, removed: Path) -> None:
+    args = args_file.read_text(encoding="utf-8").splitlines()
+    assert {"--init", "--pull=never", "TMPDIR=/probe-scratch"} <= set(args)
+    name = args[args.index("--name") + 1]
+    assert name.startswith("cursor-probe-")
+    assert set(removed.read_text(encoding="utf-8").splitlines()) == {f"-f {name}"}
+    assert not list(tmp_path.glob("tmp.*"))
+
+
+@pytest.mark.parametrize("docker_exit", [124, 125])
+def test_wrapper_collects_completed_results_and_cleans_up_container(
+    tmp_path: Path, docker_exit: int
+) -> None:
+    argv, env, args_file, removed = _recording_wrapper(
+        tmp_path,
+        'if [ "$PROBE_TEST_EXIT" = 124 ]; then cat "$PROBE_TEST_RESULTS"; fi\n'
+        '    exit "$PROBE_TEST_EXIT"',
+    )
+    results = tmp_path / "results.jsonl"
     records = _records(production={"stdout": "safe portion before timeout"})
     results.write_text(_lines(records[:2]) + '{"variant":', encoding="utf-8")
-    identity = tmp_path / "identity.json"
-    identity.write_text(json.dumps(IDENTITY), encoding="utf-8")
-    env = {
-        **os.environ,
-        "CURSOR_API_KEY": "synthetic-key",
-        "PATH": os.pathsep.join(
-            (str(tmp_path), str(Path(sys.executable).parent), os.environ["PATH"])
-        ),
-        "PROBE_TEST_ARGS": str(args_file),
-        "PROBE_TEST_REMOVED": str(removed),
-        "PROBE_TEST_RESULTS": str(results),
-        "PROBE_TEST_EXIT": str(docker_exit),
-        "TMPDIR": str(tmp_path),
-    }
+    env |= {"PROBE_TEST_RESULTS": str(results), "PROBE_TEST_EXIT": str(docker_exit)}
     out = tmp_path / "out"
     completed = subprocess.run(
-        [
-            "sh",
-            str(ROOT / "scripts/probe_cursor_runtime.sh"),
-            IMAGE,
-            "composer-2.5",
-            str(out),
-            str(identity),
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-        timeout=30,
+        argv, capture_output=True, text=True, env=env, check=False, timeout=30
     )
 
-    assert completed.returncode == 2, completed.stderr
+    assert completed.returncode == 3, completed.stderr
     summary = _summary(out)
+    assert summary["status"] == 3
     assert summary["container_exit_code"] == docker_exit
     assert "unexpected container exit status" in summary["collect_errors"]
     if docker_exit == 124:
@@ -511,9 +599,59 @@ esac
         ) == "safe portion before timeout"
     else:
         assert summary["variants"] == {}
-    args = args_file.read_text(encoding="utf-8").splitlines()
-    assert {"--init", "--pull=never", "TMPDIR=/probe-scratch"} <= set(args)
-    name = args[args.index("--name") + 1]
-    assert name.startswith("cursor-probe-")
-    assert set(removed.read_text(encoding="utf-8").splitlines()) == {f"-f {name}"}
+    _assert_container_cleaned_up(tmp_path, args_file, removed)
+
+
+def test_wrapper_collects_completed_results_on_cancellation(tmp_path: Path) -> None:
+    argv, env, args_file, removed = _recording_wrapper(
+        tmp_path, 'cat "$PROBE_TEST_RESULTS"\n    touch "$PROBE_TEST_READY"\n    exec sleep 30'
+    )
+    results, ready = tmp_path / "results.jsonl", tmp_path / "ready"
+    violation = {"verdict": "violation", "filesystem": "violation", "violations": ["created ."]}
+    results.write_text(_lines(_records(production=violation)[:2]), encoding="utf-8")
+    env |= {"PROBE_TEST_RESULTS": str(results), "PROBE_TEST_READY": str(ready)}
+    wrapper = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while not ready.exists():
+            assert wrapper.poll() is None and time.monotonic() < deadline, "docker never ran"
+            time.sleep(0.05)
+        wrapper.send_signal(signal.SIGTERM)
+        # sh defers traps during a foreground command; the wrapper must not wait 30 s.
+        _stdout, stderr = wrapper.communicate(timeout=10)
+    finally:
+        wrapper.kill()
+        wrapper.wait()
+
+    assert wrapper.returncode == 143, stderr
+    out = tmp_path / "out"
+    summary = _summary(out)
+    assert summary["status"] == 3
+    assert summary["container_exit_code"] == 143
+    assert summary["hostile_violation_observed"] is True
+    assert list(summary["variants"]) == ["production"]
+    assert "unexpected container exit status" in summary["collect_errors"]
+    assert (out / "production.stdout").exists()
+    _assert_container_cleaned_up(tmp_path, args_file, removed)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [None, "{", {**IDENTITY, "digest": f"sha256:{'d' * 64}"}],
+    ids=["missing", "malformed", "mismatched"],
+)
+def test_wrapper_rejects_invalid_identity_before_running_container(
+    tmp_path: Path, identity: object
+) -> None:
+    argv, env, args_file, _removed = _recording_wrapper(tmp_path, "exit 2", identity)
+    completed = subprocess.run(
+        argv, capture_output=True, text=True, env=env, check=False, timeout=30
+    )
+
+    assert completed.returncode == 3
+    assert "image identity" in completed.stderr
+    assert not args_file.exists(), "the key reached docker run before the identity check"
+    assert not (tmp_path / "out").exists()
     assert not list(tmp_path.glob("tmp.*"))

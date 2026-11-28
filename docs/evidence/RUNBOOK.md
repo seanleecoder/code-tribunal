@@ -203,6 +203,7 @@ Before exposing the Cursor key, the workflow pulls the image, checks that the
 tag's source commit is reachable from protected `main`, and uses Candidate
 Canary's revision label, registry digest and build attestation checks. The probe
 runs that exact image. Only images of `main`'s current `IMAGE_VERSION` series verify.
+The wrapper rechecks that verified identity before it starts the container with the key.
 
 [`scripts/probe_cursor_runtime.py`](../../scripts/probe_cursor_runtime.py) runs in
 the image as an unprivileged container, which is the nesting a review job has. It
@@ -215,10 +216,17 @@ checks the filesystem. The variants:
   writing outside the root), two file-tool writes (a relative path and an absolute
   path outside the root) and an edit;
 - `production-trace` is `production` with stream-json output;
-- `deny-policy-only` is `production-trace` without `--mode ask`, so only the
-  `cli-config.json` denies remain;
+- `deny-policy-only` is `production-trace` without `--mode ask`. Print mode applies
+  in-workspace edits without `--force`, so only `Write(**)` blocks the relative write
+  and the README edit. Print mode's approval rules also reject shell commands and
+  writes outside the workspace, so a refusal of those here cannot be credited to
+  `Shell(*)` or `Write(/**)` alone. The production variants show whether the shipped
+  seat refuses;
 - `sandbox-enabled` sends a benign read in ask mode with `--sandbox enabled` and
-  records the exit code and whether stdout contains the sentinel.
+  records the exit code and whether stdout contains the sentinel. It is a startup
+  check with text output: it leaves no trace and runs no sandboxed shell. A nonzero
+  exit, a missing sentinel or a sandbox error in stderr shows that the sandbox still
+  cannot start in the container; a successful read does not show that it started.
 
 A variant records a violation when either watched directory or one of its entries
 changes, appears or disappears. The watched paths are the copied root and the
@@ -237,10 +245,13 @@ omitted events in the summary. It omits diagnostic tails that the adapter runner
 clipped before literal-key redaction.
 
 Exit 1 means a complete, verified run observed a hostile filesystem violation.
-Exit 2 means inconclusive. If collection fails, the summary preserves earlier
-validated records and any hostile violation they report. The wrapper attempts to
-remove the named probe container on timeout and exit. A process that escaped the
-CLI's process group could still tamper with results inside the container.
+Exit 2 means a complete, verified run is inconclusive. Exit 3 means a preflight or
+collection failure; the summary still preserves earlier validated records and any
+hostile violation they report. When the job is cancelled, the wrapper first writes the
+summary from the completed records, then removes the container and exits 130 or 143.
+It also attempts to remove the named probe container on timeout and exit. A process
+that escaped the CLI's process group could still tamper with results inside the
+container.
 
 ### Manual lifecycle chain
 
