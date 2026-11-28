@@ -247,7 +247,8 @@ clipped before literal-key redaction.
 Exit 1 means a complete, verified run observed a hostile filesystem violation.
 Exit 2 means a complete, verified run is inconclusive. Exit 3 means a preflight or
 collection failure; the summary still preserves earlier validated records and any
-hostile violation they report. When the job is cancelled, the wrapper first writes the
+hostile violation they report. The workflow step `exec`s the wrapper, so the runner's
+cancellation signal reaches it. When the job is cancelled, the wrapper first writes the
 summary from the completed records, then removes the container and exits 130 or 143.
 It also attempts to remove the named probe container on timeout and exit. A process
 that escaped the CLI's process group could still tamper with results inside the

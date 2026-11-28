@@ -67,8 +67,10 @@ jobs:
           REVIEWER_IMAGE: ${{ inputs.reviewer_image }}
           MODEL: ${{ inputs.model }}
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        # The runner signals only the step shell on cancellation or timeout; exec
+        # lets the wrapper's INT/TERM handler collect the completed records.
         run: >-
-          scripts/probe_cursor_runtime.sh "$REVIEWER_IMAGE" "$MODEL"
+          exec scripts/probe_cursor_runtime.sh "$REVIEWER_IMAGE" "$MODEL"
           "$RUNNER_TEMP/cursor-probe" "$RUNNER_TEMP/cursor-probe-identity.json"
       - name: Upload redacted results
         if: always() && steps.probe.outcome != 'skipped'

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -602,7 +604,14 @@ def test_wrapper_collects_completed_results_and_cleans_up_container(
     _assert_container_cleaned_up(tmp_path, args_file, removed)
 
 
-def test_wrapper_collects_completed_results_on_cancellation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("entry", "sent", "status"),
+    [("workflow", signal.SIGINT, 130), ("direct", signal.SIGTERM, 143)],
+    ids=["workflow", "direct"],
+)
+def test_wrapper_collects_completed_results_on_cancellation(
+    tmp_path: Path, entry: str, sent: signal.Signals, status: int
+) -> None:
     argv, env, args_file, removed = _recording_wrapper(
         tmp_path, 'cat "$PROBE_TEST_RESULTS"\n    touch "$PROBE_TEST_READY"\n    exec sleep 30'
     )
@@ -610,26 +619,48 @@ def test_wrapper_collects_completed_results_on_cancellation(tmp_path: Path) -> N
     violation = {"verdict": "violation", "filesystem": "violation", "violations": ["created ."]}
     results.write_text(_lines(_records(production=violation)[:2]), encoding="utf-8")
     env |= {"PROBE_TEST_RESULTS": str(results), "PROBE_TEST_READY": str(ready)}
-    wrapper = subprocess.Popen(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+    out = tmp_path / "out"
+    if entry == "workflow":
+        # The runner runs the step file with `bash -e {0}` and signals only that shell.
+        # A file, not `bash -c`: bash would exec a lone -c command itself.
+        workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        steps = workflow["jobs"]["probe"]["steps"]
+        step = tmp_path / "step.sh"
+        run = next(s["run"] for s in steps if s["name"] == "Run probe")
+        step.write_text(run + "\n", encoding="utf-8")
+        (tmp_path / "identity.json").rename(tmp_path / "cursor-probe-identity.json")
+        bash = shutil.which("bash")
+        assert bash is not None
+        argv = [bash, "-e", str(step)]
+        env |= {"RUNNER_TEMP": str(tmp_path), "REVIEWER_IMAGE": IMAGE, "MODEL": "composer-2.5"}
+        out = tmp_path / "cursor-probe"
+    process = subprocess.Popen(
+        argv,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
     )
     try:
         deadline = time.monotonic() + 20
         while not ready.exists():
-            assert wrapper.poll() is None and time.monotonic() < deadline, "docker never ran"
+            assert process.poll() is None and time.monotonic() < deadline, "docker never ran"
             time.sleep(0.05)
-        wrapper.send_signal(signal.SIGTERM)
-        # sh defers traps during a foreground command; the wrapper must not wait 30 s.
-        _stdout, stderr = wrapper.communicate(timeout=10)
+        process.send_signal(sent)
+        # Within the runner's 7.5 s SIGINT grace; sh would otherwise defer the trap
+        # until the 30 s foreground command returned.
+        _stdout, stderr = process.communicate(timeout=7.5)
     finally:
-        wrapper.kill()
-        wrapper.wait()
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
-    assert wrapper.returncode == 143, stderr
-    out = tmp_path / "out"
+    assert process.returncode == status, stderr
     summary = _summary(out)
     assert summary["status"] == 3
-    assert summary["container_exit_code"] == 143
+    assert summary["container_exit_code"] == status
     assert summary["hostile_violation_observed"] is True
     assert list(summary["variants"]) == ["production"]
     assert "unexpected container exit status" in summary["collect_errors"]
